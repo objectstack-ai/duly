@@ -83,9 +83,16 @@ export const Duty = ObjectSchema.create({
       label: 'Source',
       required: true,
       options: [
-        { label: 'Role catalog', value: 'catalog', color: '#16515F', default: true },
+        { label: 'Role catalog', value: 'catalog', color: '#16515F' },
         { label: 'Assigned by manager', value: 'assigned', color: '#8C6512' },
-        { label: 'Self-declared', value: 'self', color: '#576B73' },
+        // The default. Every path that legitimately produces a governed duty
+        // stamps `source` explicitly — `duly_catalog_apply` writes 'catalog'
+        // (#34), the assignment fan-out writes 'assigned' (#33) — so the
+        // default is only ever reached by a hand-created duty, which is by
+        // definition self-declared. Fail-safe direction: a producer that
+        // forgets to stamp caliber produces an unscored duty, not a scored
+        // one (#50).
+        { label: 'Self-declared', value: 'self', color: '#576B73', default: true },
       ],
     }),
 
