@@ -14,7 +14,19 @@
 // while empty and infers correctly the moment something is pushed into it.
 
 import { CatalogApplyAction, CatalogSyncAction } from './catalog.actions.js';
+import { TaskCompleteAction, TaskSkipAction, TaskUndoAction } from './task.actions.js';
 
 export { CatalogApplyAction, CatalogSyncAction };
+export { TaskCompleteAction, TaskSkipAction, TaskUndoAction };
 
-export const dulyActions = [CatalogApplyAction, CatalogSyncAction];
+export const dulyActions = [
+  CatalogApplyAction,
+  CatalogSyncAction,
+  // Object-bound (`objectName: 'duly_task'`), so defineStack() merges them
+  // into duly_task.actions and the dispatcher can find their declaration.
+  // An action reachable from a row still needs its handler registered in
+  // register-handlers.ts — see task.handlers.ts.
+  TaskCompleteAction,
+  TaskUndoAction,
+  TaskSkipAction,
+];
