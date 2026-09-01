@@ -47,6 +47,16 @@ beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
     databaseDriver: 'memory',
     skipSeedData: true,
+    // Point the artifact lookup at a path that cannot exist. Left to its
+    // default it resolves `<cwd>/dist/objectstack.json`, and when a local
+    // `pnpm build` has left one there the kernel loads its metadata — objects
+    // AND hooks — from that file instead of from the config imported above.
+    // The suite then reports on the last BUILD rather than on `src/`, passes
+    // with the barrel entry deleted, and behaves differently in CI (where
+    // `pnpm test` runs before `pnpm build` and no artifact exists) than it does
+    // on a developer's machine. Measured, not hypothetical: it is what made the
+    // registration ablation come back green.
+    artifactPath: 'dist/objectstack.this-suite-must-not-load-an-artifact.json',
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
