@@ -31,6 +31,17 @@ import { dulyHooks } from './src/hooks/index.js';
 import { dulyFunctions } from './src/functions/index.js';
 import { dulyPositions, dulyPermissionSets, dulySharingRules } from './src/security/index.js';
 
+// ─── Action handler registration ────────────────────────────────────────────
+// Action metadata declares the button; the handler is runtime code the kernel
+// wires here, after the engine is ready. Pre-wired for the same reason as the
+// barrels — handlers are added in src/actions/register-handlers.ts, not here.
+import { registerDulyActionHandlers } from './src/actions/register-handlers.js';
+import type { HandlerRegistrationContext } from './src/actions/register-handlers.js';
+
+export const onEnable = async (ctx: { ql: HandlerRegistrationContext }) => {
+  registerDulyActionHandlers(ctx.ql);
+};
+
 export default defineStack({
   manifest: {
     id: 'ai.objectstack.duly',
