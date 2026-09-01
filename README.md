@@ -43,7 +43,32 @@ pnpm dev
 
 The Console is at `http://localhost:3000/_console/`, the REST API at
 `http://localhost:3000/api/v1`, and the app is itself an MCP server at
-`/api/v1/mcp`.
+`/api/v1/mcp`. Sign in as `admin@objectos.ai` / `admin123`.
+
+### Two ways to start it
+
+Duly ships empty. Evaluating it *for your own organisation* and evaluating *the
+idea* are different things, so they are different commands:
+
+| Command | What you get |
+|:---|:---|
+| `pnpm dev` | An **empty Duly**. The objects, views and automations are all there; the records are yours to add — define your first duty against a role and watch it dispatch. This is also what a real deployment starts from. |
+| `pnpm demo` | The same app **preloaded with a worked example**: Ardenline Group, a fictional manufacturer — three sites, twelve people over a three-level org chart, a catalog of duties, and six months of history behind them, so every view has something in it on the first screen. |
+
+`pnpm demo` prepares the database and then starts the server; it is one
+command and it works on a clean checkout. Everything it writes is ordinary
+data, so you can edit or delete any of it.
+
+To go back to an empty app, delete the local database and start again:
+
+```bash
+rm -rf .objectstack/data
+pnpm dev
+```
+
+Nothing about the fictional organisation is real: every address is on an
+RFC 2606 reserved domain, and no real company, person, site or regulation is
+named anywhere in it.
 
 Every metadata directory is pre-wired into `objectstack.config.ts`, empty ones
 included: add your entry to the named array in your own `src/<type>/index.ts` and
@@ -75,6 +100,7 @@ src/datasets/  src/dashboards/   the semantic layer and what reads it
 src/security/            positions, permission sets, sharing rules
 src/mappings/  src/data/ catalog import and seed fixtures
 src/translations/        en (source) · zh-CN
+scripts/                 pnpm demo — prepare the database, then start with the example loaded
 docs/product/            positioning, data model, design principles
 ```
 
