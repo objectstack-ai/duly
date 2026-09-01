@@ -14,17 +14,30 @@ import { Assignment, Task } from '../src/objects/index.js';
  * What validate does NOT check is the part that makes this flow correct, and
  * that is what is pinned here:
  *
- *  - `objectstack validate` deliberately does not flag a BARE field reference
- *    inside a flow predicate. `collectBoundRecordReads` skips bare identifiers
- *    on purpose, because the engine flattens the trigger record's fields to
- *    top-level variable names and a bare name there may genuinely be a flow
- *    variable. So the house rule "predicates say `record.<field>`" has no gate
- *    behind it for flows — except this file.
  *  - Nothing in the toolchain checks that the idempotency guard is per OWNER
  *    rather than per assignment, that `period_key` stays unwritten, or that the
  *    trigger token is a single string. Each of those fails SILENTLY: a
  *    per-assignment guard creates zero tasks for a sixth assignee, and an
  *    ARRAY `triggerType` leaves the flow unbound and firing never.
+ *
+ * The house rule "predicates say `record.<field>`" is deliberately NOT checked
+ * here. It does need a repo-local gate — `objectstack validate` skips a bare
+ * identifier inside a flow predicate on purpose, because the engine flattens
+ * the trigger record's fields to top-level names and a bare name there may
+ * genuinely be a flow variable — and `test/flow-predicates.test.ts` is that
+ * gate, for every flow in `dulyFlows` rather than this one.
+ *
+ * This file used to carry a second, weaker copy of the rule. It found the bare
+ * occurrence correctly and then asked whether the source CONTAINED
+ * `record.<field>` anywhere, which is a different question, so a compound
+ * predicate satisfied it with a genuine bare reference still in place.
+ * Measured: with the start condition written
+ * `status == "dispatched" && record.status != "cancelled"`, that assertion
+ * passed while `test/flow-predicates.test.ts` reported
+ * `duly_assignment_fanout · node 'start' config.condition: reads 'status'
+ * bare`. One rule, one gate — and that gate is a stopgap that goes away when
+ * objectstack-ai/objectstack#14089 lands and `pnpm validate` covers bare
+ * identifiers itself.
  */
 
 type AnyRec = Record<string, unknown>;
@@ -305,24 +318,6 @@ describe('assignment fan-out — invariants a refactor would undo', () => {
       expect(w.config?.objectName, `${w.id} must not write the assignment`).toBe(Task.name);
     }
     expect(Assignment.fields.task_count.type).toBe('summary');
-  });
-
-  it('every predicate qualifies its record reads with `record.`', () => {
-    // Validate deliberately does not flag a bare identifier inside a flow, so
-    // this is the only gate on the house rule. A bare `status` also becomes
-    // ambiguous the moment a flow variable of that name is declared.
-    const assignmentFields = Object.keys(Assignment.fields);
-    for (const { where, source } of allPredicates()) {
-      for (const field of assignmentFields) {
-        const bare = new RegExp(`(^|[^.\\w])${field}\\b`);
-        if (bare.test(source)) {
-          expect(
-            source,
-            `${where} reads '${field}' bare — write record.${field}`,
-          ).toContain(`record.${field}`);
-        }
-      }
-    }
   });
 
   it('no predicate is wrapped in template braces', () => {
