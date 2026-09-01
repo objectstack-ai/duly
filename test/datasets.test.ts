@@ -42,11 +42,29 @@ const filterEntries = (node: unknown, path = ''): Array<[string, unknown]> => {
   ]);
 };
 
-/** Every string that appears anywhere inside a value, at any depth. */
-const deepStrings = (node: unknown): string[] => {
+/**
+ * Every string anywhere in a node — KEYS INCLUDED.
+ *
+ * The keys matter at least as much as the values, and getting this wrong is
+ * silent. In a filter condition the COLUMN is the key — `{ due_date: { $lt:
+ * '{today}' } }` — so a values-only walk cannot see which column is being read
+ * at all; it sees `{today}` and nothing else.
+ *
+ * That is not hypothetical. The first revision of this file walked
+ * `Object.values` only, and the "stagnation never looks at due_date"
+ * assertion below stayed GREEN with a real `due_date: { $lt: '{today}' }`
+ * condition injected into a stagnation bucket. The single most important
+ * assertion here was asserting nothing, and it took an ablation to find it —
+ * a passing test is not evidence that a guard works.
+ */
+const deepText = (node: unknown): string[] => {
   if (typeof node === 'string') return [node];
   if (node === null || typeof node !== 'object') return [];
-  return Object.values(node as Record<string, unknown>).flatMap(deepStrings);
+  if (Array.isArray(node)) return node.flatMap(deepText);
+  return Object.entries(node as Record<string, unknown>).flatMap(([key, value]) => [
+    key,
+    ...deepText(value),
+  ]);
 };
 
 describe('dataset protocol', () => {
@@ -110,7 +128,7 @@ describe('the absences that are the product', () => {
     // and a dataset is the one place that could quietly undo it.
     for (const ds of dulyDatasets) {
       expect(ds.object, `${ds.name} base object`).not.toBe('duly_log_entry');
-      for (const text of deepStrings(ds)) {
+      for (const text of deepText(ds)) {
         expect(text, `${ds.name} references the work log`).not.toContain('duly_log_entry');
       }
     }
@@ -145,7 +163,7 @@ describe('the absences that are the product', () => {
       for (const word of ['percent', 'pct', 'completion', 'progress']) {
         expect(name, `${dataset}.${measure.name}`).not.toContain(word);
       }
-      const fields = deepStrings(measure).join(' ');
+      const fields = deepText(measure).join(' ');
       expect(fields, `${dataset}.${measure.name}`).not.toContain('progress_percent');
     }
   });
@@ -166,7 +184,7 @@ describe('the absences that are the product', () => {
 
   it('lateness is never stored — no measure reads a derived flag', () => {
     for (const { dataset, measure } of allMeasures) {
-      const text = deepStrings(measure).join(' ');
+      const text = deepText(measure).join(' ');
       for (const flag of ['is_late', 'is_overdue', 'is_open', 'is_completed']) {
         expect(text, `${dataset}.${measure.name}`).not.toContain(flag);
       }
@@ -188,7 +206,7 @@ describe('duly_stagnation — stagnation is not lateness', () => {
     // nowhere" and starts answering "what has already failed", which the
     // lateness measures are for and which arrives weeks too late to act on.
     for (const measure of stagnation.measures) {
-      const text = deepStrings(measure).join(' ');
+      const text = deepText(measure).join(' ');
       expect(text, `${measure.name} must not look at due_date`).not.toContain('due_date');
     }
   });
@@ -274,7 +292,7 @@ describe('duly_duty_health', () => {
     // is re-graced — AGENTS.md rule 5. If a measure ever needs grace, it reads
     // it through the join or it does not exist.
     for (const measure of health.measures) {
-      const text = deepStrings(measure).join(' ');
+      const text = deepText(measure).join(' ');
       expect(text).not.toContain('grace_days');
     }
   });
