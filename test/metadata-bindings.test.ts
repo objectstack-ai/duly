@@ -416,9 +416,9 @@ interface Stack {
   readonly objects: readonly DeclaredObject[];
   /**
    * Dashboards are here for ONE reason: a `type: 'dashboard'` nav entry
-   * targets one by name, and an unresolvable `dashboardName` is the same
-   * #14108 failure as an unresolvable `viewName` — the shell has nothing to
-   * open and the authored label stays on the entry either way.
+   * targets one by name, and the walk has to READ that name rather than skip
+   * the type. (The platform does resolve this one — see the branch in
+   * `walkNav` — unlike the `viewName` case #14108 is about.)
    *
    * The bindings INSIDE a dashboard (widget → dataset → dimension/measure,
    * and the widget's own `filter` keys) are NOT walked here; they are the
@@ -638,11 +638,17 @@ export const metadataBindingFindings = (stack: Stack): WalkResult => {
       }
       if (type === 'dashboard') {
         /**
-         * `DashboardNavItemSchema` carries `dashboardName`, not an object —
-         * so the reference to resolve is the DASHBOARD, and the failure it
-         * guards is #14108's: nothing resolves this name at author time, and
-         * a miss is a nav entry that opens nothing while keeping the label
-         * that promised a screen.
+         * `DashboardNavItemSchema` carries `dashboardName`, not an object, so
+         * the reference to resolve is the DASHBOARD.
+         *
+         * Unlike `viewName` (#14108), this one is NOT an unguarded reference:
+         * measured on `@objectstack/cli` 17.2.0 by pointing the entry at a
+         * `duly_ghost`, `defineStack`'s own cross-reference validation refuses
+         * the stack — validate exits 1, build exits 2, and every test that
+         * imports the config goes red at once. The branch is here so the walk
+         * READS the type instead of dropping it into `unknownSlots`, and so a
+         * miss names the nav entry at unit level before the whole suite
+         * explodes at config load. It is not standing in for a missing gate.
          */
         const dashboardName = String(item.dashboardName ?? '');
         if (dashboardNames.has(dashboardName)) {

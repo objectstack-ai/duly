@@ -14,24 +14,42 @@ import { dulyObjects } from '../src/objects/index.js';
 /**
  * The manager dashboard, pinned on the two axes a schema cannot see.
  *
- * ── 1. Bindings, because NOTHING else resolves them ──────────────────────
+ * ── 1. Bindings — the TWO the platform does not resolve ──────────────────
  *
- * ⚠️ STOPGAP for the widget half of objectstack#14105 — delete this section
- * when the platform resolves dataset references at author time.
+ * The card and its PM note both assumed this whole surface was unguarded,
+ * carrying #14105 (datasets) up a layer. Measured instead, by mutating this
+ * dashboard one reference at a time on `@objectstack/cli` 17.2.0 — the table
+ * is in `src/dashboards/index.ts` — and most of it IS guarded: a bad widget
+ * `dataset`, `dimensions[]`, `values[]` or `{date-macro}` fails `validate`
+ * and `build` with a named rule and a "did you mean", and an unresolvable nav
+ * `dashboardName` is refused by `defineStack` itself.
  *
- * A widget names its dataset, dimensions and measures BY NAME (ADR-0021), and
- * a name that resolves to nothing renders an EMPTY widget while `validate`
- * and `build` both exit 0 (measured on `@objectstack/cli` 17.2.0; see the
- * table in the ablation note at the bottom of this file). `test/
- * metadata-bindings.test.ts` walks views, datasets and nav — it does NOT walk
- * dashboard widgets, and its `dulyDashboards` import exists only to resolve
- * the nav entry's `dashboardName`.
+ * Two references are not resolved, and both fail silently. Filed upstream as
+ * **objectstack-ai/objectstack#14148**; the binding half of this file is a
+ * STOPGAP and should be deleted when that lands, not kept in step with it:
  *
- * On this screen specifically, an empty tile is the worst available failure:
- * **an empty "not moving" tile is indistinguishable from a healthy team.** A
- * number that is missing reads as a number that is zero, and zero is exactly
- * the answer a manager hopes for. That is why the binding walk below is a
- * resolver with self-tests rather than a handful of `toBeDefined()` calls.
+ *  1. **A widget `filter` KEY.** `due_daet: { $gte: '{today}' }` → validate 0,
+ *     build 0. The condition matches nothing and the widget renders EMPTY.
+ *     On the SAME node a bad `{token}` IS caught, path-precisely
+ *     (`widgets[4].filter.due_date.$lte`) — so the traversal reaches the
+ *     filter and only the column resolution is missing, which is exactly the
+ *     asymmetry #14105 records one layer down.
+ *  2. **`options.sortBy` naming something the widget does not select.**
+ *     validate 0, build 0; the authored order silently does not happen and
+ *     the runtime falls back to the selected dimensions. On the by-unit chart
+ *     that is the difference between "ordered by the org chart" and "ordered
+ *     by whatever the runtime picked", and the card's rule — never order a
+ *     unit chart by the count — is enforced by nothing else.
+ *
+ * On this screen an empty widget is the worst available failure: **an empty
+ * "not moving" tile is indistinguishable from a healthy team.** A missing
+ * number reads as zero, and zero is the answer a manager hopes for. So the
+ * walk below is a resolver with self-tests rather than a few `toBeDefined()`
+ * calls — and it resolves the dataset/dimension/measure names too, not
+ * because they need it, but because resolving a filter key requires the
+ * dataset in hand to reach its base object. That redundancy is stated rather
+ * than sold: when the two holes above close upstream, this walk goes with
+ * them and only the invariants below stay.
  *
  * ── 2. The product invariants ────────────────────────────────────────────
  *
@@ -327,7 +345,7 @@ describe('dashboard protocol', () => {
 
 // ─── Bindings ────────────────────────────────────────────────────────────
 
-describe('widget bindings — every reference resolves (stopgap for the widget half of objectstack#14105)', () => {
+describe('widget bindings — every reference resolves (stopgap for objectstack#14148)', () => {
   it('every widget dataset, dimension, measure, filter key and date macro names something real', () => {
     expect(
       result.findings.map((f) => `${f.where}: "${f.reference}" — ${f.reason}`),
@@ -700,15 +718,19 @@ describe('widget bindings — the guard can fail (self-test on synthetic metadat
    * guard that cannot fail. Same posture as `test/metadata-bindings.test.ts`:
    * one fixture per reference kind, in both directions.
    *
-   * These are also the ablation evidence for the platform gap this file
-   * stands in for. Measured on `@objectstack/cli` 17.2.0, with each mutation
-   * applied to the REAL dashboard and confirmed on disk before the run:
+   * Each case below was also run as an ablation against the REAL dashboard —
+   * mutation confirmed on disk with `grep -F` before the gates, restored by a
+   * trap after. What that measured is in `src/dashboards/index.ts`; the two
+   * rows this file exists for are the ones where both gates exit 0:
    *
-   *   | mutation on a widget          | validate | build | this file |
-   *   |-------------------------------|----------|-------|-----------|
-   *   | dataset  → `duly_stagnatoin`  | 0        | 0     | fails     |
-   *   | measure  → `untouched_over_14`| 0        | 0     | fails     |
-   *   | filter key → `due_daet`       | 0        | 0     | fails     |
+   *   | mutation on the real widget      | validate | build | this file |
+   *   |----------------------------------|----------|-------|-----------|
+   *   | filter key → `due_daet`          | 0        | 0     | fails     |
+   *   | sortBy → `not_selected`          | 0        | 0     | fails     |
+   *   | dataset → `duly_stagnatoin`      | 1        | 1     | fails     |
+   *   | measure → `untouched_over_14`    | 1        | 1     | fails     |
+   *   | dimension → `business_unitt`     | 1        | 1     | fails     |
+   *   | token → `{14_days_hence}`        | 1        | 1     | fails     |
    */
   const objects: DeclaredObject[] = [
     { name: 'fx_task', fields: { status: { type: 'select' }, due_date: { type: 'date' } } },

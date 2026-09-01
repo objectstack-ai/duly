@@ -195,6 +195,19 @@ export const DutyHealthDashboard = Dashboard.create({
      * is a workload question; the same chart keyed on `owner` would be a
      * performance score, which is why `owner` appears nowhere in this file.
      *
+     * `business_unit` is a LOOKUP, and ordering one used to sort by the
+     * opaque FK id — "sorted by unit" that reads as random (objectstack#3680).
+     * That was fixed upstream in #3693: a select/lookup dimension is now
+     * ordered by the resolved display LABEL, which is what makes this the
+     * "unit name" order the card asks for rather than merely a count-free
+     * one. Worth a glance in a browser with real units — this repo cannot run
+     * the analytics query.
+     *
+     * ⚠ Nothing in the platform checks that `sortBy` names something this
+     * widget selects: a typo here exits 0 on both gates and the authored
+     * order silently does not happen (objectstack#14148 part B). That is why
+     * `test/dashboard.test.ts` resolves it.
+     *
      * One series, deliberately: `untouched_over_14d` and `untouched_over_30d`
      * are nested thresholds, so a second series here would invite exactly the
      * addition the nesting forbids. The >30d number is a tile of its own
