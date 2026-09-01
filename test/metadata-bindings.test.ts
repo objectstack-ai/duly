@@ -1418,3 +1418,207 @@ describe('grouping-projection guard — the guard can fail (self-test on synthet
     expect(walk.exempt).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// The by-unit lens stays scoped to open work (stopgap for objectui#7189)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️ THIRD STOPGAP, and it is the SAME defect family as the grouping-
+ * projection guard directly above — deliberately in this file, next to it,
+ * rather than as a second mechanism somewhere else. That one makes the
+ * grouping field arrive; this one keeps the grouped set small enough for the
+ * grouping to be COMPLETE. Both go when **objectstack-ai/objectui#7189**
+ * lands, and not before.
+ *
+ * ── The defect, measured on `0f0ec49` with the #75 seed ─────────────────
+ * `/_console/apps/ai.objectstack.duly/duly_task/view/by_unit` carried no
+ * filter, so it rendered all 186 tasks — 151 of them `done`. The request is
+ * `top=100`, the grid groups CLIENT-SIDE over the rows already fetched, and
+ * its per-group counts are `computeAggregations` over that same array
+ * (objectui's `useGroupedData`). There is no server-side grouping path for a
+ * grid at all. What the screen showed:
+ *
+ *   | group header         | shown |  in store |
+ *   |----------------------|-------|-----------|
+ *   | Northgate Operations |    33 |        61 |
+ *   | Northgate Plant      |     3 |         7 |
+ *   | Northgate Quality    |    46 |        86 |
+ *   | Riverside Plant      |    18 |        31 |
+ *   | Central Office       |   — no group at all — |         1 |
+ *
+ * Every count was a page slice reading as a total, and one of the five units
+ * was ABSENT with nothing on screen saying so. The absent unit is the sharper
+ * half: a wrong number invites a second look, a missing row does not.
+ *
+ * Scoped to `status in ('open','in_progress')` the lens fits in one page:
+ * 27 `open` + 6 `in_progress` = 33 rows, all five units present, every count
+ * true. Counted off the seed, not off the screen.
+ *
+ * ── Why this is a PIN on one lens, not "grouped grids must be filtered" ──
+ * A filter requirement over every grouped grid would fire on `duly_duty ›
+ * catalog_tree`, which groups two levels deep and carries no filter — and
+ * measurably does not need one: the seed holds **31** duties, one page, all
+ * groups present, all counts true. Making it declare a filter to satisfy a
+ * rule is the same mistake the guard above narrows away from — a rule that
+ * fires on a non-bug teaches the next reader that the test lies. What is
+ * actually being guarded is not "has a filter", it is a DECISION about one
+ * lens, so this pins that decision and INVENTORIES the rest: a newly added
+ * grouped grid, or a re-spelled filter, changes the inventory and lands here
+ * for a human read instead of passing silently.
+ *
+ * That inventory is also the non-vacuity counter. A walk that stopped seeing
+ * `grouping` — a renamed key, a refactor of `flattenViews` — would satisfy a
+ * bare "by_unit is scoped" assertion by finding nothing at all.
+ *
+ * ── What the walk reads, and what it deliberately does not ──────────────
+ * Membership scoping only: `status` + `in` + a value list. A re-spelling that
+ * excludes the same rows a different way (`status not_in ['done', …]`) reads
+ * as `(none)` here and fails the pin. That is intended rather than an
+ * oversight — the two are different decisions with different edges
+ * (`not_in ['done']` also admits `cancelled` and `skipped`), and a changed
+ * decision on this lens is exactly the thing that should stop a human.
+ *
+ * ── Proven red before the fix ───────────────────────────────────────────
+ * Run against `src/views/task.view.ts` as it stood at `0f0ec49` — the fix
+ * committed first, then that one file restored to its pre-fix state, so the
+ * revert had somewhere to come back from. `npx vitest run
+ * test/metadata-bindings.test.ts` exited 1 on both assertions; the excerpt is
+ * in the PR body.
+ */
+interface GroupedScope {
+  /** e.g. `view duly_task › listViews.by_unit`. */
+  readonly where: string;
+  /** Grouping levels, in the order they nest. */
+  readonly groupsBy: readonly string[];
+  /** `status` values the lens is scoped to; empty when it carries no such filter. */
+  readonly statusScope: readonly string[];
+}
+
+/** Every list view that groups, with the status scope it carries. */
+export const groupedGridScopes = (views: readonly unknown[]): GroupedScope[] => {
+  const out: GroupedScope[] = [];
+
+  for (const { where, view } of flattenViews(views)) {
+    const groupsBy = (((view.grouping as Rec | undefined)?.fields as Rec[]) ?? [])
+      .map((level) => fieldOf(level))
+      .filter((field): field is string => typeof field === 'string' && field !== '');
+    if (groupsBy.length === 0) continue;
+
+    // `ListViewSchema.filter` is a rule array; anything else is not a scope
+    // this walk can read, and reads as unscoped rather than being assumed.
+    const rules = Array.isArray(view.filter) ? (view.filter as Rec[]) : [];
+    const statusScope = rules
+      .filter((rule) => rule?.field === 'status' && rule?.operator === 'in')
+      .flatMap((rule) => (Array.isArray(rule.value) ? (rule.value as unknown[]) : []))
+      .filter((value): value is string => typeof value === 'string')
+      .sort();
+
+    out.push({ where, groupsBy, statusScope });
+  }
+
+  return out;
+};
+
+const scopeLines = (scopes: readonly GroupedScope[]): string[] =>
+  scopes.map(
+    (s) => `${s.where} · groups by ${s.groupsBy.join(', ')} · status scope: ${s.statusScope.join(', ') || '(none)'}`,
+  );
+
+const groupedScopes = groupedGridScopes(stack.views);
+
+describe('the by-unit lens stays scoped to open work (stopgap for objectui#7189)', () => {
+  it('`by_unit` carries the open-work status filter its grouping depends on', () => {
+    const byUnit = groupedScopes.find((s) => s.where === 'view duly_task › listViews.by_unit');
+    expect(byUnit, 'the by-unit lens no longer exists, or no longer groups').toBeDefined();
+    expect(
+      byUnit!.statusScope,
+      'the by-unit lens lost the status filter that keeps its grouping complete. The grid groups over '
+        + 'the FETCHED PAGE, so widening this filter puts 151 finished tasks back in front of the open '
+        + 'ones, the lens pages again, and a whole business unit drops off the screen with nothing saying '
+        + 'a unit is missing — no error, and `validate`, `typecheck`, `test` and `build` all stay green. '
+        + 'Restore `status in [\'open\', \'in_progress\']`, and do not reach for a bigger page size: that '
+        + 'moves the cliff instead of removing it. See objectstack-ai/objectui#7189.',
+    ).toEqual(['in_progress', 'open']);
+  });
+
+  it('inventories every grouped grid and the scope it carries', () => {
+    // Doubles as the non-vacuity counter for the assertion above. A NEW
+    // grouped grid appearing here is not automatically a defect — judge it
+    // the way `catalog_tree` was judged: does its whole result set fit in one
+    // page? If it can outgrow one, it needs a scope for its counts to mean
+    // anything.
+    expect(
+      scopeLines(groupedScopes).sort(),
+      'the set of grouped grids, or the scope one carries, changed — read the note above before updating this',
+    ).toEqual([
+      'view duly_duty › listViews.catalog_tree · groups by business_unit, owner · status scope: (none)',
+      'view duly_task › listViews.by_unit · groups by business_unit · status scope: in_progress, open',
+    ]);
+  });
+});
+
+describe('grouped-grid scope guard — the guard can fail (self-test on synthetic metadata)', () => {
+  const grouped = (overrides: Rec, key = 'lens'): unknown => ({
+    listViews: {
+      [key]: {
+        label: 'Lens',
+        type: 'grid',
+        data: { provider: 'object', object: 'fx_task' },
+        columns: [{ field: 'subject' }, { field: 'business_unit' }],
+        grouping: { fields: [{ field: 'business_unit' }] },
+        ...overrides,
+      },
+    },
+  });
+
+  it('reads the open-work scope off an `in` filter', () => {
+    const scopes = groupedGridScopes([
+      grouped({ filter: [{ field: 'status', operator: 'in', value: ['open', 'in_progress'] }] }),
+    ]);
+    expect(scopes.map((s) => s.statusScope)).toEqual([['in_progress', 'open']]);
+  });
+
+  it('reports `(none)` for a grouped grid carrying no filter at all — the pre-fix by_unit', () => {
+    const scopes = groupedGridScopes([grouped({})]);
+    expect(scopeLines(scopes)).toEqual([
+      'view fx_task › listViews.lens · groups by business_unit · status scope: (none)',
+    ]);
+  });
+
+  it('reports `(none)` when the filter is present but scopes another field', () => {
+    // `catalog_tree` is unscoped this way too — a filter that narrows on
+    // something else does not bound the grouped set by status.
+    const scopes = groupedGridScopes([
+      grouped({ filter: [{ field: 'due_date', operator: 'less_than', value: '{today}' }] }),
+    ]);
+    expect(scopes[0]!.statusScope).toEqual([]);
+  });
+
+  it('sees a WIDENED scope as a different scope — this is what catches the regression', () => {
+    const scopes = groupedGridScopes([
+      grouped({ filter: [{ field: 'status', operator: 'in', value: ['open', 'in_progress', 'done'] }] }),
+    ]);
+    expect(scopes[0]!.statusScope).toEqual(['done', 'in_progress', 'open']);
+  });
+
+  it('does not read a `not_in` re-spelling as the same decision', () => {
+    // Deliberate: `not_in ['done']` also admits `cancelled` and `skipped`, so
+    // it is a different decision and should stop a human rather than pass.
+    const scopes = groupedGridScopes([
+      grouped({ filter: [{ field: 'status', operator: 'not_in', value: ['done'] }] }),
+    ]);
+    expect(scopes[0]!.statusScope).toEqual([]);
+  });
+
+  it('records every grouping level, so the inventory line names the real shape', () => {
+    const scopes = groupedGridScopes([
+      grouped({ grouping: { fields: [{ field: 'business_unit' }, { field: 'owner' }] } }),
+    ]);
+    expect(scopes[0]!.groupsBy).toEqual(['business_unit', 'owner']);
+  });
+
+  it('examines nothing on a view that does not group', () => {
+    expect(groupedGridScopes([grouped({ grouping: undefined })])).toEqual([]);
+  });
+});
