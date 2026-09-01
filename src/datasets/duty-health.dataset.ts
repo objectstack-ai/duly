@@ -64,8 +64,9 @@ import { governed } from './governed.js';
  * instantiation, and read by NOTHING. This dataset was its only intended
  * consumer.
  *
- * Filed upstream — see the PR body for the issue reference. Do not close this
- * hole locally.
+ * Filed upstream as **objectstack-ai/objectstack#14104**, with parts 2 and 3 above
+ * as the two independent halves. Do not close this hole locally: an approximation
+ * here is exactly how a platform gap becomes permanent and invisible.
  *
  * ── `tasks_due` excludes cancelled, in every dataset that uses the name ───
  * A cancelled task was withdrawn: it was never owed, so it is neither load nor
