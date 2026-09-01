@@ -155,24 +155,95 @@ export const Duty = ObjectSchema.create({
       description: 'Anchors the due date inside a period. Only a recurring duty has one; blank (and forbidden) for standing and one-off.',
     }),
 
+    // ── Why these three carry `scale` and bounds (#82) ────────────────────
+    // All three are WHOLE DAYS, and the engine's number validator enforces
+    // `min` / `max` / `scale` only when they are DECLARED. Undeclared, a
+    // fractional or absurd value saves clean, passes `pnpm validate` and
+    // renders fine — then fails days later inside the nightly batch, recorded
+    // against the JOB rather than against the duty that holds the bad value.
+    //
+    // `scale: 0` rather than a sixth hand-written validation: it is the
+    // platform's own declarative answer to exactly this (AGENTS.md rule 9),
+    // and it does something no rule can — the form renders a whole-number
+    // input, so the value is harder to type wrong in the first place. The
+    // platform's refusal was measured before this was decided rather than
+    // assumed insufficient (the card left "or a script validation with a
+    // product-voice message" open), and it turns out to name the field by its
+    // LABEL, the limit, and what arrived:
+    //
+    //   ValidationError: Offset (days, 0 = anchor day) must have at most 0
+    //   decimal places (got 1)                          code VALIDATION_FAILED
+    //   fields[0]: { field: 'due_offset_days', code: 'max_scale',
+    //                constraint: { scale: 0, actual: 1 } }
+    //
+    // That is already product voice, so nothing is layered on top of it. The
+    // bounds read the same way — "Grace (days) must be ≤ 14".
+    //
+    // ── The three do NOT share a failure mode ─────────────────────────────
+    // Same declaration, three different routes to the period engine — measured
+    // one duty at a time on 17.2.0, against the real engine and the real CEL
+    // evaluator, because "same declaration" is not "same behaviour":
+    //
+    //   due_offset_days: 1.5  `dueDateFor` throws, `planForDuty` catches it as
+    //                         `invalid_cadence`, the run reports `degraded`
+    //                         and the duty produces no tasks —
+    //                         "dueOffsetDays must be a whole number of days,
+    //                          received 1.5".
+    //   lead_days: 2.5        Throws too, but one function over:
+    //                         `visibleFromFor`, reached through
+    //                         `addCalendarDays`, which NEGATES its argument.
+    //                         So the message names a number nobody typed —
+    //                         "leadDays must be a whole number of days,
+    //                          received -2.5".
+    //   grace_days: 2.5       Throws NOWHERE. It never reaches the period
+    //                         engine at all; its only evaluating reader is the
+    //                         overdue escalation's CEL gate, which wraps it in
+    //                         `int()`. Measured: `int(2.5) == 2`,
+    //                         `int(2.9) == 2`. A duty declaring 2.5 days of
+    //                         grace escalates on precisely the day one
+    //                         declaring 2 does — silently, forever.
+    //
+    // ── The bounds ────────────────────────────────────────────────────────
+    // `9e9` was accepted here too, and failed later still: measured as
+    // "dueDate must be a YYYY-MM-DD calendar date, received 0NaN-NaN-NaN",
+    // which names neither the field nor anything the author typed. An anchor
+    // or a lead window reaching more than a year outside its own period is a
+    // typo, not a schedule, so ±366 / 0..366 is where they stop.
+    //
+    // `grace_days` stops at 14, and that number is NOT a taste call. The
+    // overdue escalation fires on `due_date + grace_days + 1` and its sweep
+    // looks back `OVERDUE_LOOKBACK_DAYS` (15) days
+    // (`src/flows/reminders.flow.ts`), so a grace of 15 or more puts day one
+    // outside the swept window and the escalation NEVER FIRES — the same
+    // silent inertness this card is about, one flow over. 14 is the largest
+    // grace the product can currently honour; raising it means raising the
+    // lookback, and `test/reminders.test.ts` holds the two numbers together so
+    // neither can move alone.
     due_offset_days: Field.number({
       label: 'Offset (days, 0 = anchor day)',
       defaultValue: F`record.form != "recurring" ? null : 0`,
-      description: 'Days from the anchor day, which is offset 0. On "Start of period": 0 = the first day of the period, 4 = the fifth day. On "End of period": 0 = the last day of the period, -3 = three days before the last. Only a recurring duty has a period to offset into; blank (and forbidden) for standing and one-off.',
+      scale: 0,
+      min: -366,
+      max: 366,
+      description: 'Days from the anchor day, which is offset 0. On "Start of period": 0 = the first day of the period, 4 = the fifth day. On "End of period": 0 = the last day of the period, -3 = three days before the last. Whole days, and within a year either side of the anchor — anything larger is a typo, not a schedule. Only a recurring duty has a period to offset into; blank (and forbidden) for standing and one-off.',
     }),
 
     lead_days: Field.number({
       label: 'Lead time (days)',
       defaultValue: F`record.form != "recurring" ? null : 7`,
+      scale: 0,
       min: 0,
-      description: 'How far ahead of the due date the task appears in the owner\'s list. A task that shows up on its due date is a task that is already late. Only a recurring duty is dispatched with a lead window; blank (and forbidden) for standing and one-off.',
+      max: 366,
+      description: 'How far ahead of the due date the task appears in the owner\'s list. A task that shows up on its due date is a task that is already late. Whole days, up to a year. Only a recurring duty is dispatched with a lead window; blank (and forbidden) for standing and one-off.',
     }),
 
     grace_days: Field.number({
       label: 'Grace (days)',
       defaultValue: F`record.form == "standing" ? null : 0`,
+      scale: 0,
       min: 0,
-      description: 'Days after the due date before an open task counts as late. Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
+      max: 14,
+      description: 'Days after the due date before an open task counts as late. Whole days, up to 14 — the overdue reminder sweeps 15 days back, so a longer grace would put day one outside the window and never fire at all. Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
     }),
 
     // A global product cannot compute "the 5th of the month" without knowing

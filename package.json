@@ -6,7 +6,8 @@
   "description": "Duly — recurring obligation and duty management on ObjectStack.",
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "objectstack dev",
+    "dev": "objectstack dev --compile",
+    "demo": "node scripts/demo.mjs",
     "start": "objectstack start",
     "build": "objectstack build",
     "validate": "objectstack validate",
