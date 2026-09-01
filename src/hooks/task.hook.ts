@@ -3,12 +3,48 @@
 import type { Hook, HookContext } from '@objectstack/spec/data';
 
 /**
- * `duly_task` lifecycle stamps — the two server-owned timestamps.
+ * `duly_task` lifecycle stamps — the server-owned columns.
  *
- * Both `completed_at` and `last_update_at` are `readonly: true`, so a caller's
- * value is stripped at the API boundary and this hook is their ONE writer. A
- * value a `beforeUpdate` hook derives is not a caller write and survives that
- * strip.
+ * `completed_at`, `last_update_at`, `late_after` and `completed_late` are all
+ * `readonly: true`, so a caller's value is stripped at the API boundary and
+ * this hook is their ONE writer. A value a `before*` hook derives is not a
+ * caller write and survives that strip.
+ *
+ * ── The two lateness stamps, and why they are stored at all ──────────────
+ * "Late" is `due_date + duty.grace_days` against a moment, and no filter or
+ * dataset grammar can say it: no date arithmetic, no column-to-column
+ * comparison on the SQL path, and here the offset is itself a column on a
+ * joined object (objectstack#14104). Both halves become knowable at a definite
+ * instant, so each is resolved at that instant and stored:
+ *
+ *   `late_after`     = `due_date + grace_days`   · at DISPATCH, by the planner
+ *   `completed_late` = `completed_at > late_after` · at COMPLETION, here
+ *
+ * Neither is a MAINTAINED flag — the shape `AGENTS.md` rule 5 forbids, which
+ * needs a writer running every midnight and lies on the day it does not run.
+ * Each is written once, at the moment it becomes true, and is never recomputed:
+ * the same category as `completed_at` beside them. The boundary is written out
+ * under rule 5 itself.
+ *
+ * **Write-once is the whole design.** Change a duty's `grace_days` and tasks
+ * already completed keep their verdict, and already-dispatched open tasks keep
+ * the `late_after` they were born with. A compliance record that rewrites
+ * itself when configuration changes is worth nothing in front of an auditor.
+ * If a replay is ever wanted, `duly_catalog_sync` is where it belongs — it
+ * already exists to push duty edits onto instantiated records — and it
+ * deliberately does not do this today.
+ *
+ * Two consequences of THIS hook holding the pen, both deliberate:
+ *
+ *  - `late_after` is never touched on an update except to fill a blank. There
+ *    is no leg that recomputes it, so no duty edit and no re-date can move it.
+ *  - The verdict compares CIVIL DAYS in UTC, not instants in the duty's zone.
+ *    Grace is granted in whole days, and the overdue escalation already judges
+ *    lateness on `daysBetween(due_date, today())` — the same UTC day boundary.
+ *    Agreeing with it is the point of this card: one system, one answer. A
+ *    per-zone boundary would need the duty read this handler deliberately does
+ *    not do (see "one self-contained function" below), and it would put the two
+ *    surfaces back into disagreement by up to a day.
  *
  * ── Why this hook must stay in the barrel ────────────────────────────────
  * Hooks are read from `defineStack({ hooks })` only. A `*.hook.ts` that is not
@@ -74,6 +110,46 @@ import type { Hook, HookContext } from '@objectstack/spec/data';
  * The single-record path (`dispatch.mode === 'record'`) has a payload of its
  * own, so the row-conditional stamp is sound there and is unchanged.
  *
+ * ── `completed_late` on that path: refuse the LATE direction only ────────
+ * The verdict is read off THIS row's `late_after`, so it is the same
+ * out-of-contract rewrite `completed_at` is — worse, in fact, because two rows
+ * in one batch can legitimately disagree: tick five tasks together and one of
+ * them is past its grace, and whichever dispatch runs last decides the
+ * compliance record for all five.
+ *
+ * Refusing every bulk completion would answer that, and it would delete a
+ * feature this product is built around — a week of ticks in one gesture is the
+ * difference between a Monday habit and a chore. Writing NOTHING, the answer
+ * `last_update_at` gets below, is not available either: that one is safe only
+ * because nothing reads it on this path, and here the on-time rate reads
+ * exactly these rows. A silent null verdict on the most common completion
+ * gesture in the product is the defect this card exists to remove.
+ *
+ * So the guard is asymmetric, and the asymmetry is what makes the write sound:
+ *
+ *  - A row that would be stamped LATE refuses the write
+ *    (`DULY_TASK_BULK_LATE_COMPLETION`, 409), naming the task and the day its
+ *    grace ran out.
+ *  - Every row that survives its own guard computes `false`, so the value that
+ *    reaches the shared payload is the one every matched row would have
+ *    written. It is row-INVARIANT by construction, not by luck.
+ *
+ * A batch is therefore either wholly on time and stamped correctly, or refused
+ * — decided from each row alone, in any dispatch order, with no accumulator.
+ * The cost is stated rather than hidden: a selection that includes late work
+ * cannot be completed in one gesture, and the caller is told which row and why.
+ * Bulk SKIP is untouched (`skipped` is not a completion), and so is the
+ * clearing direction: `completed_late = null` alongside `completed_at = null`
+ * is correct for every row leaving `done`.
+ *
+ * Not extended to the view's `visible` predicate the way the already-done
+ * guard is. That predicate is a client-side hide, and this condition depends on
+ * the completion instant against a stored date — a boundary that moves at
+ * midnight, between the render and the write. A predicate that evaluated it
+ * differently from the server would hide a working action instead of
+ * preventing a refused one, and a silently missing bulk action is worse than an
+ * error that names its cause.
+ *
  * ── The same path and `last_update_at`: write nothing, do not refuse ─────
  * The stagnation stamp is row-conditional too, in the other direction: it
  * fires when THIS row's `status`, `note` or `skip_reason` differs from THIS
@@ -131,9 +207,50 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
   const input = ctx.input as Record<string, unknown>;
   const now = new Date().toISOString();
 
+  // The CIVIL DAY an instant falls on. `late_after` is a calendar date and
+  // `completed_at` is an instant, so the verdict has to be day-against-day:
+  // grace is granted in whole days, and a task completed at 14:00 on the last
+  // day of its grace is inside it. Both spellings are ISO, so a lexical `>` is
+  // chronological. Accepts a `Date` because a caller's payload may carry one.
+  const dayOf = (value: unknown): string => {
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    return typeof value === 'string' ? value.slice(0, 10) : '';
+  };
+
+  // The verdict. `false` when there is no deadline to miss — see the header:
+  // a definite "not late" rather than a missing answer, so `done` always
+  // splits into on-time + late.
+  const completedLate = (completedAt: unknown, lateAfter: unknown): boolean => {
+    const completedDay = dayOf(completedAt);
+    const deadline = dayOf(lateAfter);
+    if (completedDay === '' || deadline === '') return false;
+    return completedDay > deadline;
+  };
+
   if (ctx.event === 'beforeInsert') {
     // A brand-new task has just been touched, by definition.
     input.last_update_at = now;
+
+    // ── late_after — the zero-grace fallback, for the paths with no duty ──
+    // The dispatcher stamps this itself, with the duty's own grace
+    // (`dispatch.plan.ts`). Every other producer has no duty to read: the
+    // assignment fan-out creates tasks with `duty` unset, and a member
+    // hand-creating their own task has none either. Zero grace is what "no
+    // duty governs this row" already means to the overdue escalation, so the
+    // two surfaces agree rather than one of them silently never firing.
+    //
+    // A task with no `due_date` keeps a blank stamp: there is no deadline to
+    // derive, and a task with no due date genuinely cannot be late.
+    const dueDay = dayOf(input.due_date);
+    if (dueDay !== '' && dayOf(input.late_after) === '') input.late_after = dueDay;
+
+    // A row inserted ALREADY done — a seeded history, an import — carries its
+    // verdict from the same beat, because both halves are on the payload. The
+    // dispatch contract has no predicate INSERT (it covers update and delete
+    // only), so this is a payload of one row and there is no batch to leak on.
+    if (input.status === 'done') {
+      input.completed_late = completedLate(input.completed_at, input.late_after);
+    }
     return;
   }
 
@@ -173,13 +290,58 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
     );
   }
 
+  // ── late_after — FILLED once if it is blank, never rewritten ───────────
+  // Write-once is the design (see the header), so this leg only ever turns a
+  // blank into a value: a task that acquires a due date after it was created
+  // would otherwise be one that can never be late anywhere. A row that already
+  // carries a stamp keeps it, whatever happens to its due date afterwards.
+  //
+  // Not on the shared-payload path. The CONDITION here is row-conditional —
+  // "this row has no stamp" — so on a batch the fill computed for a blank row
+  // would land on every matched row and overwrite a stamp another row was born
+  // with. Nothing is written instead: an unstamped row stays unstamped, which
+  // is where it already was, rather than a stamped row being corrupted. An
+  // administrative bulk re-date is left alone, as it is for `last_update_at`.
+  if (ctx.dispatch?.mode !== 'per-row' && dayOf(previous.late_after) === '') {
+    const dueDay = dayOf('due_date' in input ? input.due_date : previous.due_date);
+    if (dueDay !== '') input.late_after = dueDay;
+  }
+
+  const lateAfter = 'late_after' in input ? input.late_after : previous.late_after;
+
   if (!wasDone && isDone) {
+    // ── The on-time verdict, and the second shared-payload guard ─────────
+    // The verdict is read off THIS row's own stamp, so it is exactly the
+    // rewrite D3 puts outside the contract: one row's answer would be written
+    // to every matched row. The sanctioned route is to REFUSE — and refusing
+    // only the LATE direction is what keeps bulk complete working: every row
+    // that survives its own guard computes `false`, so the value that reaches
+    // the shared payload is the same one every row in the batch would have
+    // written. A batch is either all on time, or it is refused.
+    const late = completedLate(now, lateAfter);
+    if (ctx.dispatch?.mode === 'per-row' && late) {
+      throw Object.assign(
+        new Error(
+          `Task ${String(input.id ?? previous.id ?? '')} is being completed after ${String(lateAfter ?? '')}, `
+          + 'the day its grace ran out. A bulk status write carries one payload for every matched row, so '
+          + 'this task\'s on-time verdict would be recorded against the whole batch. Complete a late task '
+          + 'on its own row.',
+        ),
+        { code: 'DULY_TASK_BULK_LATE_COMPLETION', status: 409 },
+      );
+    }
     input.completed_at = now;
+    input.completed_late = late;
   } else if (wasDone && !isDone) {
     // Reopened, skipped or cancelled — the completion is undone, so the
     // timestamp goes with it, or the record keeps a completion that no longer
-    // happened.
+    // happened. The verdict goes with it for the same reason: a completion
+    // that did not happen has nothing to be late about. Both values are
+    // row-invariant — `null` is correct for every row being moved out of done,
+    // including one that was never completed — so this direction stays
+    // allowed on the shared-payload path.
     input.completed_at = null;
+    input.completed_late = null;
   }
 
   // ── last_update_at — only when a human moved the work ───────────────────
@@ -236,12 +398,15 @@ export const TaskLifecycleHook: Hook = {
   object: 'duly_task',
   events: ['beforeInsert', 'beforeUpdate'],
   description:
-    'Server-owned timestamps on duly_task: completed_at on the transition into and out of '
-    + 'done, and last_update_at only when status, note or skip_reason actually changed — '
-    + 'never on an administrative write, which would reset the stagnation signal. On a '
-    + 'predicate (bulk) write both row-conditional stamps are handled by ADR-0058 '
-    + 'Addendum II D3: one payload for the whole batch, so a re-stamp of an already-done '
-    + 'row is refused outright and last_update_at is not stamped at all.',
+    'Server-owned columns on duly_task: completed_at and the completed_late verdict on the '
+    + 'transition into and out of done, late_after filled at insert for the paths the '
+    + 'dispatcher does not stamp, and last_update_at only when status, note or skip_reason '
+    + 'actually changed — never on an administrative write, which would reset the stagnation '
+    + 'signal. Both lateness stamps are write-once: a later change to the duty\'s grace never '
+    + 'moves them. On a predicate (bulk) write the row-conditional stamps are handled by '
+    + 'ADR-0058 Addendum II D3: one payload for the whole batch, so a re-stamp of an '
+    + 'already-done row and a completion that would be stamped late are both refused, and '
+    + 'last_update_at is not stamped at all.',
   // Explicit because it is load-bearing rather than a default worth inheriting:
   // if this handler throws, the write MUST be refused. Committing a task whose
   // stamps were not applied is the exact silent corruption the

@@ -88,8 +88,38 @@ describe('dataset protocol', () => {
 
 describe('caliber — self-declared work is surfaced, never scored', () => {
   it('EVERY measure is filtered to source IN (catalog, assigned)', () => {
+    /**
+     * A DERIVED measure (ADR-0021 Q1) carries no filter of its own — it names
+     * other measures and nothing else — so the gate reaches it through its
+     * operands instead of exempting it. Both halves matter: an operand that
+     * does not exist would be an empty chart reporting success, and an operand
+     * outside this dataset would be a gate this walk cannot see. `on_time_rate`
+     * is governed exactly because `tasks_done_on_time` and `tasks_done` are.
+     */
     expect(allMeasures.length).toBeGreaterThan(0);
     for (const { dataset, measure } of allMeasures) {
+      const derived = (measure as { derived?: { op: string; of: string[] } }).derived;
+      if (derived) {
+        const siblings = new Set(
+          dulyDatasets.find((ds) => ds.name === dataset)!.measures.map((m) => m.name),
+        );
+        expect(derived.of.length, `${dataset}.${measure.name} derives from nothing`).toBeGreaterThan(0);
+        for (const operand of derived.of) {
+          expect(
+            siblings.has(operand),
+            `${dataset}.${measure.name} derives from '${operand}', which this dataset does not `
+              + 'declare — a widget binding it renders empty and reports success',
+          ).toBe(true);
+          const source = dulyDatasets
+            .find((ds) => ds.name === dataset)!
+            .measures.find((m) => m.name === operand)!;
+          expect(
+            (source.filter as Record<string, unknown> | undefined)?.source,
+            `${dataset}.${measure.name} inherits its caliber from '${operand}', which is ungoverned`,
+          ).toEqual({ $in: [...GOVERNED_SOURCES] });
+        }
+        continue;
+      }
       const filter = measure.filter as Record<string, unknown> | undefined;
       expect(filter, `${dataset}.${measure.name} has no filter at all`).toBeDefined();
       expect(
@@ -182,7 +212,15 @@ describe('the absences that are the product', () => {
     }
   });
 
-  it('lateness is never stored — no measure reads a derived flag', () => {
+  it('lateness is never stored — no measure reads a MAINTAINED flag', () => {
+    /**
+     * The banned shape is a flag whose truth changes with the clock: it needs a
+     * writer every midnight and lies on the day it does not run. `completed_late`
+     * is deliberately not one of these and is deliberately not in the list — it
+     * is written once, at completion, and never recomputed (`AGENTS.md` rule 5
+     * carries the boundary). The difference is not the name: it is whether a
+     * second write ever has to happen.
+     */
     for (const { dataset, measure } of allMeasures) {
       const text = deepText(measure).join(' ');
       for (const flag of ['is_late', 'is_overdue', 'is_open', 'is_completed']) {

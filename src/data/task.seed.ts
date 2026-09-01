@@ -86,12 +86,23 @@ export const taskHistorySeed = defineSeed(Task, {
     period_key: task.period_key,
     due_date: task.due_date,
     visible_from: task.visible_from,
+    // From the planner, like `due_date` and `visible_from` beside it — the
+    // deadline the real dispatcher would have stamped, with the duty's own
+    // grace applied. Readonly to callers; carried here on the same
+    // system-context leg as `completed_at` below.
+    late_after: task.late_after,
     status: task.status,
     // Carried on the INSERT, from the seed loader's system context — the leg
     // that is exempt from the readonly strip. A caller's identical write is
     // still refused by `completed_at_required_when_done`, and
     // `test/seed-history.test.ts` pins both halves.
     completed_at: task.completed_at,
+    // `completed_late` is NOT written here. A `done` row inserted this way
+    // makes no completion transition, so the hook's `beforeUpdate` leg never
+    // sees it — its `beforeInsert` leg does, and stamps the verdict from the
+    // two values above. The seed states the facts; the engine draws the
+    // conclusion, which is the only way the demo and a live completion cannot
+    // disagree.
     skip_reason: task.skip_reason,
     note: task.note,
   })),

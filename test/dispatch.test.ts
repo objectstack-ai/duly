@@ -20,6 +20,7 @@ import {
   type DispatchEngine,
 } from '../src/jobs/dispatch.job.js';
 import {
+  DEFAULT_GRACE_DAYS,
   DEFAULT_TIMEZONE,
   DISPATCH_DUTY_FIELDS,
   nextDispatchedPeriod,
@@ -152,6 +153,11 @@ describe('the duty projection covers every field the planner reads', () => {
       'due_anchor',
       'due_offset_days',
       'lead_days',
+      // Read for `late_after`. Omitted, it comes back undefined — which reads
+      // as "this duty grants no grace", so every task would be dispatched with
+      // its deadline on the due date and the Late list would be the grace-free
+      // one #48 was filed against, with nothing erroring.
+      'grace_days',
       'timezone',
       'effective_from',
       'effective_to',
@@ -355,6 +361,72 @@ describe('the copied fields', () => {
     // that wrote either would be a second writer on the stagnation clock.
     expect(Object.keys(draft ?? {})).not.toContain('completed_at');
     expect(Object.keys(draft ?? {})).not.toContain('last_update_at');
+    // `late_after` is the exception, and it is not a second writer: it is
+    // knowable ONLY here, from a duty field the task does not carry, and it is
+    // never written again (#52).
+    expect(Object.keys(draft ?? {})).toContain('late_after');
+  });
+});
+
+/**
+ * `late_after` — the lateness deadline, resolved once, at dispatch (#52).
+ *
+ * The planner is where the duty's `grace_days` is in hand, and it is the only
+ * place it is in hand: `duly_task` carries no duty grace of its own, and the
+ * task's own filter grammar cannot add an interval held in a joined column
+ * (objectstack#14104). So the stamp is what turns "late" into a plain date
+ * comparison everywhere downstream.
+ */
+describe('late_after — due date plus the grace the duty granted', () => {
+  const now = new Date('2026-08-15T09:00:00Z');
+  const only = (over: Partial<DispatchDuty>) => planDispatch({ duties: [duty(over)], now }).drafts[0];
+
+  it('adds the duty grace to the due date', () => {
+    const draft = only({ grace_days: 7 });
+    expect(draft?.due_date).toBe('2026-08-05');
+    expect(draft?.late_after).toBe('2026-08-12');
+  });
+
+  it('a duty granting no grace is late the day after the due date, not on it', () => {
+    // `late_after` IS the last day still inside the window, so a zero-grace
+    // duty stamps the due date itself — the `late` view then asks
+    // `late_after < today`, which fires the following morning. That is the same
+    // day-one the overdue escalation fires on (`due_date + grace + 1`), which
+    // is the disagreement #52 existed to end.
+    expect(only({ grace_days: 0 })?.late_after).toBe('2026-08-05');
+  });
+
+  it('an ABSENT grace reads as zero, never as "no deadline"', () => {
+    // The trap: a null grace producing a null `late_after` would produce a task
+    // that can never be late on any surface — silently, and only for the duties
+    // whose grace nobody filled in. Zero is also how the overdue escalation
+    // already reads an absent grace.
+    expect(only({ grace_days: null })?.late_after).toBe('2026-08-05');
+    expect(only({ grace_days: undefined })?.late_after).toBe('2026-08-05');
+    expect(DEFAULT_GRACE_DAYS).toBe(0);
+  });
+
+  it('crosses a month end by the calendar, not by 24-hour arithmetic', () => {
+    // Through the period engine's own civil-date shift, like `visible_from`.
+    const draft = planDispatch({
+      duties: [duty({ due_anchor: 'period_end', due_offset_days: 0, grace_days: 5 })],
+      now: new Date('2026-08-15T09:00:00Z'),
+    }).drafts[0];
+    expect(draft?.due_date).toBe('2026-08-31');
+    expect(draft?.late_after).toBe('2026-09-05');
+  });
+
+  it('the grace the DUTY held is the one stamped — nothing reads it again later', () => {
+    // Two duties, two graces, one run: the deadline travels on the row from
+    // here, so a later edit to either duty cannot reach the tasks it produced.
+    const drafts = planDispatch({
+      duties: [duty({ id: 'strict', grace_days: 0 }), duty({ id: 'lenient', grace_days: 14 })],
+      now,
+    }).drafts;
+    expect(drafts.map((d) => `${d.duty}:${d.late_after}`)).toEqual([
+      'strict:2026-08-05',
+      'lenient:2026-08-19',
+    ]);
   });
 });
 

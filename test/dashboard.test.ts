@@ -458,18 +458,67 @@ describe('no ranking of people', () => {
   });
 });
 
-describe('the numbers that must stay absent until #52 decides what "late" means', () => {
-  it('no widget binds an on-time or lateness measure', () => {
-    const offenders = allWidgets.flatMap((entry) =>
-      (entry.widget.values ?? [])
-        .filter((name) => /on_?time|late|overdue/i.test(name))
-        .map((name) => `${site(entry)} binds '${name}'`),
+describe('lateness is on the screen, and only in the one shape that respects grace', () => {
+  /**
+   * #52 decided what "late" means: `late_after` (`due_date + grace_days`) is
+   * stamped at dispatch and `completed_late` at completion, both write-once, so
+   * every lateness number is a count over a stamp rather than a comparison the
+   * query grammar cannot make.
+   *
+   * The assertion that used to live here — "no widget binds a lateness measure"
+   * — was the right rule while the only expressible version ignored grace. What
+   * replaces it is not weaker: any lateness number on this screen must trace
+   * back to those stamps, and the grace-free window remains banned outright by
+   * the test below it, which is the one that would actually be reintroduced by
+   * accident.
+   */
+  it('every lateness number a widget binds is built on the stamps, not on a due-date window', () => {
+    const measuresByDataset = new Map(
+      dulyDatasets.map((ds) => [ds.name, new Map(ds.measures.map((m) => [m.name, m]))]),
     );
-    expect(
-      offenders,
-      'no dataset can express `completed_at <= due_date + duty.grace_days` (objectstack#14104), so '
-        + 'a measure with one of these names is an approximation that ignores grace — see #52',
-    ).toEqual([]);
+
+    /** The measure text, following a derived measure through to its operands. */
+    const sourcesOf = (dataset: string, name: string, seen = new Set<string>()): string[] => {
+      if (seen.has(name)) return [];
+      seen.add(name);
+      const measure = measuresByDataset.get(dataset)?.get(name);
+      if (!measure) return [];
+      const derived = (measure as { derived?: { of: string[] } }).derived;
+      if (derived) return derived.of.flatMap((operand) => sourcesOf(dataset, operand, seen));
+      return [JSON.stringify(measure)];
+    };
+
+    let checked = 0;
+    for (const entry of allWidgets) {
+      for (const name of entry.widget.values ?? []) {
+        if (!/on_?time|late|overdue/i.test(name)) continue;
+        checked += 1;
+        const sources = sourcesOf(String(entry.widget.dataset ?? ''), name);
+        expect(sources.length, `${site(entry)} binds '${name}', which resolves to no measure`)
+          .toBeGreaterThan(0);
+        // At least one operand must READ a stamp. Not every one: a rate's
+        // denominator is an honest plain count (`tasks_done`), and demanding
+        // the stamp there would only teach the next author to bolt a redundant
+        // condition onto it.
+        expect(
+          sources.some((source) => source.includes('completed_late') || source.includes('late_after')),
+          `${site(entry)} binds '${name}', which is computed without the lateness stamps — a `
+            + 'lateness number that does not read them is one that ignores grace',
+        ).toBe(true);
+        // And none of them may reach for a due-date window instead. This is the
+        // MEASURE-side half of the widget-filter rule below: the grace-free
+        // approximation is two lines wherever it is written, and a measure is
+        // the place a reviewer is least likely to look for it.
+        for (const source of sources) {
+          expect(
+            source.includes('due_date'),
+            `${site(entry)} binds '${name}', whose measures read due_date — lateness is the stamp, `
+              + 'and a due-date window is the grace-free approximation under another name',
+          ).toBe(false);
+        }
+      }
+    }
+    expect(checked, 'the on-time number is gone from the screen entirely').toBeGreaterThan(0);
   });
 
   it('no widget rebuilds a grace-free lateness out of a due-date window', () => {
@@ -501,6 +550,25 @@ describe('the numbers that must stay absent until #52 decides what "late" means'
             + 'that ignores every duty\'s grace_days. The product decision is open on #52.',
         ).toBe(false);
       }
+    }
+  });
+
+  it('says what the on-time rate is a rate OF, so nobody has to guess the denominator', () => {
+    // The rate counts COMPLETED work, not everything that was owed. A reader
+    // who assumes the denominator is `tasks_due` reads a materially different
+    // number off the same tile, so the screen says which it is.
+    for (const dashboard of dashboards) {
+      const binds = (dashboard.widgets ?? []).some((w) =>
+        (w.values ?? []).some((name) => /on_?time/i.test(name)),
+      );
+      if (!binds) continue;
+      const text = `${dashboard.description ?? ''} ${(dashboard.widgets ?? [])
+        .map((w) => `${w.title ?? ''} ${w.description ?? ''}`)
+        .join(' ')}`.toLowerCase();
+      expect(text, `${dashboard.name} shows an on-time rate without saying what it is a rate of`)
+        .toContain('completed');
+      expect(text, `${dashboard.name} does not say the rate respects each duty's grace`)
+        .toContain('grace');
     }
   });
 
