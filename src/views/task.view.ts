@@ -287,7 +287,24 @@ export const TaskViews = defineView({
       label: 'By business unit',
       type: 'grid',
       data,
-      columns,
+      /**
+       * `business_unit` is in the columns because the grid's query
+       * projection is built from `columns` ALONE — `grouping` contributes
+       * nothing to it. Measured on the seeded app: without this the request
+       * was `select=id,subject,status,due_date,period_key,owner,source`, the
+       * field arrived `undefined` on all 186 rows, and the renderer bucketed
+       * every one of them into a single `(empty)` group. Nothing errored and
+       * every gate stayed green.
+       *
+       * Filed upstream as objectstack-ai/objectui#7179 — the projection
+       * should union the grouping fields rather than making authors mirror
+       * them here. This is not a workaround waiting on it: on a by-unit view
+       * the unit column is worth showing anyway, and it is the shared six
+       * plus one rather than a column every other lens has to carry.
+       * `test/metadata-bindings.test.ts` fails if a grouped grid ever drops
+       * it again.
+       */
+      columns: [...columns, { field: 'business_unit' }],
       grouping: { fields: [{ field: 'business_unit' }] },
       bulkActionDefs: bulkActions,
       sort: [{ field: 'due_date', order: 'asc' }],

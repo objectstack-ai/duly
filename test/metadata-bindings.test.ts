@@ -1168,3 +1168,253 @@ describe('metadata bindings — the guard can fail (self-test on synthetic metad
     expect(r.unknownSlots).toEqual([expect.stringContaining('gallery.inventedField')]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// A grouped grid must FETCH what it groups by (stopgap for objectui#7179)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️ SECOND, INDEPENDENT STOPGAP — it does NOT get deleted with the walk
+ * above. That one goes when objectstack#14105 / #14107 / #14108 land; this
+ * one goes when **objectstack-ai/objectui#7179** lands, and not before.
+ *
+ * ── The defect, measured on `19a0306` with the #75 seed ─────────────────
+ * `/_console/apps/ai.objectstack.duly/duly_task/view/by_unit` rendered ONE
+ * collapsible group — `(empty)`, holding all 186 rows. The rows were right;
+ * only the grouping did nothing, and nothing errored. `duly_duty`'s grouped
+ * lens rendered `(empty)` on BOTH of its levels.
+ *
+ * The grid builds its query projection from `columns` ALONE. Captured off the
+ * page load:
+ *
+ *   GET /api/v1/data/duly_task?select=id,subject,status,due_date,period_key,owner,source
+ *     → business_unit: undefined      (on all 186 rows)
+ *
+ * `business_unit` was the `grouping` field and was not a column, so it was
+ * never requested, so the renderer's `buildSegmentLabel` took its first line
+ * — `if (value === undefined || …) return '(empty)'` — for every row.
+ *
+ * ── Why the walk above cannot see it ────────────────────────────────────
+ * That walk resolves `business_unit` against `duly_task`'s schema and it
+ * RESOLVES — a real, populated, correctly-typed lookup. Every binding here
+ * was valid. This defect is a relationship between TWO CONFIG KEYS
+ * (`grouping` vs `columns`), not a dangling reference, so no amount of
+ * reference checking sees it. That is why this is a separate function rather
+ * than another `check()` call.
+ *
+ * ── Scope: `grouping` ONLY, and that is a MEASURED narrowing ────────────
+ * The card that filed this assumed the kanban board was "fine by luck"
+ * because its group field happened to be displayed. It is not luck, and the
+ * board's `status` is NOT one of its `columns`. Ablated against a booted app
+ * (`objectstack dev`, #75 seed, 186 tasks), one leg at a time, each mutation
+ * confirmed on disk and reverted through a restore trap:
+ *
+ *   | leg | mutation                                          | resulting `select`             |
+ *   |-----|---------------------------------------------------|--------------------------------|
+ *   | A   | board `kanban.groupByField` → `business_unit`      | …,source,**business_unit**,status |
+ *   | B   | A + `business_unit` added to `kanban.columns`      | unchanged from A               |
+ *   | C   | schedule `gantt.groupByField` → `business_unit`    | …,due_date,**business_unit**   |
+ *   | D   | recent gains `timeline.groupByField: business_unit`| …,**business_unit**,due_date   |
+ *
+ * So the three BINDING-BLOCK group keys — `kanban` / `gantt` / `timeline`
+ * `groupByField` — are each unioned into the projection by their own
+ * adapter, with no column needed. The grid's `grouping` block is the one that
+ * is not, which is exactly what #7179 asks upstream to fix. Legs A and B
+ * together also say WHERE a field has to go if one ever were needed:
+ * `kanban.columns` is the card face (`cardFields` in the console's view
+ * adapter) and never the projection.
+ *
+ * This guard therefore covers `grouping.fields[]` and nothing else. Widening
+ * it to the three group keys that measurably work would be the same mistake
+ * the card warns against for `sort` — a rule that fires on non-bugs teaches
+ * the next reader that the test lies. The other sites are still INVENTORIED
+ * below, so adding one lands here for a human read rather than passing
+ * silently.
+ *
+ * ── Proven red before the fix ───────────────────────────────────────────
+ * Written against the views as they stood at `19a0306` and run there first.
+ * `npx vitest run test/metadata-bindings.test.ts` exited 1 with exactly:
+ *
+ *   AssertionError: a grouped grid buckets rows by a field its `columns` do
+ *   not carry …: expected [ …(3) ] to deeply equal []
+ *   + "view duly_task › listViews.by_unit · grouping.fields[0].field groups
+ *      by \"business_unit\", columns: subject, status, due_date, period_key,
+ *      owner, source"
+ *   + "view duly_duty › listViews.catalog_tree · grouping.fields[0].field
+ *      groups by \"business_unit\", columns: name, form, frequency, source,
+ *      status"
+ *   + "view duly_duty › listViews.catalog_tree · grouping.fields[1].field
+ *      groups by \"owner\", columns: name, form, frequency, source, status"
+ *
+ * A guard nobody watched fail is indistinguishable from a guard that cannot
+ * fail, so the synthetic fixtures below pin both directions permanently.
+ */
+interface GroupingFinding {
+  /** e.g. `view duly_task › listViews.by_unit`. */
+  readonly where: string;
+  /** e.g. `grouping.fields[0].field`. */
+  readonly at: string;
+  readonly field: string;
+  readonly columns: readonly string[];
+}
+
+interface GroupingWalk {
+  readonly findings: GroupingFinding[];
+  /** Grid grouping levels examined — the non-vacuity counter. */
+  readonly checked: string[];
+  /**
+   * Group keys that are NOT judged, because their adapter unions them into
+   * the projection itself (legs A–D above). Inventoried so a new one is read
+   * by a human instead of being silently exempt.
+   */
+  readonly exempt: string[];
+}
+
+/** Binding blocks whose `groupByField` the adapter adds to the projection. */
+const SELF_PROJECTING_GROUP_BLOCKS = ['kanban', 'gantt', 'timeline'] as const;
+
+export const groupingProjectionFindings = (views: readonly unknown[]): GroupingWalk => {
+  const findings: GroupingFinding[] = [];
+  const checked: string[] = [];
+  const exempt: string[] = [];
+
+  for (const { where, view } of flattenViews(views)) {
+    // `ListViewSchema.columns` is `string[] | ListColumn[]`; both spellings
+    // land in the projection the same way, so both are read here.
+    const columns = ((view.columns as unknown[]) ?? [])
+      .map((column) => fieldOf(column))
+      .filter((field): field is string => typeof field === 'string' && field !== '');
+    const projected = new Set(columns);
+
+    const levels = ((view.grouping as Rec | undefined)?.fields as Rec[]) ?? [];
+    levels.forEach((level, index) => {
+      const field = level?.field;
+      if (typeof field !== 'string' || field === '') return;
+      const at = `grouping.fields[${index}].field`;
+      checked.push(`${where} · ${at} → ${field}`);
+      if (projected.has(field)) return;
+      findings.push({ where, at, field, columns });
+    });
+
+    for (const block of SELF_PROJECTING_GROUP_BLOCKS) {
+      const groupBy = (view[block] as Rec | undefined)?.groupByField;
+      if (typeof groupBy === 'string' && groupBy !== '') {
+        exempt.push(`${where} · ${block}.groupByField → ${groupBy}`);
+      }
+    }
+  }
+
+  return { findings, checked, exempt };
+};
+
+const groupingMessages = (walk: GroupingWalk): string[] =>
+  walk.findings.map(
+    (f) => `${f.where} · ${f.at} groups by "${f.field}", columns: ${f.columns.join(', ') || '(none)'}`,
+  );
+
+const grouping = groupingProjectionFindings(stack.views);
+
+describe('grouped grids fetch what they group by (stopgap for objectui#7179)', () => {
+  it('every grid grouping field is one of its own view\'s columns', () => {
+    expect(
+      groupingMessages(grouping),
+      'a grouped grid buckets rows by a field its `columns` do not carry — the grid\'s projection is built '
+        + 'from `columns` alone, so the field arrives `undefined` and every row lands in one `(empty)` '
+        + 'bucket. Nothing errors, and `validate`, `typecheck`, `test` and `build` all stay green. Add the '
+        + 'field to that view\'s `columns` (on a by-X view the X column is worth showing anyway).',
+    ).toEqual([]);
+  });
+
+  it('actually examined this app\'s grouped grids', () => {
+    // A walk that stopped seeing `grouping` — a renamed key, a refactor of
+    // `flattenViews` — would pass the assertion above by checking nothing.
+    expect(grouping.checked.sort(), 'the grouping walk examined the wrong set of levels').toEqual([
+      'view duly_duty › listViews.catalog_tree · grouping.fields[0].field → business_unit',
+      'view duly_duty › listViews.catalog_tree · grouping.fields[1].field → owner',
+      'view duly_task › listViews.by_unit · grouping.fields[0].field → business_unit',
+    ]);
+  });
+
+  it('inventories the group keys it deliberately does not judge', () => {
+    // Legs A–D: these three are unioned into the projection by their own
+    // adapter. A NEW one showing up here means someone should re-read that
+    // measurement before trusting the exemption — it is upstream behaviour,
+    // not a schema guarantee.
+    expect(grouping.exempt.sort(), 'a self-projecting group key changed — re-read the ablation above').toEqual([
+      'view duly_task › listViews.board · kanban.groupByField → status',
+      'view duly_task › listViews.schedule · gantt.groupByField → owner',
+    ]);
+  });
+});
+
+describe('grouping-projection guard — the guard can fail (self-test on synthetic metadata)', () => {
+  const grid = (overrides: Rec, key = 'lens'): unknown => ({
+    listViews: {
+      [key]: {
+        label: 'Lens',
+        type: 'grid',
+        data: { provider: 'object', object: 'fx_task' },
+        columns: [{ field: 'subject' }, { field: 'status' }],
+        ...overrides,
+      },
+    },
+  });
+
+  it('does NOT fire when the grouping field is one of the columns', () => {
+    const walk = groupingProjectionFindings([grid({ grouping: { fields: [{ field: 'status' }] } })]);
+    expect(groupingMessages(walk)).toEqual([]);
+    expect(walk.checked).toHaveLength(1);
+  });
+
+  it('fires when a grid groups by a field its columns do not carry', () => {
+    const walk = groupingProjectionFindings([grid({ grouping: { fields: [{ field: 'business_unit' }] } })]);
+    expect(walk.findings).toHaveLength(1);
+    expect(walk.findings[0]!.field).toBe('business_unit');
+    expect(walk.findings[0]!.at).toBe('grouping.fields[0].field');
+    expect(walk.findings[0]!.columns).toEqual(['subject', 'status']);
+  });
+
+  it('reports EVERY level of a multi-level grouping, not just the first', () => {
+    // `duly_duty`'s grouped lens is exactly this shape and was broken on both
+    // levels; a guard that stopped at the first would have half-fixed it.
+    const walk = groupingProjectionFindings([
+      grid({ grouping: { fields: [{ field: 'business_unit' }, { field: 'owner' }] } }),
+    ]);
+    expect(walk.findings.map((f) => `${f.at}:${f.field}`)).toEqual([
+      'grouping.fields[0].field:business_unit',
+      'grouping.fields[1].field:owner',
+    ]);
+  });
+
+  it('reads the bare-string column shorthand, which `ListViewSchema` also accepts', () => {
+    const walk = groupingProjectionFindings([
+      grid({ columns: ['subject', 'business_unit'], grouping: { fields: [{ field: 'business_unit' }] } }),
+    ]);
+    expect(groupingMessages(walk)).toEqual([]);
+    expect(walk.checked).toHaveLength(1);
+  });
+
+  it('does NOT fire on kanban / gantt / timeline `groupByField` — it inventories them', () => {
+    // Measured (legs A–D), not assumed: each adapter unions its own
+    // `groupByField` into `$select`, so a column is not required and a
+    // finding here would be a false one.
+    const walk = groupingProjectionFindings([
+      grid({ type: 'kanban', kanban: { groupByField: 'business_unit', columns: ['subject'] } }, 'k'),
+      grid({ type: 'gantt', gantt: { groupByField: 'owner' } }, 'g'),
+      grid({ type: 'timeline', timeline: { groupByField: 'source' } }, 't'),
+    ]);
+    expect(walk.findings).toEqual([]);
+    expect(walk.exempt.map((e) => e.split(' · ')[1])).toEqual([
+      'kanban.groupByField → business_unit',
+      'gantt.groupByField → owner',
+      'timeline.groupByField → source',
+    ]);
+  });
+
+  it('examines nothing, and finds nothing, on a view that does not group', () => {
+    const walk = groupingProjectionFindings([grid({})]);
+    expect(walk.findings).toEqual([]);
+    expect(walk.checked).toEqual([]);
+    expect(walk.exempt).toEqual([]);
+  });
+});
