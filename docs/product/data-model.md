@@ -41,6 +41,10 @@ tickable.
 **`due_anchor` + `due_offset_days`.** A quarterly duty "due in Q3" is due on
 30 September to everyone behind on it. Anchoring inside the period is what stops
 annual and semi-annual work collapsing onto the last week of December.
+`due_offset_days` counts days from the anchor day, and the anchor day itself is
+offset `0` — on `period_start`, `0` is the first day of the period and `4` is
+the fifth day; on `period_end`, `0` is the last day of the period and `-3` is
+three days before the last.
 
 **`lead_days`.** A task that appears on its due date is already late. Lead time is
 the difference between a system that reminds you and one that reports on you.

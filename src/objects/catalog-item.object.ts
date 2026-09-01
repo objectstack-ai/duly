@@ -68,7 +68,11 @@ export const CatalogItem = ObjectSchema.create({
       ],
     }),
 
-    due_offset_days: Field.number({ label: 'Offset (days)', defaultValue: 0 }),
+    due_offset_days: Field.number({
+      label: 'Offset (days, 0 = anchor day)',
+      defaultValue: 0,
+      description: 'Days from the anchor day, which is offset 0. On "Start of period": 0 = the first day of the period, 4 = the fifth day. On "End of period": 0 = the last day of the period, -3 = three days before the last.',
+    }),
     lead_days: Field.number({ label: 'Lead time (days)', defaultValue: 7, min: 0 }),
     grace_days: Field.number({ label: 'Grace (days)', defaultValue: 0, min: 0 }),
 
