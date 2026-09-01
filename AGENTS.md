@@ -199,6 +199,51 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
    `test/flow-predicates.test.ts` is what a *declared* workaround looks like —
    labelled a stopgap, pointing at objectstack#14089, and built to be deleted.
 
+## Who can customize a view — measured, do not re-derive
+
+**No Duly permission set can.** Saving a view customization overlay is gated on
+the platform capability `manage_metadata`, which `src/security/permission-sets.ts`
+grants to nobody — not `duly_member`, not `duly_manager`, not `duly_admin`. The
+overlay a column-header click persists (`PUT /api/v1/meta/view/<name>`, stored in
+`sys_metadata` as `scope: platform`, `owner: null`, org-scoped, replacing the
+declared view for the whole organisation) is reachable only by a **platform
+admin** — `isPlatformAdmin: true`, which on a dev box is the `pnpm demo` account
+and in a deployment is whoever holds `admin_full_access`.
+
+Measured on `@objectstack/rest` 17.2.0 against a live `pnpm demo`, with three
+self-registered accounts each bound to exactly one Duly set through
+`sys_user_permission_set` (binding verified live by A/B: a bound holder reads
+`duly_task` 200, an unbound account 403):
+
+| Caller | `PUT /api/v1/meta/view/duly_task.default` |
+|:-------|:------------------------------------------|
+| anonymous | `401 UNAUTHENTICATED` |
+| `duly_member` | `403 FORBIDDEN` — ``requires the `manage_metadata` capability`` |
+| `duly_manager` | `403 FORBIDDEN` — same |
+| `duly_admin` | `403 FORBIDDEN` — same |
+| platform admin | `200` — `Saved customization overlay (org=…)` |
+
+`sys_metadata` stayed at `total: 0` across every refused attempt. The compound
+twin door (`PUT /api/v1/meta/duly_task/views/default`) and the reset door
+(`DELETE`) carry the identical gate — checked, because a gate on one door and
+not its twin is the usual bypass. The one metadata-ish store a member *can*
+write is `sys_user_preference`, which requires `user_id` and is per-person by
+construction; the org-wide `sys_view_definition` answers `403`.
+
+⛔ **Do not "harden" this by denying `manage_metadata` in
+`src/security/permission-sets.ts`.** `systemPermissions` is an additive list
+with no deny form, so the entry would not be enforcement — it would be a
+declared-and-unenforced key of exactly the kind ADR-0049 exists to remove, sitting
+in the one file whose credibility depends on every line in it being live.
+
+What remains true and is **not** a Duly bug: for a caller who *does* hold the
+capability, an ordinary sort click still persists an org-wide overlay carrying the
+entire view definition, with no save gesture and no UI indication — so an
+administrator demoing the app can freeze `duly_task.default` at the shipped
+definition without knowing it. That is a platform affordance question for
+`objectstack-ai/objectui`, deliberately left unfiled here; see #84 for the
+measurement a report would need.
+
 ## Landing your work
 
 Branch `claude/issue-<n>-<slug>` off `main`, in your own worktree. Push the
