@@ -12,5 +12,17 @@
 // resolves it against the keyed branch of `MetadataCollectionInput`, which
 // makes `name` optional and fails the assignment. A named array is `never[]`
 // while empty and infers correctly the moment something is pushed into it.
+//
+// ⚠ A job needs TWO registrations, and the second one has no author-time gate.
+// This barrel publishes the SCHEDULE; `src/functions/index.ts` publishes the
+// HANDLER the schedule names. `AppPlugin` resolves the handler as
+// `collectBundleFunctions(bundle)[job.handler]` and, on a miss, logs
+// "job handler not found in bundle.functions — skipping" and carries on: the
+// job is registered, listed, and never executed. `test/dispatch.test.ts`
+// performs the same lookup so the pair cannot come apart.
 
-export const dulyJobs = [];
+import { DispatchJob } from './dispatch.job.js';
+
+export { DispatchJob };
+
+export const dulyJobs = [DispatchJob];
