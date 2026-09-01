@@ -1,6 +1,6 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
-import { P } from '@objectstack/spec';
+import { F, P } from '@objectstack/spec';
 import { ObjectSchema, Field } from '@objectstack/spec/data';
 
 /**
@@ -102,46 +102,77 @@ export const Duty = ObjectSchema.create({
     }),
 
     // ── Cadence ───────────────────────────────────────────────────────────
+    // Every default below is CONDITIONAL on `form` (#61): a duty that never
+    // dispatches (`standing`) or dispatches once by hand (`one_off`) has no
+    // period, so a cadence field auto-filled anyway does not merely go
+    // unread — it reads back as though the duty runs on that schedule. The
+    // option-level `default: true` idiom (still used on `form` itself, three
+    // fields up) is UNCONDITIONAL, so the conditional half needs the CEL
+    // `defaultValue` slot instead: the blessed null-guard idiom
+    // (`cond ? value : null`, objectstack#3306) that `applyFieldDefaults` and
+    // `Field.formula` share one evaluator for. `form` is declared above every
+    // field below, so by the time each of these runs `record.form` is already
+    // resolved — from the payload, or from `form`'s own option default.
+    //
+    // Which forms lose which field is NOT uniform, and is decided by what
+    // `dispatch.plan.ts#planForDuty` actually reads, not by a blanket
+    // "non-recurring" rule:
+    //  - `frequency` is scoped to `standing` ONLY, mirroring exactly the
+    //    converse of `recurring_needs_frequency` below (the pair this issue
+    //    completes). One-off's equally-meaningless frequency is a separate,
+    //    narrower case this issue does not adjudicate.
+    //  - `due_anchor` / `due_offset_days` / `lead_days` compute a PERIOD due
+    //    date, which only a recurring duty has — `planForDuty` returns before
+    //    reading any of the three for `standing` or `one_off`. Scoped to
+    //    `form != "recurring"`.
+    //  - `grace_days` measures lateness against a TASK's due date, and a
+    //    one-off duty's task has a real one (set directly, not computed from
+    //    an anchor) — see `duly_duty_health`'s intended `completed_at <=
+    //    due_date + duty.grace_days` (objectstack#14104), which is not
+    //    form-gated. Only `standing`, which never has a task, loses it.
     frequency: Field.select({
       label: 'Frequency',
       options: [
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
         { label: 'Fortnightly', value: 'fortnightly' },
-        { label: 'Monthly', value: 'monthly', default: true },
+        { label: 'Monthly', value: 'monthly' },
         { label: 'Quarterly', value: 'quarterly' },
         { label: 'Semi-annual', value: 'semiannual' },
         { label: 'Annual', value: 'annual' },
       ],
-      description: 'Required for recurring duties. Ignored for one-off and standing.',
+      defaultValue: F`record.form == "standing" ? null : "monthly"`,
+      description: 'Required for a recurring duty. Forbidden for a standing duty — it never dispatches, so a frequency on it is meaningless (`standing_no_frequency`). Ignored for one-off, which is dispatched once, by hand.',
     }),
 
     due_anchor: Field.select({
       label: 'Due date anchored to',
       options: [
-        { label: 'Start of period', value: 'period_start', default: true },
+        { label: 'Start of period', value: 'period_start' },
         { label: 'End of period', value: 'period_end' },
       ],
+      defaultValue: F`record.form != "recurring" ? null : "period_start"`,
+      description: 'Anchors the due date inside a period. Only a recurring duty has one; blank (and forbidden) for standing and one-off.',
     }),
 
     due_offset_days: Field.number({
       label: 'Offset (days, 0 = anchor day)',
-      defaultValue: 0,
-      description: 'Days from the anchor day, which is offset 0. On "Start of period": 0 = the first day of the period, 4 = the fifth day. On "End of period": 0 = the last day of the period, -3 = three days before the last.',
+      defaultValue: F`record.form != "recurring" ? null : 0`,
+      description: 'Days from the anchor day, which is offset 0. On "Start of period": 0 = the first day of the period, 4 = the fifth day. On "End of period": 0 = the last day of the period, -3 = three days before the last. Only a recurring duty has a period to offset into; blank (and forbidden) for standing and one-off.',
     }),
 
     lead_days: Field.number({
       label: 'Lead time (days)',
-      defaultValue: 7,
+      defaultValue: F`record.form != "recurring" ? null : 7`,
       min: 0,
-      description: 'How far ahead of the due date the task appears in the owner\'s list. A task that shows up on its due date is a task that is already late.',
+      description: 'How far ahead of the due date the task appears in the owner\'s list. A task that shows up on its due date is a task that is already late. Only a recurring duty is dispatched with a lead window; blank (and forbidden) for standing and one-off.',
     }),
 
     grace_days: Field.number({
       label: 'Grace (days)',
-      defaultValue: 0,
+      defaultValue: F`record.form == "standing" ? null : 0`,
       min: 0,
-      description: 'Days after the due date before an open task counts as late.',
+      description: 'Days after the due date before an open task counts as late. Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
     }),
 
     // A global product cannot compute "the 5th of the month" without knowing
@@ -204,6 +235,39 @@ export const Duty = ObjectSchema.create({
       severity: 'error',
       message: 'A recurring duty needs a frequency — otherwise nothing can dispatch it.',
       condition: P`record.form == "recurring" && isBlank(record.frequency)`,
+    },
+    {
+      // The converse of `recurring_needs_frequency` (#61). A standing duty
+      // NEVER dispatches — that is the whole point of the form — so a
+      // frequency on one is not just unused, it reads to a configurer as
+      // though the duty runs on that schedule.
+      name: 'standing_no_frequency',
+      type: 'script',
+      severity: 'error',
+      message: 'A standing duty never dispatches — a frequency on it is meaningless. Remove it.',
+      condition: P`record.form == "standing" && !isBlank(record.frequency)`,
+    },
+    {
+      // `due_anchor` / `due_offset_days` / `lead_days` exist to compute a
+      // PERIOD due date (`dispatch.plan.ts#planForDuty`), and only a
+      // recurring duty has a period. Standing never dispatches; one-off's
+      // due date is set directly on the task, never derived from an anchor.
+      name: 'non_recurring_no_due_timing',
+      type: 'script',
+      severity: 'error',
+      message: 'Due anchor, due offset and lead time compute a period due date — only a recurring duty has one. Clear them for standing and one-off.',
+      condition: P`record.form != "recurring" && (!isBlank(record.due_anchor) || !isBlank(record.due_offset_days) || !isBlank(record.lead_days))`,
+    },
+    {
+      // `grace_days` measures lateness against a TASK's due date. A one-off
+      // duty's task has a real one (set by hand, not computed), so grace
+      // still applies there — only `standing`, which never has a task at
+      // all, loses it.
+      name: 'standing_no_grace_days',
+      type: 'script',
+      severity: 'error',
+      message: 'Grace days measures lateness against a task\'s due date — a standing duty never has a task, so it never has one.',
+      condition: P`record.form == "standing" && !isBlank(record.grace_days)`,
     },
     {
       name: 'effective_window_ordered',

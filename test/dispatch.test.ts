@@ -20,9 +20,6 @@ import {
   type DispatchEngine,
 } from '../src/jobs/dispatch.job.js';
 import {
-  DEFAULT_DUE_ANCHOR,
-  DEFAULT_DUE_OFFSET_DAYS,
-  DEFAULT_LEAD_DAYS,
   DEFAULT_TIMEZONE,
   DISPATCH_DUTY_FIELDS,
   nextDispatchedPeriod,
@@ -112,16 +109,25 @@ describe('wiring', () => {
 
 describe('the cadence fallbacks are the object schema, not a second opinion', () => {
   // The planner is pure and imports no metadata, so it restates `duly_duty`'s
-  // declared defaults. These assertions are what stop the two from drifting
+  // declared defaults. This assertion is what stops the two from drifting
   // into two answers — the same pin as DEFAULT_DUTY_TIMEZONE in the catalog
   // handlers.
-  const defaultOption = (field: { options?: Array<{ value: string; default?: boolean }> }) =>
-    field.options?.find((o) => o.default)?.value;
-
   it('timezone', () => expect(Duty.fields.timezone.defaultValue).toBe(DEFAULT_TIMEZONE));
-  it('lead_days', () => expect(Duty.fields.lead_days.defaultValue).toBe(DEFAULT_LEAD_DAYS));
-  it('due_offset_days', () => expect(Duty.fields.due_offset_days.defaultValue).toBe(DEFAULT_DUE_OFFSET_DAYS));
-  it('due_anchor', () => expect(defaultOption(Duty.fields.due_anchor)).toBe(DEFAULT_DUE_ANCHOR));
+
+  // `lead_days` / `due_offset_days` / `due_anchor` no longer carry a plain
+  // literal default (#61): the value must be BLANK, not the cadence default,
+  // on a duty the planner never reads them for (standing, one-off) — see
+  // `duty.object.ts`'s cadence block. Each is now a CEL `defaultValue` (the
+  // blessed null-guard idiom, objectstack#3306), which `pnpm validate`
+  // accepts structurally and never evaluates (`field.zod.ts`'s authoring
+  // gate returns unconditionally on `shape === 'expression'`), so a
+  // STRUCTURAL pin here — reading `.defaultValue` off the schema — would
+  // prove nothing about whether the expression actually behaves. The real
+  // pin — that a RECURRING duty still gets exactly `DEFAULT_DUE_ANCHOR` /
+  // `DEFAULT_DUE_OFFSET_DAYS` / `DEFAULT_LEAD_DAYS`, against a booted engine
+  // that actually evaluates the CEL — lives in
+  // `test/cadence-conditional-defaults.test.ts`, alongside the standing/
+  // one-off assertions that these come back blank.
 });
 
 describe('the duty projection covers every field the planner reads', () => {
