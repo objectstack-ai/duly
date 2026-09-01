@@ -105,13 +105,23 @@ export const CatalogItem = ObjectSchema.create({
       max: 366,
       description: 'Whole days, up to a year. Only a recurring duty is dispatched with a lead window; blank (and forbidden) for standing and one-off.',
     }),
+    // This ceiling is NOT free-standing, and it is the one of the three most
+    // easily changed in isolation. It mirrors `duly_duty.grace_days` (30),
+    // which is itself pinned to `OVERDUE_LOOKBACK_DAYS` (31) in
+    // `src/flows/reminders.flow.ts` by `lookback >= max_grace + 1`: the
+    // overdue escalation fires on `due_date + grace_days + 1`, so a grace at
+    // or above the lookback puts day one outside the swept window and the
+    // escalation never fires — silently. Three numbers, three files, coupled
+    // by nothing but `test/reminders.test.ts`. Raising this alone fans out
+    // duties the escalation cannot honour; lowering it alone refuses a
+    // template for a duty that is perfectly legal.
     grace_days: Field.number({
       label: 'Grace (days)',
       defaultValue: F`record.form == "standing" ? null : 0`,
       scale: 0,
       min: 0,
-      max: 14,
-      description: 'Whole days, up to 14 — the overdue reminder sweeps 15 days back, so a longer grace would never fire. Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
+      max: 30,
+      description: 'Whole days, up to 30 — the overdue reminder sweeps 31 days back, so a longer grace would never fire. Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
     }),
 
     regulation_ref: Field.text({

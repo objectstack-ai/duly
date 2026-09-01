@@ -139,7 +139,7 @@ const insertCatalogItem = (over: AnyRow) => data.insert('duly_catalog_item', cat
 const BOUNDS = {
   due_offset_days: { scale: 0, min: -366, max: 366 },
   lead_days: { scale: 0, min: 0, max: 366 },
-  grace_days: { scale: 0, min: 0, max: 14 },
+  grace_days: { scale: 0, min: 0, max: 30 },
 } as const;
 
 type CadenceField = keyof typeof BOUNDS;
@@ -246,7 +246,7 @@ describe('every value still admitted is one the product can carry out', () => {
   it.each([
     ['both extremes of the offset, with the maximum lead', { due_offset_days: -366, lead_days: 366 }],
     ['the other extreme', { due_offset_days: 366, lead_days: 0 }],
-    ['the largest grace the sweep can honour', { grace_days: 14 }],
+    ['the largest grace the sweep can honour', { grace_days: 30 }],
     ['zero everywhere', { due_offset_days: 0, lead_days: 0, grace_days: 0 }],
   ] as const)('accepts %s', async (_label, values) => {
     const created: any = await insertDuty(values);

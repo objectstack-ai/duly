@@ -203,13 +203,17 @@ export const CATALOG_ITEMS: readonly DemoCatalogItem[] = [
     // Same reasoning as the semi-annual audit above — a year's notice for a
     // year's obligation, which is what lets it stagnate long before it is late.
     leadDays: 120,
-    // Was 21, and 21 never worked: the overdue escalation fires on
-    // `due_date + grace_days + 1` and its sweep looks back 15 days, so day one
-    // for this item fell outside the window and it was never escalated — a
-    // live instance, in our own demo data, of the silent late-failure #82 is
-    // about. `duly_catalog_item.grace_days` now stops at 14 (the largest the
-    // sweep can honour) and this row would be refused at seed time.
-    graceDays: 14,
+    // 21 is what this item's author wrote, and it is now a value the product
+    // can actually honour. It could not be, once: the overdue escalation fires
+    // on `due_date + grace_days + 1` and the sweep looked back only 15 days,
+    // so day one for this item fell outside the window and it was never
+    // escalated — a live instance, in our own demo data, of the silent
+    // late-failure #82 is about. #82 cut it to 14 to fit that lookback; #89
+    // raised the pair instead (`OVERDUE_LOOKBACK_DAYS` 31, `grace_days` max
+    // 30), which is where the 21 comes back from. It earns its place in the
+    // demo precisely because it is the one row exercising a grace longer than
+    // a fortnight.
+    graceDays: 21,
     description: 'Re-run the site induction for every contractor still holding a pass, and retire the passes nobody claimed.',
     reference: 'Site Safety Standard SS-15 §3',
   },

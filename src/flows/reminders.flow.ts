@@ -177,20 +177,50 @@ const DUTY_GATE_FIELDS = ['id', 'grace_days', 'effective_from', 'effective_to'] 
  * How far back the overdue sweep looks, and therefore the largest
  * `grace_days` the day-one escalation can honour.
  *
- * A duty with grace ≥ 15 has its escalation day fall outside the swept window
- * and is never escalated — silently. That used to be reachable: `grace_days`
- * declared `min: 0` and no maximum, and the demo catalog shipped an item with
- * 21. Since #82 the field declares `max: 14`, which is THIS number minus one,
- * so every value the object accepts is a value this sweep can honour.
+ * ── THE OTHER HALF OF THIS NUMBER LIVES IN ANOTHER FILE ──────────────────
+ * The invariant is `lookback >= max_grace + 1`. The escalation fires on
+ * `due_date + grace_days + 1`, so a duty whose grace reaches this number has
+ * its day one fall outside the swept window and is never escalated —
+ * silently, with nothing anywhere reporting it. The other half of the pair:
  *
- * The two are still two numbers in two files, coupled by nothing but this
- * comment and `test/reminders.test.ts`, which reads both and refuses to let
- * either move alone. Raising the field's ceiling means raising this. The
- * alternative — an unbounded lookback — re-launches the flow every day for
- * every task ever missed, which is the "ancient record re-alerting forever"
- * the trigger's own `withinDays` doc warns about.
+ *   src/flows/reminders.flow.ts         OVERDUE_LOOKBACK_DAYS = 31 ← here
+ *   src/objects/duty.object.ts          grace_days max: 30
+ *   src/objects/catalog-item.object.ts  grace_days max: 30 (mirrored, because
+ *                                       catalog apply copies it onto every
+ *                                       duty it creates)
+ *
+ * 30 = 31 − 1, so every value those objects accept is a value this sweep can
+ * honour. Nothing in the toolchain couples them — they are hand-maintained
+ * numbers in files that cannot see each other, and `test/reminders.test.ts`
+ * ("the lookback still covers the largest grace a duty can declare") reads all
+ * three and refuses to let any move alone. Lower this without lowering the
+ * ceiling and the silent hole is back; raise the ceiling without raising this
+ * and it is back the other way round. It was reachable once: `grace_days`
+ * declared no maximum at all and the demo catalog shipped a 21-day grace
+ * against a 15-day lookback, whose escalation had never once fired.
+ *
+ * ── Why 31 and not 15 (#89) ──────────────────────────────────────────────
+ * A 15-day lookback admits at most a fortnight of grace, and a fortnight was
+ * measurably too little: an annual contractor-induction duty with 21 days of
+ * grace is an ordinary configuration and it did not fit. Raising this is what
+ * the higher ceiling costs, and the cost is real — in RANGE mode (see the
+ * escalation flow below) the claim scope is the SWEEP day, so this flow is
+ * launched once a day for every task in the window and takes a ledger row each
+ * time, most of them ending at `end` without notifying.
+ *
+ * What actually scales, though, is not "every task ever missed": the sweep
+ * filter is `LIVE_TASK`, so only tasks still OPEN inside the window match, and
+ * a task leaves that set the moment it is completed. Doubling the window
+ * roughly doubles the open-overdue set under consideration, not the task
+ * count. That is the price of not refusing a month of grace.
+ *
+ * It stops at a month. An UNBOUNDED lookback would re-launch the flow every
+ * day for every task ever missed — the "ancient record re-alerting forever"
+ * the trigger's own `withinDays` doc warns about — and a grace longer than a
+ * month has stopped being grace and become a different due date, which is the
+ * duty's own cadence to express, not an ever-growing sweep window.
  */
-const OVERDUE_LOOKBACK_DAYS = 15;
+const OVERDUE_LOOKBACK_DAYS = 31;
 
 /** `true` when the task names a duty whose row is worth reading. */
 const HAS_DUTY = 'has(record.duty) && !isBlank(record.duty)';
