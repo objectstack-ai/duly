@@ -13,8 +13,9 @@
 // makes `name` optional and fails the assignment. A named array is `never[]`
 // while empty and infers correctly the moment something is pushed into it.
 
+import { DutyTimezoneGuard } from './duty.hook.js';
 import { TaskLifecycleHook } from './task.hook.js';
 
-export { TaskLifecycleHook };
+export { DutyTimezoneGuard, TaskLifecycleHook };
 
-export const dulyHooks = [TaskLifecycleHook];
+export const dulyHooks = [DutyTimezoneGuard, TaskLifecycleHook];

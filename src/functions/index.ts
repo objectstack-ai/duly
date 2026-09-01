@@ -11,6 +11,10 @@
 // DECLARES it (`{ handler, effect: 'writes' }`) so a run reports
 // `unmeasuredEffect` rather than claiming it wrote nothing.
 
+import {
+  DUTY_TIMEZONE_GUARD_HANDLER,
+  dulyValidateDutyTimezone,
+} from '../hooks/duty.hook.js';
 import { DISPATCH_HANDLER_NAME, dulyDispatch } from '../jobs/dispatch.job.js';
 
 export const dulyFunctions = {
@@ -20,4 +24,13 @@ export const dulyFunctions = {
   // has no flow graph around it to do the writing — see the note on data reach
   // in `src/jobs/dispatch.job.ts`.
   [DISPATCH_HANDLER_NAME]: { handler: dulyDispatch, effect: 'writes' as const },
+
+  // `duly_duty_timezone_guard`'s handler. A hook resolves a STRING handler
+  // against this map (`resolveHandler` -> `opts.functions[name]`), which is the
+  // whole reason the guard can use `Intl`: the alternative spelling — an inline
+  // handler — is lowered by `objectstack build` into a QuickJS `body`, where
+  // `Intl` does not exist. Registered in the bare form, which IS the
+  // declaration `effect: 'pure'`: it inspects the payload and either returns or
+  // throws, and writes nothing.
+  [DUTY_TIMEZONE_GUARD_HANDLER]: dulyValidateDutyTimezone,
 };

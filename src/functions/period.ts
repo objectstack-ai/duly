@@ -210,6 +210,45 @@ function formatterFor(timezone: string): Intl.DateTimeFormat {
   return formatter;
 }
 
+/**
+ * Does this host resolve `timezone` as a real IANA zone?
+ *
+ * The ONE membership oracle for a duty's timezone, shared deliberately with
+ * {@link formatterFor} above rather than reimplemented next to the write path.
+ * A guard that admitted a different set than the engine would be wrong in one
+ * of two directions: refuse a zone that dispatches perfectly well, or pass one
+ * that still throws on dispatch night — which is the whole defect it exists to
+ * close. Sharing the constructor also shares its OPTIONS (`hourCycle: 'h23'`,
+ * `era: 'short'`), so an ICU build that rejected one of those would fail the
+ * guard too, instead of admitting a zone this module cannot actually format.
+ *
+ * ── Why the `Intl.DateTimeFormat` probe and NOT `Intl.supportedValuesOf` ──
+ * `supportedValuesOf('timeZone')` is the tempting spelling and it is the wrong
+ * one. Measured on this repo's Node 22 baseline it returns 418 CLDR
+ * *canonical* names and omits `UTC` — `duly_duty.timezone`'s own declared
+ * `defaultValue` — along with `GMT`, `Asia/Kolkata`, `Europe/Kyiv`,
+ * `Asia/Ho_Chi_Minh` and `US/Eastern`. Every one of those resolves here and
+ * gets correct boundaries out of this module, so a guard built on that list
+ * would refuse every duty created with the field default. This is also the
+ * definition the platform publishes for its own `iana_time_zone` value domain
+ * (`@objectstack/spec`, `system/settings-manifest.zod.ts`): *membership is the
+ * `Intl.DateTimeFormat` probe*, explicitly not the enumerated list.
+ *
+ * Case and aliases are the host's business, not this module's: `GMT`,
+ * `US/Eastern` and `america/new_york` all resolve, and boundaries are computed
+ * in whatever zone ICU maps them to. Nothing here rewrites the caller's
+ * spelling — canonicalising a stored value would be changing data, not
+ * validating it.
+ */
+export function isResolvableTimeZone(timezone: string): boolean {
+  try {
+    formatterFor(timezone);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The wall-clock reading a zone shows at an instant. */
 function wallTimeAt(instant: Date, timezone: string): WallTime {
   const parts = formatterFor(timezone).formatToParts(instant);
