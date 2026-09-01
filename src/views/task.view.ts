@@ -232,6 +232,54 @@ export const TaskViews = defineView({
      * not a colour, silently dropped, every bar identical. With the key
      * ABSENT the same renderer falls through to its status-derived palette and
      * the bars separate by state. Filed upstream; see the PR body.
+     *
+     * ── Two rendering defects on this screen are the RENDERER'S ─────────────
+     * Both were reproduced in a browser against the seeded demo, diagnosed to
+     * `plugin-gantt`, and filed upstream rather than worked around here. They
+     * are recorded because the screen a reader of this file will open still
+     * shows them, and the first one makes the page look wrong in a way that
+     * invites "fixing" the metadata:
+     *
+     *  1. **The toolbar month label disagrees with the columns**
+     *     (objectstack-ai/objectui#7203). It reads `January 2026` over columns
+     *     showing late August, because the renderer formats the timeline
+     *     RANGE START — `min(visible_from) - 7d` over the whole result set —
+     *     and never the visible window. Our earliest seeded task starts 1/31,
+     *     so the label is pinned to January for every scroll position. The
+     *     renderer's own band header one row lower reads `Aug 2026` / `Sep
+     *     2026` off the same frame, which is how you can tell the columns are
+     *     right and the label is wrong. Nothing in this block moves it, and
+     *     no filter here should be narrowed to make the label look better —
+     *     narrowing the range would only move which wrong month it shows.
+     *
+     *  2. **Task names truncate to ~7 characters**
+     *     (objectstack-ai/objectui#7204). Measured: the task-list panel is a
+     *     fixed 320px at every viewport width, its Start/End sub-columns take
+     *     160px of that, and the title span is left 53px against the 260px
+     *     `Site environmental audit — Northgate` needs. Dragging the splitter
+     *     to 580px renders every name in full, so it is width and nothing
+     *     else.
+     *
+     *     ⛔ The width is NOT authorable, and the way it is not authorable is
+     *     a trap: `GanttConfigSchema` is a passthrough object, so an invented
+     *     `gantt.taskListWidth` here would pass `pnpm validate`, survive into
+     *     `dist/objectstack.json`, and be read by nothing. A key that lints
+     *     clean and does nothing is worse than the defect — it reads to the
+     *     next author as a setting that works. Do not add one.
+     *
+     * ── `viewMode: 'week'` is authored and currently inert ──────────────────
+     * Measured, and NOT a third defect to file: the console pinned by
+     * framework 17.2.0 does not forward the gantt block's `viewMode` to the
+     * timeline branch, so this screen renders day columns and the Day button
+     * is the pressed one. Upstream already fixed it — objectui#5074, landed in
+     * objectui PR #5825 with its own pin test — and our console predates that
+     * build. So this is version lag, not a gap, and it needs no card.
+     *
+     * The key stays authored: it is declared in the spec's `GanttConfigSchema`,
+     * it is what we actually want (a week's granularity is the unit a manager
+     * plans in), it is served to API and MCP callers reading this view today,
+     * and it starts working on the next console refresh with no edit here.
+     * ⛔ Do not delete it as dead metadata on the evidence of the Day button.
      */
     schedule: {
       label: 'Schedule',
