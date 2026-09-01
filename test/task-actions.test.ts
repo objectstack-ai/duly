@@ -531,26 +531,42 @@ describe('bulk', () => {
     }
   });
 
-  it('the visible predicate is what keeps an already-done row out of the batch', async () => {
-    // MEASURED, and the reason the predicate is load-bearing rather than
-    // decoration: a predicate update carries ONE payload for all N rows
-    // (`driver.updateMany` takes one SET clause), so the `completed_at` the
-    // hook stamps for a row that IS transitioning is written to every row in
-    // the batch — including one that was completed days ago.
+  it('an already-done row in the batch is refused by the SERVER, not merely hidden', async () => {
+    // The layer that actually decides. A predicate update carries ONE payload
+    // for all N rows (`driver.updateMany` takes one SET clause), so the
+    // `completed_at` the hook stamps for a row that IS transitioning would be
+    // written to every row in the batch — including one completed days ago.
+    // ADR-0058 Addendum II D3 hands a `before*` hook exactly one way out of
+    // that, and `task.hook.ts` takes it: refuse the write.
+    //
+    // This is the assertion that makes the `visible` predicate below a
+    // convenience rather than the only thing between a caller and moved
+    // history — an import, a backfill, the dispatcher or an MCP caller never
+    // goes near a view predicate.
     const open = (await newTask({ subject: 'still open' })).id;
     const alreadyDone = (await newTask({ subject: 'done last week' })).id;
     await dispatch(TASK_COMPLETE_ACTION, { recordId: alreadyDone });
     const original = (await read(alreadyDone)).completed_at;
     await tick();
 
-    await data.update('duly_task', { ...COMPLETE_PATCH }, { multi: true, where: { id: { $in: [open, alreadyDone] } } });
+    const { code, status } = await refusal(
+      data.update('duly_task', { ...COMPLETE_PATCH }, { multi: true, where: { id: { $in: [open, alreadyDone] } } }),
+    );
+    expect(code).toBe('DULY_TASK_BULK_ALREADY_DONE');
+    expect(status).toBe(409);
 
     expect(
       (await read(alreadyDone)).completed_at,
-      'a done row inside the batch has its completion instant overwritten — which is why the def excludes it',
-    ).not.toBe(original);
+      'the original completion instant must survive a batch that tried to re-stamp it',
+    ).toBe(original);
+    expect((await read(open)).status, 'and the refusal writes nothing at all').toBe('open');
+  });
 
-    // So the declaration has to exclude it, and does.
+  it('and the visible predicate still keeps such a batch from being assembled', async () => {
+    // The outer layer, kept. `visible` is evaluated once per selected record
+    // and the run covers only the passing rows, so the console cannot build
+    // the batch the server now refuses. Defence in depth: the user gets a
+    // greyed-out row instead of an error they did not cause.
     const complete = allBulkDefs().find((d) => d.name === BULK_COMPLETE);
     const source = String(complete.visible?.source ?? '');
     expect(source).not.toContain('"done"');
