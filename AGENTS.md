@@ -209,6 +209,92 @@ green in the PR before you hand it back:
 pnpm validate && pnpm typecheck && pnpm test && pnpm build
 ```
 
+## How to write history — seeds, imports and fixtures
+
+A `duly_task` cannot be created in `done` by an ordinary caller. `completed_at` is
+`readonly`, the `beforeInsert` hook stamps only `last_update_at`, so
+`completed_at_required_when_done` refuses the row:
+
+```
+ValidationError: A completed task must carry a completion timestamp.   (code: VALIDATION_FAILED)
+```
+
+**That is correct and it stays.** Tasks are *dispatched* `open`; completion is a
+later transition. The refusal is the product working.
+
+Historical rows — a seed, an import, a fixture — are written from a **system
+context** instead. `{ context: { isSystem: true } }` is the whole mechanism: it
+exempts a write from the readonly strip. It is the same leg `dispatch.job.ts`
+already uses, and the leg the platform's own seed loader uses
+(`SeedLoaderService.SEED_OPTIONS = { isSystem: true, skipTriggers: true,
+seedReplay: true }`).
+
+**It takes two passes, and the second one is the half that gets forgotten.**
+
+| Column | How you seed it |
+|:-------|:----------------|
+| `completed_at` | carried on the **insert**, from a system context |
+| `last_update_at` | a **second pass in `mode: 'update'`** — an insert can never carry it |
+
+Why `last_update_at` is different: `beforeInsert` stamps it unconditionally, and
+lifecycle hooks **do** run on the seed path — `skipTriggers` suppresses
+record-change *automation*, not hooks — so a system insert's value is overwritten
+with the boot clock. The `beforeUpdate` leg deliberately does not stamp on an
+administrative write, so a second write carrying *only* `last_update_at` lands
+untouched. Ergonomics card: #63.
+
+Skip that second pass and there are no **stalled** rows — open tasks last touched
+14+ days ago — so the "Not moving" view is empty on a freshly seeded demo. It is
+the one signal the product claims is its most valuable, and nothing errors: the
+seed reports success and the view is simply blank.
+
+### The worked example
+
+Three datasets, in this order, in `defineStack({ data })`:
+
+```ts
+// 1. sys_user FIRST. duly_task.owner is a user lookup and the seed loader
+//    resolves it as a NATURAL KEY against sys_user.name. A bare id that matches
+//    no sys_user row does not resolve, and because owner is required the whole
+//    task row is refused — "Owner is required" — with the loader also logging
+//    the unresolved reference. Measured: without this, nothing seeds.
+{ object: 'sys_user', externalId: 'name', mode: 'insert',
+  records: [{ name: 'seed_user_alice', username: 'seed_user_alice', /* … */ }] },
+
+// 2. The history itself. completed_at rides along on the insert.
+{ object: 'duly_task', externalId: 'subject', mode: 'insert',
+  records: [{ subject: '…', owner: 'seed_user_alice', source: 'catalog',
+              status: 'done', completed_at: '2026-05-04T09:00:00.000Z' }] },
+
+// 3. The SAME rows again, matched on externalId, to backdate the clock.
+{ object: 'duly_task', externalId: 'subject', mode: 'update',
+  records: [{ subject: '…', last_update_at: '2026-07-18T08:00:00.000Z' }] },
+```
+
+Prefer **relative** instants (`Date.now() - 45 * DAY`) over literals for anything
+whose *age* is the point: a hard-coded date stops being "stalled" as the repo ages.
+
+Both directions are pinned by `test/seed-history.test.ts` — the system write
+succeeds **and** an ordinary caller's identical write is still refused. Keep both
+halves. A test that only proved "the seed may" would quietly turn `readonly: true`
+into decoration.
+
+### One caveat about which layer refuses
+
+The insert-path readonly strip is a **boundary** guard: it lives in
+`MetadataProtocolService.createData`, which is what `@objectstack/rest` — and so
+REST, OpenAPI and MCP — writes through. `engine.insert` applies **no** readonly
+strip at all (the update path is different: that strip is inside ObjectQL and is
+`isSystem`-gated). So a direct `data.insert` from in-process code can set a
+readonly column at insert with no context and no warning.
+
+Filed upstream as **objectstack-ai/objectstack#14147**, and pinned as a tripwire in
+`test/seed-history.test.ts` so it goes red when the platform closes it. Practical
+consequence for authoring here: do not read an engine-level test as proof that a
+column is protected — assert against `protocol.createData` when the refusal is the
+thing you care about. Flows are unaffected today because `assignment.flow.ts`
+declares `runAs: 'system'`, which is elevated regardless.
+
 ## Product invariants — do not "improve" these away
 
 These are the product, not preferences. If a task seems to require breaking one,
