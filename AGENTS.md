@@ -41,9 +41,11 @@ assignee field says.
 
 ## Verify after every metadata change
 
-Metadata mistakes fail **silently at runtime**. A bare field reference in a
-predicate (`done` instead of `record.done`) evaluates to `null` and hides the
-action on every record; a dangling widget binding renders an empty chart.
+Metadata mistakes fail **silently at runtime**: a dangling widget binding
+renders an empty chart, a flow left out of its barrel never fires, an
+unregistered hook never runs. `pnpm validate` catches most of them — including
+a bare field reference on every predicate surface but one. Rule 4 below says
+which one, and why it is the exception.
 
 ```bash
 pnpm validate    # same gates as build, no artifact — the fast inner loop
@@ -81,7 +83,57 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
    optional and fails the assignment.
 3. **Hooks are registered in `defineStack({ hooks })`**, not collected from the
    objects barrel. An unregistered `*.hook.ts` never runs.
-4. **Predicates are CEL** — `record.<field>`, never bare `<field>`.
+4. **Predicates are CEL** — `record.<field>`, never bare `<field>`, on every
+   surface: object validation rules, field `requiredWhen` / conditional rules,
+   action `visible` / `disabled`, sharing rules, hook conditions, and flow node
+   and edge conditions.
+
+   *What decides whether the gate catches you is SCOPE, not which surface you
+   are on.* An expression is evaluated either with the record bound as the
+   `record` namespace and nothing at top level (**record scope**), or with the
+   record's fields additionally flattened into top-level variables
+   (**flattened scope**). `validate` judges a bare identifier only in the first.
+
+   **Record-scoped surfaces — `validate` enforces this, and the failure really
+   is `null`.** Object validation rules, field conditional rules, action
+   `visible` / `disabled`, sharing rules and hook conditions all bind the record
+   as a namespace only, so a bare name binds nothing, the expression evaluates
+   to null, and the rule or action silently never fires. `validate` catches it
+   before it ships. Measured on `@objectstack/cli` 17.2.0, mutating
+   `duly_task`'s `skip_needs_reason` rule to `status == "skipped" && …` exits 1
+   with:
+
+   > object 'duly_task' · validation 'skip_needs_reason': bare reference
+   > `status` — a formula/validation expression binds the record as the
+   > `record` namespace, not at top level, so `status` resolves to nothing and
+   > the expression silently evaluates to null. Write `record.status`.
+
+   A misspelt **qualified** read is caught everywhere, flows included:
+   `record.needs_colection` in a flow condition gives ``unknown field
+   `needs_colection` on `duly_assignment` — did you mean `needs_collection`?``.
+
+   **Flow node and edge conditions are the one exception — no gate at all.**
+   They run in flattened scope, where a bare name may genuinely be a flow
+   variable (a loop iterator, a `get_record` output, an assignment target), so
+   the platform's `collectBoundRecordReads` deliberately never reads a bare
+   identifier as a record reference. The same predicate written
+   `status == "dispatched"` in a flow start condition passes `validate` with
+   **exit 0**.
+
+   *And in a flow the failure is not `null` either.* A bare `status` there
+   **resolves** — to the flattened field, or to a same-named flow variable that
+   was seeded first and **shadows** it. That shadowing case is the subtler bug:
+   the predicate reads correctly and silently means something else. When a name
+   resolves to nothing the engine **throws** (ADR-0032 §1c: no silent fallback —
+   a non-`ok` result is a real fault, not a false condition). So on this one
+   surface the outcomes are "silently means something else" and "loud runtime
+   fault", never the quiet null of the record-scoped surfaces above.
+
+   Filed upstream as **objectstack-ai/objectstack#14089**. Until it lands,
+   `test/flow-predicates.test.ts` is a repo-local **stopgap** covering exactly
+   the unguarded surfaces — flow node and edge conditions, walked over
+   `dulyFlows`, with `dulyJobs` walked as a tripwire — and it is written to be
+   deleted when #14089 ships, not maintained.
 5. **Never store what you can filter.** No `is_late`, no `is_overdue`, no
    `is_open`. A stored flag needs a writer that runs every midnight; a formula
    field is virtual and a filter naming one silently matches nothing. Ask
@@ -98,6 +150,20 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
    expected here, and not a bug to chase.
 8. **English is the source language.** Every authored label gets an `en` entry;
    `zh-CN` is hand-translated. Do not hard-code display text in a hook or flow.
+9. **Metadata first — a handler is the last resort, not the first.** This is an
+   ObjectStack application. Objects, views, flows, jobs, datasets, permission
+   sets and actions are the primary tools; a hand-written handler is what you
+   reach for when none of them can express the thing.
+   **Before writing a handler, check whether the platform already has a
+   declarative way to do it.** The spec is on disk — `@objectstack/spec` ships
+   its Zod sources — and the answer is usually a key you have not read yet.
+   **If the platform genuinely cannot express it, file an issue against
+   `objectstack-ai/objectstack` and say so on the card.** Do not quietly write
+   around the gap. A workaround in application code is how a platform gap
+   becomes permanent and invisible: it works, nobody upstream ever hears about
+   it, and the next application writes the same workaround from scratch.
+   `test/flow-predicates.test.ts` is what a *declared* workaround looks like —
+   labelled a stopgap, pointing at objectstack#14089, and built to be deleted.
 
 ## Landing your work
 
