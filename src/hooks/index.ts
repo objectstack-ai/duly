@@ -13,4 +13,8 @@
 // makes `name` optional and fails the assignment. A named array is `never[]`
 // while empty and infers correctly the moment something is pushed into it.
 
-export const dulyHooks = [];
+import { TaskLifecycleHook } from './task.hook.js';
+
+export { TaskLifecycleHook };
+
+export const dulyHooks = [TaskLifecycleHook];
