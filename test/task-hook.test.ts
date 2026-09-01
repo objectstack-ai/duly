@@ -485,3 +485,153 @@ describe('completed_at on a predicate write — one payload, N rows', () => {
     }
   });
 });
+
+// ── The shared-payload path again: last_update_at ──────────────────────────
+//
+// Same mechanism as the `completed_at` block above, opposite response.
+//
+// The stamp is row-conditional in the other direction: it fires when THIS
+// row's `status`, `note` or `skip_reason` differs from THIS row's pre-image.
+// Under D3 that value lands in the one shared payload and is written to every
+// matched row, so a single genuine edit inside a 200-row batch refreshes all
+// 200 clocks. Unlike `completed_at`, there is nothing to corrupt — the clock
+// only moves forward, and nothing historical is overwritten — so refusing the
+// write would cost a feature to protect a value that, on this path, nothing
+// reads. The hook writes nothing instead.
+//
+// Why writing nothing is SAFE and not merely convenient: stagnation is defined
+// over open work (`duly_stagnation` and the "Not moving" lens both filter
+// `status IN ('open','in_progress')`), and both bulk actions this product
+// ships move every row they touch OUT of that set. An unrefreshed clock on a
+// done or skipped row is a value nothing will ever evaluate again.
+//
+// That premise is a fact about `bulkActionDefs`, not about this hook, so it is
+// guarded where it can go stale: `test/bulk-stagnation-premise.test.ts` fails
+// if a bulk action is ever added whose patch leaves rows inside the stagnation
+// set.
+describe('last_update_at on a predicate write — one payload, N rows', () => {
+  const SHARED_NOTE = 'chased the vendor, all of them';
+
+  it('does NOT advance the clock of a row that changed nothing', async () => {
+    // THE assertion. A batch of exactly the shape the defect was measured on:
+    // row A genuinely changes its note, row B already holds that same note.
+    // Row B's `status`, `note` and `skip_reason` are all unchanged, so nothing
+    // about row B is progress — but row A's dispatch used to write the stamp
+    // into the shared payload and row B's clock moved with it.
+    const changing = (await newTask({ subject: 'row A — the genuine edit', note: 'as found' })).id;
+    const unchanged = (await newTask({ subject: 'row B — already holds it', note: SHARED_NOTE })).id;
+    const before = (await read(unchanged)).last_update_at as string;
+
+    await tick();
+    const affected = await data.update('duly_task', { note: SHARED_NOTE }, {
+      multi: true,
+      where: { id: { $in: [changing, unchanged] } },
+    });
+    expect(affected).toBe(2);
+
+    const rowB = await read(unchanged);
+    expect(rowB.note, 'the batch must still land — this is not a refusal').toBe(SHARED_NOTE);
+    expect(
+      rowB.last_update_at,
+      "row A's edit must not quiet row B's stagnation clock",
+    ).toBe(before);
+  });
+
+  it('does not advance the clock of the row that DID change either', async () => {
+    // The honest statement of the decision, pinned so a later "restore it just
+    // for the row that changed" cannot land quietly: there is no such thing on
+    // this path. One payload, N rows — a stamp aimed at the changing row IS
+    // the stamp every other row receives.
+    const changing = (await newTask({ subject: 'row A alone', note: 'as found' })).id;
+    const bystander = (await newTask({ subject: 'row B alone', note: SHARED_NOTE })).id;
+    const before = (await read(changing)).last_update_at as string;
+
+    await tick();
+    await data.update('duly_task', { note: SHARED_NOTE }, {
+      multi: true,
+      where: { id: { $in: [changing, bystander] } },
+    });
+
+    const rowA = await read(changing);
+    expect(rowA.note, 'the edit itself still commits').toBe(SHARED_NOTE);
+    expect(rowA.last_update_at, 'no row is stamped on the shared-payload path').toBe(before);
+  });
+
+  it('leaves an all-unchanged batch alone, and commits it', async () => {
+    // The control for the option this decision rejected. Refusing any batch
+    // containing an unchanged row would have refused this one too, where
+    // nothing leaks because nothing is stamped.
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      ids.push((await newTask({ subject: `all unchanged ${i}`, note: SHARED_NOTE })).id);
+    }
+    const before = await Promise.all(ids.map(async (id) => (await read(id)).last_update_at as string));
+
+    await tick();
+    const affected = await data.update('duly_task', { note: SHARED_NOTE }, {
+      multi: true,
+      where: { id: { $in: ids } },
+    });
+    expect(affected).toBe(3);
+
+    for (const [i, id] of ids.entries()) {
+      expect((await read(id)).last_update_at, `${id} was not touched`).toBe(before[i]);
+    }
+  });
+
+  it('bulk complete still completes — the unrefreshed clock is a value nothing reads', async () => {
+    // The cost of the decision, measured rather than asserted away. `done` is
+    // outside the stagnation set, so a task that comes out of this batch with
+    // a stale `last_update_at` can never be counted as stalled again.
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i += 1) ids.push((await newTask({ subject: `bulk complete ${i}` })).id);
+    const before = await Promise.all(ids.map(async (id) => (await read(id)).last_update_at as string));
+
+    await tick();
+    const affected = await data.update('duly_task', { status: 'done' }, {
+      multi: true,
+      where: { id: { $in: ids } },
+    });
+    expect(affected).toBe(3);
+
+    for (const [i, id] of ids.entries()) {
+      const row = await read(id);
+      expect(row.status).toBe('done');
+      expect(row.completed_at, 'completed_at is still stamped — it is a different column').toBeTruthy();
+      expect(row.last_update_at, 'and the stagnation clock is left where it was').toBe(before[i]);
+    }
+  });
+
+  it('bulk skip still skips, reason and all', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i += 1) ids.push((await newTask({ subject: `bulk skip ${i}` })).id);
+    const before = await Promise.all(ids.map(async (id) => (await read(id)).last_update_at as string));
+
+    await tick();
+    await data.update('duly_task', { status: 'skipped', skip_reason: 'plant shutdown, week 34' }, {
+      multi: true,
+      where: { id: { $in: ids } },
+    });
+
+    for (const [i, id] of ids.entries()) {
+      const row = await read(id);
+      expect(row.status).toBe('skipped');
+      expect(row.skip_reason).toBe('plant shutdown, week 34');
+      expect(row.last_update_at, 'skipped is outside the stagnation set too').toBe(before[i]);
+    }
+  });
+
+  it('does NOT leak into the single-record path — a by-id note edit still stamps', async () => {
+    // The boundary. `mode: 'record'` has a payload of its own, so the
+    // row-conditional stamp is sound there and stays exactly as it was. This
+    // is the assertion that would go red if the skip were written as "never
+    // stamp on update" instead of "never stamp on the shared payload".
+    const task = await newTask({ note: 'as found' });
+    const before = task.last_update_at as string;
+
+    await tick();
+    const edited = await data.update('duly_task', { id: task.id, note: SHARED_NOTE });
+
+    expect(edited.last_update_at as string > before, 'the by-id path is unchanged').toBe(true);
+  });
+});

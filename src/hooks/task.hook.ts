@@ -74,6 +74,45 @@ import type { Hook, HookContext } from '@objectstack/spec/data';
  * The single-record path (`dispatch.mode === 'record'`) has a payload of its
  * own, so the row-conditional stamp is sound there and is unchanged.
  *
+ * ── The same path and `last_update_at`: write nothing, do not refuse ─────
+ * The stagnation stamp is row-conditional too, in the other direction: it
+ * fires when THIS row's `status`, `note` or `skip_reason` differs from THIS
+ * row's pre-image. D3 applies unchanged — that value goes into the one shared
+ * payload and is written to every matched row, so a single genuine edit inside
+ * a 200-row bulk write refreshes all 200 clocks and the stalled list quietly
+ * empties. Measured: two open tasks, a `multi: true` write setting the same
+ * `note` both already needed, one of which already held it — the unchanged
+ * row's clock moved 6ms anyway, stamped by the other row's dispatch.
+ *
+ * The response here is the opposite of the guard above, and the difference is
+ * what is at stake. A wrong `completed_at` corrupts a historical fact, so that
+ * write must be refused. A `last_update_at` that was not refreshed corrupts
+ * nothing — the clock only moves forward — so refusing would cost a working
+ * feature to protect a value that, on this path, nothing reads. The honest
+ * answer is to write nothing.
+ *
+ * WHY nothing reads it, stated plainly because it is only safe while it stays
+ * true: stagnation is defined over OPEN work. `duly_stagnation` filters
+ * `status IN ('open','in_progress')` on every measure, and the "Not moving"
+ * lens does the same. The two bulk actions this product ships — `complete`
+ * (`status: 'done'`) and `skip` (`status: 'skipped'`) — move every row they
+ * touch OUT of that set, so a row leaving a bulk write with a stale clock is
+ * one no stagnation query will ever evaluate again. "Bulk completion would
+ * look like stagnation" describes a state that cannot occur.
+ *
+ * That premise is a fact about `bulkActionDefs`, not about this hook, and it
+ * is exactly what a bulk "set note" or a bulk reassign would break — silently,
+ * because the symptom is a frozen clock rather than an error. So it is pinned
+ * where it can go stale: `test/bulk-stagnation-premise.test.ts` reads the real
+ * defs out of `src/views/task.view.ts` and the real status set out of
+ * `duly_stagnation` and the `stalled` view, and fails if any bulk action's
+ * patch leaves rows inside the stagnation set. If that test ever goes red, the
+ * decision below is what has to change — not the test.
+ *
+ * The single-record path keeps the row-conditional stamp for this column too:
+ * `mode: 'record'` has a payload of its own, so there is no batch to leak
+ * onto.
+ *
  * ── Why the handler is one self-contained function ───────────────────────
  * `objectstack build` lowers an inline handler into a metadata `body`, and a
  * body ships without its module scope. A handler that referenced a
@@ -162,6 +201,22 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
   //
   // Compared against the pre-image rather than merely tested for presence: a
   // re-save carrying an unchanged `status` is not progress.
+  // ── …and nothing at all on the shared-payload path ─────────────────────
+  // The loop below is row-conditional in the other direction from
+  // `completed_at`: it fires on a difference against THIS row's pre-image. So
+  // under D3 the value it writes lands in the one shared payload and is
+  // applied to every matched row — one genuine note edit inside a 200-row
+  // batch used to refresh all 200 clocks, measured.
+  //
+  // Unlike `completed_at` there is nothing here to corrupt — the clock only
+  // moves forward and no historical fact is overwritten — so the sanctioned
+  // refusal would cost a working feature to protect a value that, on this
+  // path, nothing reads. Same detection as the guard above, opposite response:
+  // write NOTHING rather than write one row's truth onto all of them. The
+  // module header carries why that is safe; the premise it rests on is guarded
+  // in `test/bulk-stagnation-premise.test.ts`.
+  if (ctx.dispatch?.mode === 'per-row') return;
+
   for (const field of ['status', 'note', 'skip_reason']) {
     if (!(field in input)) continue;
     const next = input[field];
@@ -183,9 +238,10 @@ export const TaskLifecycleHook: Hook = {
   description:
     'Server-owned timestamps on duly_task: completed_at on the transition into and out of '
     + 'done, and last_update_at only when status, note or skip_reason actually changed — '
-    + 'never on an administrative or bulk write, which would reset the stagnation signal. '
-    + 'A predicate write that would re-stamp an already-done row is refused outright '
-    + '(ADR-0058 Addendum II D3: one payload for the whole batch, so a guard throws).',
+    + 'never on an administrative write, which would reset the stagnation signal. On a '
+    + 'predicate (bulk) write both row-conditional stamps are handled by ADR-0058 '
+    + 'Addendum II D3: one payload for the whole batch, so a re-stamp of an already-done '
+    + 'row is refused outright and last_update_at is not stamped at all.',
   // Explicit because it is load-bearing rather than a default worth inheriting:
   // if this handler throws, the write MUST be refused. Committing a task whose
   // stamps were not applied is the exact silent corruption the
