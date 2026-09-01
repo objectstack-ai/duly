@@ -42,33 +42,43 @@ import { dulyViews } from '../src/views/index.js';
  * `viewName` does not error, it falls back to the object's default view and
  * KEEPS THE AUTHORED LABEL. The screen looks right and shows the wrong rows.
  *
- * ── Relationship to `test/views.test.ts` — declared, not hidden ──────────
- * That file's stopgap half already resolves the SIMPLE view surface (bare
- * `columns` / `filter` / `sort` / `grouping` / `rowColor` / binding-block keys
- * against the bound object) and the nav `objectName` / `viewName` pair. This
- * file is a strict superset of that half, and exists because the superset is
- * where the remaining holes are:
+ * ── Relationship to `test/views.test.ts` — collapsed, not duplicated ────
+ * Reference RESOLUTION on views and nav is owned HERE and nowhere else.
+ * `test/views.test.ts` used to carry a second, weaker copy of it; duly#58
+ * deleted that copy after measuring, mutation by mutation, that this walk
+ * reports every defect the copy did. What stayed there is binding-block
+ * PRESENCE (objectstack#14106 — "is there a `gantt` block at all") and the
+ * product pins, neither of which this file checks. Presence and resolution
+ * are different properties; do not move either one across.
  *
- *  1. **Datasets are not covered there at all**, and `test/datasets.test.ts`
+ * The five reasons the superset was worth having, and what each is worth now:
+ *
+ *  1. **Datasets were not covered there at all**, and `test/datasets.test.ts`
  *     pins caliber, date-macro grammar and the load-bearing absences — never
  *     that a `field` path names anything real.
- *  2. **Dotted paths are skipped there by construction**: its checker opens
+ *  2. **Dotted paths were skipped there by construction**: that checker opened
  *     with `if (!name || name.includes('.')) return`. So `duty.frequency` —
- *     the one joined path this app ships — is resolved by NOTHING today.
- *  3. **Its system-column list is hand-copied** (and therefore already drifted:
- *     it carries `business_unit_id`, which is not a platform column, and omits
+ *     the one joined path this app ships — was resolved by NOTHING.
+ *  3. **Its system-column list was hand-copied, and had drifted**: it carried
+ *     `business_unit_id`, which is not a platform column, and omitted
  *     `owning_business_unit_id`, `tenant_id`, `user_id` and `deleted_at`,
- *     which are). This file reads the platform's own `SystemFieldName`.
+ *     which are. Measured both ways before the deletion — a view column of
+ *     `business_unit_id` passed there and fails here, and one of `deleted_at`
+ *     failed there (a false positive) and passes here. This file reads the
+ *     platform's own `SystemFieldName`, so it cannot drift again.
  *  4. **A view bound to a platform object would FAIL there**, because the
- *     bound object must be in `dulyObjects`. Platform objects are resolved
+ *     bound object had to be in `dulyObjects`. Platform objects are resolved
  *     here from the platform's own registry.
  *  5. **Neither file had a self-test.** A guard that has never been observed
  *     failing is indistinguishable from a guard that cannot fail; the
  *     synthetic fixtures at the bottom pin both directions permanently.
  *
- * Collapsing the two into one is a follow-up, not this card: deleting another
- * card's guard is not a rider on this one. Until then the overlap is benign —
- * this file is the superset, so any disagreement reds HERE first.
+ * One thing the older copy DID cover that this walk did not: a nav entry
+ * nested under an `object` entry rather than a `group`. That was a real hole,
+ * not a redundancy — `walkNav` recursed on `group` alone — so it was closed
+ * here (see the note in `walkNav`) BEFORE the copy was deleted, and pinned by
+ * `reaches nav entries nested under an OBJECT entry` below. A collapse is
+ * only sound once the surviving guard is a genuine superset.
  *
  * ── Narrowings, stated rather than hidden ────────────────────────────────
  * A guard people learn to ignore is worse than no guard, so this one only
@@ -108,7 +118,9 @@ interface DeclaredObject {
 /**
  * Columns the platform puts on every object. Imported from the spec's own
  * `SystemFieldName` rather than transcribed: a second hand-maintained copy of
- * platform knowledge drifts, and `test/views.test.ts`'s copy already has.
+ * platform knowledge drifts, and the copy `test/views.test.ts` used to carry
+ * had — it listed `business_unit_id`, which is not a platform column, and
+ * omitted four that are. That copy is gone (duly#58); this is the only one.
  */
 const SYSTEM_FIELDS: ReadonlySet<string> = new Set(Object.values(SystemFieldName));
 
@@ -632,10 +644,20 @@ export const metadataBindingFindings = (stack: Stack): WalkResult => {
       const where = `app ${appName} · nav '${id}'`;
       const type = String(item.type ?? '');
 
-      if (type === 'group') {
-        walkNav(item.children as Rec[] | undefined, appName);
-        continue;
-      }
+      /**
+       * Children are walked for EVERY item type, not only `group`. The spec
+       * ties the recursive knot on the object branch as well —
+       * `NavigationItem` is `(ObjectNavItem & { children?: NavigationItem[] })
+       * | … | GroupNavItem` — so a nav entry nested under an OBJECT entry is
+       * legal metadata that the shell renders. Recursing only on `group` left
+       * those children unvisited: measured on this app by hanging a child
+       * carrying `viewName: 'ghost_view'` off `nav_log`, this walk stayed
+       * GREEN while the reference resolved to nothing (duly#58). A `group`
+       * carries no binding of its own, so it stops here; everything else
+       * falls through and is resolved below.
+       */
+      walkNav(item.children as Rec[] | undefined, appName);
+      if (type === 'group') continue;
       if (type === 'dashboard') {
         /**
          * `DashboardNavItemSchema` carries `dashboardName`, not an object, so
@@ -804,8 +826,9 @@ describe('metadata bindings — every reference resolves (stopgap for objectstac
 
   it('resolves the joined path this app ships, through the lookup to the target field', () => {
     // `duty.frequency` is the one multi-hop path in the stack, and it is the
-    // path `test/views.test.ts` skips by construction (`name.includes('.')`).
-    // Asserting it is REACHED, not merely that nothing failed.
+    // path the deleted copy in `test/views.test.ts` skipped by construction
+    // (`if (!name || name.includes('.')) return`). Asserting it is REACHED,
+    // not merely that nothing failed.
     expect(
       result.resolved.some((r) => r.endsWith('→ duty.frequency')),
       'the joined path duly_task→duty.frequency was never resolved — the multi-hop walk is not running',
@@ -1105,6 +1128,29 @@ describe('metadata bindings — the guard can fail (self-test on synthetic metad
       ],
     });
     expect(r.findings.map((f) => f.where)).toEqual([expect.stringContaining("nav 'deep'")]);
+  });
+
+  it('reaches nav entries nested under an OBJECT entry, which the schema also allows', () => {
+    // `NavigationItem` ties the `children` knot on the object branch too, so
+    // this shape is legal metadata. Recursing only on `group` left it
+    // unvisited and the walk read GREEN on a ghost `viewName` (duly#58) —
+    // this is the case that kept `test/views.test.ts`'s nav assertion alive
+    // until the walk was fixed.
+    const r = run({
+      apps: [
+        {
+          name: 'fx_app',
+          navigation: [
+            {
+              id: 'parent', type: 'object', objectName: 'fx_task', viewName: 'lens',
+              children: [{ id: 'nested', type: 'object', objectName: 'fx_task', viewName: 'ghost' }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(r.findings.map((f) => f.reference)).toEqual(['ghost']);
+    expect(r.findings[0]!.where).toContain("nav 'nested'");
   });
 
   // ── Must NOT fire ──────────────────────────────────────────────────────
