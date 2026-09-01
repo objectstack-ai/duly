@@ -233,9 +233,8 @@ describe('duly_catalog_apply — the cadence it replicates (#65)', () => {
 // ───────────────────────────────────────────────────────────────────────────
 describe('the handler\'s query shape does not survive the runtime\'s own facade', () => {
   /**
-   * Measured while covering the apply path for #65, and filed separately —
-   * it is a different defect from the missing validation rule and is not
-   * fixed here.
+   * Measured while covering the apply path for #65 and filed as #79 — a
+   * different defect from the missing validation rule, and not fixed here.
    *
    * `applyCatalogHandler` calls `engine.find('duly_catalog_item', { where: …
    * })`. The runtime's `buildActionEngineFacade` wraps whatever it is given:
@@ -244,8 +243,8 @@ describe('the handler\'s query shape does not survive the runtime\'s own facade'
    * field called `where`, and the read comes back EMPTY — with no error. The
    * action then reports `{ created: 0 }` and a successful run.
    *
-   * Pinned so the seam is visible rather than folklore. When the handler (or
-   * the facade) is fixed this goes red: delete this describe block, and the
+   * Pinned so the seam is visible rather than folklore. When #79 is fixed
+   * this goes red: delete this describe block — do not adjust it — and
    * `handlerFacade` above becomes the only convention in the file.
    */
   it('finds nothing, creates nothing, and reports success', async () => {
