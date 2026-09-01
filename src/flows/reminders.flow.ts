@@ -115,8 +115,8 @@ import { defineFlow } from '@objectstack/spec';
  * above compose safely. Predicates written out in full may keep using P`…`;
  * the rule is only that a `${…}` hole in P is a value, never CEL.
  *
- * ── Two platform gaps this file does NOT work around ─────────────────────
- * **1. Digest by recipient is not authorable.** The manager-facing flows are
+ * ── The one platform gap this file does NOT work around ──────────────────
+ * **Digest by recipient is not authorable.** The manager-facing flows are
  * absent because the node vocabulary cannot express "one message per manager
  * listing their N tasks":
  *   - there is no aggregate / group-by node, so records can only be bucketed
@@ -133,16 +133,27 @@ import { defineFlow } from '@objectstack/spec';
  * satisfied "one message, not thirty" while quietly dropping "listing 30", and
  * that is the kind of workaround that makes a platform gap permanent.
  *
- * **2. Notification text cannot be localized in this app.** The localizable
- * `notify` path is `template`, naming a `sys_email_template` bundle;
- * `defineStack` accepts an `emailTemplates` collection but this app wires no
- * barrel for one, and `objectstack.config.ts` is not editable from a feature
- * branch. So the inline `title`/`message` below are the only content path
- * available, and they are the explicitly NON-localizable one — a declared
- * deviation from the house rule "do not hard-code display text in a flow"
- * (AGENTS.md §8), not an oversight. English is the source language, so the
- * strings are at least the right source text; they are simply untranslatable
- * until the app has an email-template barrel.
+ * (A second gap stood here — "notification text cannot be localized in this
+ * app" — declaring the inline `title`/`message` on the three notify nodes as
+ * a deviation from AGENTS.md §8. Both are gone: the app wires
+ * `src/email-templates/`, the three sweeps name a `template`, and no display
+ * text is authored in this file at all.)
+ *
+ * ── Where the notification text lives ────────────────────────────────────
+ * In `src/email-templates/reminders.email-template.ts`, one bundle per sweep,
+ * two `(name, locale)` rows each (`en`, `zh-CN`). The node carries only the
+ * bundle NAME plus `templateData`, and the two content paths are mutually
+ * exclusive by schema — `template` alongside `title`/`message` is a parse
+ * error, not a precedence rule — so re-adding a string here is refused at the
+ * gate rather than silently winning over the bundle.
+ *
+ * `template` is read RAW (no `{token}` interpolation): it is a static metadata
+ * cross-reference. `templateData` VALUES are interpolated per run, which is
+ * how `{record.subject}` still reaches the rendered text. A name that matches
+ * no row is the one silent failure this swap introduces — the inbox channel
+ * classifies `TEMPLATE_NOT_FOUND` as PERMANENT, so the delivery dead-letters
+ * and the run still reports success. `test/email-templates.test.ts` pins every
+ * `template` on every notify node against the barrel for exactly that reason.
  */
 
 // ─── Shared authoring constants ──────────────────────────────────────────
@@ -253,6 +264,26 @@ const DUTY_GRACE =
 /** Days elapsed since the due date. Positive once the task is late. */
 const DAYS_PAST_DUE = 'daysBetween(record.due_date, today())';
 
+/**
+ * Render context handed to every reminder bundle — the `{{var}}` holes the
+ * three templates declare.
+ *
+ * One constant for all three because the three bundles declare the SAME two
+ * variables; a per-flow copy would let one drift into passing a hole its
+ * template does not read (rendered as nothing, silently) or omitting one it
+ * does. The keys are the template's variable names; the values are flow
+ * templates resolved per run against the swept record.
+ *
+ * `due_date` is deliberately passed raw rather than pre-formatted: the
+ * rendering side owns presentation per locale, and a value formatted here
+ * would be formatted once, in one language, for every recipient — which is
+ * the property this whole card exists to remove.
+ */
+const TASK_TEMPLATE_DATA = {
+  subject: '{record.subject}',
+  due_date: '{record.due_date}',
+} as const;
+
 // ─── 1 · Lead-time reminder — the task appears on the owner's list ───────
 
 /**
@@ -323,8 +354,11 @@ export const LeadTimeReminder = defineFlow({
       label: 'Tell the owner',
       config: {
         recipients: '{record.owner}',
-        title: '{record.subject}',
-        message: 'This is now on your list. Due {record.due_date}.',
+        // The localizable content path. `template` names the bundle in
+        // src/email-templates/; `templateData` is its render context and IS
+        // interpolated per run, so the record still supplies the values.
+        template: 'duly.task_lead_time',
+        templateData: TASK_TEMPLATE_DATA,
         severity: 'info',
         topic: 'duly.task_lead_time',
         // The pair only takes effect together; a half-specified target is
@@ -425,8 +459,8 @@ export const DueSoonReminder = defineFlow({
       label: 'Tell the owner',
       config: {
         recipients: '{record.owner}',
-        title: '{record.subject}',
-        message: 'Due in 2 days, on {record.due_date}.',
+        template: 'duly.task_due_soon',
+        templateData: TASK_TEMPLATE_DATA,
         severity: 'info',
         topic: 'duly.task_due_soon',
         sourceObject: 'duly_task',
@@ -535,8 +569,8 @@ export const OverdueOwnerEscalation = defineFlow({
       label: 'Tell the owner it is late',
       config: {
         recipients: '{record.owner}',
-        title: '{record.subject}',
-        message: 'Past due since {record.due_date}.',
+        template: 'duly.task_overdue',
+        templateData: TASK_TEMPLATE_DATA,
         severity: 'warning',
         topic: 'duly.task_overdue',
         sourceObject: 'duly_task',
