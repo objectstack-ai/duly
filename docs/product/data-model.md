@@ -159,12 +159,23 @@ Every object states `sharingModel` explicitly — unset means private and the
 publish linter errors on it (ADR-0090 D1/D7).
 
 Manager visibility comes from permission sets with `readScope`, not from an
-org-wide default. The ADR-0057 depth scopes — `own_and_reports`, `unit`,
-`unit_and_below`, `org` — are resolved by `@objectstack/security-enterprise`,
-which enterprise deployments carry. We author against them directly and build no
-application-level fallback.
+org-wide default. The ADR-0057 hierarchy scopes — `own_and_reports`, `unit`,
+`unit_and_below` — are resolved by `@objectstack/security-enterprise`, which
+enterprise deployments carry. We author against them directly and build no
+application-level fallback. (`org` is a flat scope, not a hierarchy one; it is
+used on the catalog and nowhere near a person's rows.)
 
-In an open-edition checkout the resolver is absent and those scopes fall back to
-owner-only. That is the expected behaviour of this repo, not a defect: a manager
-view here shows you your own rows. Anyone verifying manager visibility needs an
-enterprise runtime to see it work.
+Authoring a hierarchy scope **requires** `requires: ['hierarchy-security']` in
+`objectstack.config.ts`, which this package declares. Omitting it is not a
+silent degradation — `defineStack` refuses to load the stack, which is the
+platform deliberately turning the old fail-closed-to-owner-only into an
+authoring-time error (ADR-0049: otherwise the metadata would lie).
+
+Declaring the capability installs nothing and breaks nothing. On an
+open-edition checkout, with `@objectstack/security-enterprise` absent, every
+gate stays green and `pnpm validate` prints one warning naming the package that
+provides the capability. **That warning is the expected state of this repo.**
+
+The scopes then resolve to owner-only here, so a manager view shows you your own
+rows. That is the edition, not a defect; anyone verifying manager visibility
+needs an enterprise runtime to see it work.

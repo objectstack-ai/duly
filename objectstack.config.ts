@@ -60,14 +60,31 @@ export default defineStack({
   // `automation` backs flow and job execution, and materialises declarative
   // `connectors:` entries at boot (ADR-0097). The dispatcher lives there.
   //
-  // `hierarchy-security` is deliberately NOT declared here. Manager visibility
-  // is authored with the ADR-0057 depth scopes ('own_and_reports', 'unit',
-  // 'unit_and_below', 'org'), which @objectstack/security-enterprise resolves —
-  // enterprise deployments have it, so no application-level fallback is built.
-  // This open-edition checkout runs without it and those scopes resolve to
-  // owner-only; that is the expected open-edition behaviour, not a bug to work
-  // around. Declaring the capability would make an open-edition boot fail.
-  requires: ['automation'],
+  // `hierarchy-security` is REQUIRED, not optional, and declaring it installs
+  // nothing. Manager visibility is authored with the ADR-0057 depth scopes,
+  // and `defineStack`'s own `validateHierarchyScopeCapability` refuses to load
+  // a stack that grants `own_and_reports`, `unit` or `unit_and_below` without
+  // this entry:
+  //
+  //   > A stack that uses one MUST declare `requires: ['hierarchy-security']`;
+  //   > otherwise the open runtime would silently fail closed to owner-only
+  //   > (the metadata would lie, ADR-0049). This makes that an authoring-time
+  //   > error instead.
+  //
+  // (`org` is NOT a hierarchy scope and passes that check — which is the
+  // trapdoor: it is authorable without this line and discloses the whole
+  // tenant. Depth for managers is `unit_and_below`, never `org`.)
+  //
+  // Declaring it does NOT fail an open-edition boot. Measured on this
+  // checkout with @objectstack/security-enterprise absent: `validate`, `test`
+  // and `build` all exit 0 and the kernel logs `Bootstrap complete`; the
+  // capability-provider check prints ONE warning naming the package to
+  // install. That warning is the expected state here — the honest signal that
+  // these scopes resolve to owner-only until a deployment provides the
+  // resolver. Do not silence it: the only ways to are installing the
+  // enterprise package (not wanted in this repo) or deleting this entry,
+  // which puts the hard error back.
+  requires: ['automation', 'hierarchy-security'],
 
   plugins: [
     new ConnectorRestPlugin(),
@@ -90,10 +107,13 @@ export default defineStack({
   hooks: dulyHooks,
   functions: dulyFunctions,
 
-  // Security posture. Hierarchy read scopes ('own_and_reports', 'unit',
-  // 'unit_and_below', 'org') are resolved by @objectstack/security-enterprise,
-  // which is a HARD product dependency — without it they fail closed to
-  // owner-only, silently. See docs/product/data-model.md#security-posture.
+  // Security posture. The hierarchy read scopes ('own_and_reports', 'unit',
+  // 'unit_and_below') are resolved by @objectstack/security-enterprise, which
+  // is a HARD product dependency — declared as `hierarchy-security` in
+  // `requires` above. Without the package installed they resolve to
+  // owner-only, announced by the capability-provider warning on every
+  // validate/build rather than silently.
+  // See docs/product/data-model.md#security-posture.
   positions: dulyPositions,
   permissions: dulyPermissionSets,
   sharingRules: dulySharingRules,

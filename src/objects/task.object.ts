@@ -66,9 +66,19 @@ export const Task = ObjectSchema.create({
       label: 'Source',
       required: true,
       options: [
-        { label: 'Role catalog', value: 'catalog', color: '#16515F', default: true },
+        { label: 'Role catalog', value: 'catalog', color: '#16515F' },
         { label: 'Assigned by manager', value: 'assigned', color: '#8C6512' },
-        { label: 'Self-declared', value: 'self', color: '#576B73' },
+        // The default. Both manufactured producers stamp this explicitly and
+        // do not rely on it: the dispatcher copies `duty.source` onto every
+        // dispatched task (`dispatch.plan.ts` — `source: duty.source ?? ''`,
+        // never omitted from the draft), and the assignment fan-out writes
+        // `source: 'assigned'` directly on both `create_record` nodes
+        // (`assignment.flow.ts`). The path that actually reaches this
+        // default is `duly_member`'s `allowCreate: true` on `duly_task`
+        // (`permission-sets.ts`) with no create form stamping `source` — a
+        // member hand-creating their own task, which is self-declared by
+        // definition (#55).
+        { label: 'Self-declared', value: 'self', color: '#576B73', default: true },
       ],
     }),
 

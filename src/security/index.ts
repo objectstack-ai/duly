@@ -33,7 +33,6 @@ export {
   DULY_CATALOG_APPLY,
   DULY_CATALOG_SYNC,
   DULY_TASK_UPDATE_STATUS,
-  HIERARCHY_SCOPES_DEFERRED,
 } from './permission-sets.js';
 
 export const dulyPositions = [MemberPosition, ManagerPosition, AdminPosition];
