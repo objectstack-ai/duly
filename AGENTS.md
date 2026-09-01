@@ -41,9 +41,10 @@ assignee field says.
 
 ## Verify after every metadata change
 
-Metadata mistakes fail **silently at runtime**. A bare field reference in a
-predicate (`done` instead of `record.done`) evaluates to `null` and hides the
-action on every record; a dangling widget binding renders an empty chart.
+Metadata mistakes fail **silently at runtime**: a dangling widget binding
+renders an empty chart, a flow left out of its barrel never fires, an
+unregistered hook never runs. `pnpm validate` catches most of them. It does not
+catch all of them, and rule 4 below names the gap that matters most for flows.
 
 ```bash
 pnpm validate    # same gates as build, no artifact — the fast inner loop
@@ -81,7 +82,35 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
    optional and fails the assignment.
 3. **Hooks are registered in `defineStack({ hooks })`**, not collected from the
    objects barrel. An unregistered `*.hook.ts` never runs.
-4. **Predicates are CEL** — `record.<field>`, never bare `<field>`.
+4. **Predicates are CEL** — `record.<field>`, never bare `<field>`, on every
+   surface: `visible` / `disabled` / `requiredWhen`, validation rules, sharing
+   rules, and flow and job conditions.
+
+   *What `pnpm validate` enforces, and where it stops.* The author-time rule
+   resolves every `record.` / `previous.` read against the bound object and
+   fails loudly and located on a typo — measured on `@objectstack/cli` 17.2.0,
+   a flow condition reading `record.needs_colection` gives ``unknown field
+   `needs_colection` on `duly_assignment` — did you mean `needs_collection`?``.
+   What it does **not** flag, on any surface, is a **bare** identifier: the same
+   predicate written `status == "dispatched"` passes `validate` with exit 0.
+   That is deliberate. In a flattened flow scope a bare name may genuinely be a
+   flow variable, so the platform's `collectBoundRecordReads` never reads a bare
+   identifier as a record reference. Filed upstream as
+   **objectstack-ai/objectstack#14089**; until it lands,
+   `test/flow-predicates.test.ts` is a repo-local **stopgap** over `dulyFlows`
+   and `dulyJobs` — written to be deleted when #14089 ships, not maintained.
+
+   *The failure mode is not `null`.* A bare name in a flow does not evaluate to
+   null and quietly hide a branch. The engine flattens the trigger record's
+   fields into top-level variables, so a bare `status` genuinely **resolves** —
+   to the field, or to a same-named flow variable that was seeded first and
+   **shadows** it. And when a name resolves to nothing the engine **throws**
+   (ADR-0032 §1c: no silent fallback — a non-`ok` result is a real fault, not a
+   false condition). So the two real outcomes are "silently means something
+   else" and "loud runtime fault". Neither is recoverable by reading the
+   predicate, which is why the rule stands: `record.<field>` is the only
+   spelling that cannot be captured by a variable declared elsewhere in the
+   file, and the only one `validate` can check for you.
 5. **Never store what you can filter.** No `is_late`, no `is_overdue`, no
    `is_open`. A stored flag needs a writer that runs every midnight; a formula
    field is virtual and a filter naming one silently matches nothing. Ask
@@ -98,6 +127,20 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
    expected here, and not a bug to chase.
 8. **English is the source language.** Every authored label gets an `en` entry;
    `zh-CN` is hand-translated. Do not hard-code display text in a hook or flow.
+9. **Metadata first — a handler is the last resort, not the first.** This is an
+   ObjectStack application. Objects, views, flows, jobs, datasets, permission
+   sets and actions are the primary tools; a hand-written handler is what you
+   reach for when none of them can express the thing.
+   **Before writing a handler, check whether the platform already has a
+   declarative way to do it.** The spec is on disk — `@objectstack/spec` ships
+   its Zod sources — and the answer is usually a key you have not read yet.
+   **If the platform genuinely cannot express it, file an issue against
+   `objectstack-ai/objectstack` and say so on the card.** Do not quietly write
+   around the gap. A workaround in application code is how a platform gap
+   becomes permanent and invisible: it works, nobody upstream ever hears about
+   it, and the next application writes the same workaround from scratch.
+   `test/flow-predicates.test.ts` is what a *declared* workaround looks like —
+   labelled a stopgap, pointing at objectstack#14089, and built to be deleted.
 
 ## Landing your work
 
