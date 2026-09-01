@@ -529,6 +529,12 @@ describe('handler wiring', () => {
       registerAction: (...args: unknown[]) => {
         calls.push({ object: String(args[0]), action: String(args[1]), handler: args[2] });
       },
+      // Widened by #42 so `registerDulyActionHandlers` can also
+      // `bindDispatchEngine(ql)`; this suite is only about the action-handler
+      // registry, so these are unused no-ops rather than a real engine.
+      find: async () => [],
+      insert: async () => ({}),
+      update: async () => undefined,
     };
     registerDulyActionHandlers(ql);
     return calls;
