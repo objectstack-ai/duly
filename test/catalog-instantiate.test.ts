@@ -15,6 +15,7 @@ import {
   DEFAULT_DUTY_TIMEZONE,
   GLOBAL_ACTION_OBJECT,
   applyCatalogHandler,
+  pairKey,
   resolveDutyTimezone,
   syncCatalogHandler,
 } from '../src/actions/catalog.handlers.js';
@@ -489,6 +490,30 @@ describe('duly_catalog_sync', () => {
     expect(second.updated).toBe(0);
     expect(second.unchanged).toBe(78);
     expect(engine.updates.length).toBe(writesAfterFirst);
+  });
+});
+
+describe('pairKey — the idempotency key', () => {
+  // The separator is deliberate and the reason is not obvious, so it is pinned
+  // rather than left to be "simplified" away.
+
+  it('does not collide across a shifted boundary', () => {
+    // Plain concatenation makes these the same string, which would make apply
+    // skip a duty it has never created.
+    expect(pairKey('ab', 'c')).not.toBe(pairKey('a', 'bc'));
+    expect(pairKey('item', '1_user')).not.toBe(pairKey('item_1', 'user'));
+  });
+
+  it('is stable and distinguishes each component', () => {
+    expect(pairKey('item_1', 'user_a')).toBe(pairKey('item_1', 'user_a'));
+    expect(pairKey('item_1', 'user_a')).not.toBe(pairKey('item_1', 'user_b'));
+    expect(pairKey('item_1', 'user_a')).not.toBe(pairKey('item_2', 'user_a'));
+  });
+
+  it('separates with an escaped NUL, which no record id can contain', () => {
+    // Asserted via the escape, never a raw byte in this file either.
+    expect(pairKey('a', 'b')).toBe('a' + '\u0000' + 'b');
+    expect(pairKey('a', 'b')).toHaveLength(3);
   });
 });
 
