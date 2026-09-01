@@ -14,7 +14,14 @@
 // while empty and infers correctly the moment something is pushed into it.
 
 import { AssignmentFanout } from './assignment.flow.js';
+import {
+  DueSoonReminder,
+  LeadTimeReminder,
+  OverdueOwnerEscalation,
+  dulyReminderFlows,
+} from './reminders.flow.js';
 
 export { AssignmentFanout };
+export { DueSoonReminder, LeadTimeReminder, OverdueOwnerEscalation, dulyReminderFlows };
 
-export const dulyFlows = [AssignmentFanout];
+export const dulyFlows = [AssignmentFanout, ...dulyReminderFlows];
