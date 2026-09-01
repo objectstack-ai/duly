@@ -195,7 +195,7 @@ describe('reminder sweeps — the windows say what the card says', () => {
   it('the overdue sweep is a BOUNDED past-due lookback', () => {
     const tr = timeRelativeOf(OverdueOwnerEscalation as unknown as FlowLike);
     expect(tr.dateField).toBe('due_date');
-    expect(tr.withinDays).toBe(-15);
+    expect(tr.withinDays).toBe(-31);
     expect(Object.keys(tr)).not.toContain('offsetDays');
   });
 
@@ -204,7 +204,9 @@ describe('reminder sweeps — the windows say what the card says', () => {
     // pushes that day outside the swept window is never escalated — silently.
     // Nothing but this assertion holds the two numbers together: they live in
     // two files (`src/flows/reminders.flow.ts`, `src/objects/duty.object.ts`)
-    // and neither can see the other.
+    // and neither can see the other. The pair moved 14/15 → 30/31 in #89; the
+    // COUPLING is what is pinned here, not either value, so a future move is
+    // one edit to each file and one to this test.
     const lookback = -Number(timeRelativeOf(OverdueOwnerEscalation as unknown as FlowLike).withinDays);
     const graceMax = (Duty.fields.grace_days as { max?: number }).max;
     expect(
@@ -215,7 +217,7 @@ describe('reminder sweeps — the windows say what the card says', () => {
     // The direction the previous version of this test guarded — an UNBOUNDED
     // grace — is now closed by declaration (#82), and this half is what keeps
     // it closed. Deleting the field's `max` would put the silent case back:
-    // every value above 14 saves clean and is never escalated, which is not a
+    // every value above 30 saves clean and is never escalated, which is not a
     // gap a reader of either file would notice.
     expect(graceMax, 'grace_days lost its max — an unbounded grace is silently never escalated').toBe(
       lookback - 1,

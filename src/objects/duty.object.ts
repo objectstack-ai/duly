@@ -177,7 +177,7 @@ export const Duty = ObjectSchema.create({
     //                constraint: { scale: 0, actual: 1 } }
     //
     // That is already product voice, so nothing is layered on top of it. The
-    // bounds read the same way — "Grace (days) must be ≤ 14".
+    // bounds read the same way — "Grace (days) must be ≤ 30".
     //
     // ── The three do NOT share a failure mode ─────────────────────────────
     // Same declaration, three different routes to the period engine — measured
@@ -210,15 +210,40 @@ export const Duty = ObjectSchema.create({
     // or a lead window reaching more than a year outside its own period is a
     // typo, not a schedule, so ±366 / 0..366 is where they stop.
     //
-    // `grace_days` stops at 14, and that number is NOT a taste call. The
+    // `grace_days` stops at 30, and that number is NOT a taste call. The
     // overdue escalation fires on `due_date + grace_days + 1` and its sweep
-    // looks back `OVERDUE_LOOKBACK_DAYS` (15) days
-    // (`src/flows/reminders.flow.ts`), so a grace of 15 or more puts day one
+    // looks back `OVERDUE_LOOKBACK_DAYS` (31) days
+    // (`src/flows/reminders.flow.ts`), so a grace of 31 or more puts day one
     // outside the swept window and the escalation NEVER FIRES — the same
-    // silent inertness this card is about, one flow over. 14 is the largest
-    // grace the product can currently honour; raising it means raising the
-    // lookback, and `test/reminders.test.ts` holds the two numbers together so
-    // neither can move alone.
+    // silent inertness this card is about, one flow over.
+    //
+    // ── THE OTHER HALF OF THIS NUMBER LIVES IN ANOTHER FILE ───────────────
+    // The invariant is `lookback >= max_grace + 1`, and it spans three files
+    // that cannot see each other:
+    //
+    //   src/flows/reminders.flow.ts    OVERDUE_LOOKBACK_DAYS = 31
+    //   src/objects/duty.object.ts     grace_days max: 30   ← you are here
+    //   src/objects/catalog-item.object.ts  grace_days max: 30 (mirrored,
+    //                                  because catalog apply copies it onto
+    //                                  every duty it creates)
+    //
+    // Nothing in the toolchain couples them; `test/reminders.test.ts` ("the
+    // lookback still covers the largest grace a duty can declare") reads all
+    // three and fails if any moves alone. Raise this ceiling and you MUST
+    // raise the lookback in the same commit — the failure mode of getting it
+    // wrong is not an error, it is an escalation that never fires and never
+    // says so. That is exactly how a 21-day grace sat in the demo catalog
+    // against a 15-day lookback, never escalating, until #82 went looking.
+    //
+    // ── Why 30 and not 14 (#89) ───────────────────────────────────────────
+    // 14 was the largest grace a 15-day lookback could honour, and it was
+    // measurably too low: the demo catalog's annual "Contractor induction
+    // refresh" was authored with 21 days of grace — an ordinary configuration
+    // for an annual duty — and had to be cut to fit. A limit that a plausible
+    // first configuration trips is a limit in the wrong place, so the lookback
+    // moved instead. It stops at 30 rather than going further because a grace
+    // longer than a month stops being grace and becomes a different due date,
+    // and the lookback is the half that is not free (see the flow).
     due_offset_days: Field.number({
       label: 'Offset (days, 0 = anchor day)',
       defaultValue: F`record.form != "recurring" ? null : 0`,
@@ -242,8 +267,8 @@ export const Duty = ObjectSchema.create({
       defaultValue: F`record.form == "standing" ? null : 0`,
       scale: 0,
       min: 0,
-      max: 14,
-      description: 'Days after the due date before an open task counts as late. Whole days, up to 14 — the overdue reminder sweeps 15 days back, so a longer grace would put day one outside the window and never fire at all. Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
+      max: 30,
+      description: 'Days after the due date before an open task counts as late. Whole days, up to 30 — the overdue reminder sweeps 31 days back, so a longer grace would put day one outside the window and never fire at all. Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
     }),
 
     // A global product cannot compute "the 5th of the month" without knowing
