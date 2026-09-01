@@ -1420,7 +1420,9 @@ describe('grouping-projection guard — the guard can fail (self-test on synthet
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// The by-unit lens stays scoped to open work (stopgap for objectui#7189)
+// Grouped lenses and the scope each one carries
+//   · by_unit  — stays scoped to open work (stopgap for objectui#7189)
+//   · schedule — stays scoped to open work (a product decision, NOT a stopgap)
 // ─────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1455,17 +1457,48 @@ describe('grouping-projection guard — the guard can fail (self-test on synthet
  * 27 `open` + 6 `in_progress` = 33 rows, all five units present, every count
  * true. Counted off the seed, not off the screen.
  *
- * ── Why this is a PIN on one lens, not "grouped grids must be filtered" ──
- * A filter requirement over every grouped grid would fire on `duly_duty ›
+ * ── Why this is a PIN on named lenses, not "grouped views must be filtered" ──
+ * A filter requirement over every grouped view would fire on `duly_duty ›
  * catalog_tree`, which groups two levels deep and carries no filter — and
  * measurably does not need one: the seed holds **31** duties, one page, all
- * groups present, all counts true. Making it declare a filter to satisfy a
- * rule is the same mistake the guard above narrows away from — a rule that
- * fires on a non-bug teaches the next reader that the test lies. What is
- * actually being guarded is not "has a filter", it is a DECISION about one
- * lens, so this pins that decision and INVENTORIES the rest: a newly added
- * grouped grid, or a re-spelled filter, changes the inventory and lands here
- * for a human read instead of passing silently.
+ * groups present, all counts true. It would fire on `duly_task › board` too,
+ * whose kanban groups BY `status`: a status scope there would delete columns
+ * from the board, which is the opposite of a fix. Making either declare a
+ * filter to satisfy a rule is the same mistake the guard above narrows away
+ * from — a rule that fires on a non-bug teaches the next reader that the test
+ * lies, and that rule has now been measured firing on a healthy view twice.
+ * What is actually being guarded is not "has a filter", it is a DECISION about
+ * a named lens, so this pins those decisions and INVENTORIES the rest: a newly
+ * added grouped view, or a re-spelled filter, changes the inventory and lands
+ * here for a human read instead of passing silently.
+ *
+ * ── The `schedule` pin, and why it is NOT a #7189 stopgap ───────────────
+ * The walk covers two different grouping mechanisms, so the inventory names
+ * which one each lens uses. A grid groups through its `grouping` block; the
+ * `kanban` / `gantt` / `timeline` binding blocks group through their own
+ * `groupByField` (the same three the projection guard above inventories, for
+ * the same reason — they are the blocks that carry a group key at all).
+ *
+ * `duly_task › schedule` is the gantt, and its scope is pinned here for a
+ * reason that is NOT the one holding up `by_unit`, which matters when someone
+ * comes to delete this file:
+ *
+ *  - `by_unit` is scoped because the grid's grouping and counts are computed
+ *    over the fetched page. That is objectui#7189, and when #7189 lands the
+ *    mechanical need goes with it.
+ *  - `schedule` is scoped because a gantt of FINISHED work is not what the
+ *    screen is for — 151 of the 186 scheduled tasks on the #75 seed are
+ *    `done`. No platform fix retires that.
+ *
+ * Measured in a browser against `pnpm demo` before the filter was added, and
+ * recorded because the card that asked for it assumed otherwise: the gantt is
+ * NOT page-scoped. Its chart is served by the non-grid fetch, which sends no
+ * `top`, so it drew all 186 rows and all 12 owner groups over the full
+ * 2026-01-31 → 2026-12-31 span, while a SEPARATE `top=100` fetch fed the "100
+ * records · Showing first 100 records" footer beneath it. So do not restore
+ * this filter, or cite it, on the grounds that an owner group would otherwise
+ * vanish — on this console build it would not. The details are in the block
+ * above `filter` in `src/views/task.view.ts`.
  *
  * That inventory is also the non-vacuity counter. A walk that stopped seeing
  * `grouping` — a renamed key, a refactor of `flattenViews` — would satisfy a
@@ -1489,22 +1522,23 @@ describe('grouping-projection guard — the guard can fail (self-test on synthet
 interface GroupedScope {
   /** e.g. `view duly_task › listViews.by_unit`. */
   readonly where: string;
-  /** Grouping levels, in the order they nest. */
+  /**
+   * WHICH grouping mechanism this entry is about — `grid grouping` for the
+   * `grouping` block, or `<block>.groupByField` for a binding block. A view
+   * carrying both yields one entry per site rather than a merged one.
+   */
+  readonly via: string;
+  /** Grouping levels, in the order they nest. A `groupByField` has exactly one. */
   readonly groupsBy: readonly string[];
   /** `status` values the lens is scoped to; empty when it carries no such filter. */
   readonly statusScope: readonly string[];
 }
 
-/** Every list view that groups, with the status scope it carries. */
-export const groupedGridScopes = (views: readonly unknown[]): GroupedScope[] => {
+/** Every list view that groups — by either mechanism — with the scope it carries. */
+export const groupedLensScopes = (views: readonly unknown[]): GroupedScope[] => {
   const out: GroupedScope[] = [];
 
   for (const { where, view } of flattenViews(views)) {
-    const groupsBy = (((view.grouping as Rec | undefined)?.fields as Rec[]) ?? [])
-      .map((level) => fieldOf(level))
-      .filter((field): field is string => typeof field === 'string' && field !== '');
-    if (groupsBy.length === 0) continue;
-
     // `ListViewSchema.filter` is a rule array; anything else is not a scope
     // this walk can read, and reads as unscoped rather than being assumed.
     const rules = Array.isArray(view.filter) ? (view.filter as Rec[]) : [];
@@ -1514,7 +1548,18 @@ export const groupedGridScopes = (views: readonly unknown[]): GroupedScope[] => 
       .filter((value): value is string => typeof value === 'string')
       .sort();
 
-    out.push({ where, groupsBy, statusScope });
+    const gridLevels = (((view.grouping as Rec | undefined)?.fields as Rec[]) ?? [])
+      .map((level) => fieldOf(level))
+      .filter((field): field is string => typeof field === 'string' && field !== '');
+    if (gridLevels.length > 0) out.push({ where, via: 'grid grouping', groupsBy: gridLevels, statusScope });
+
+    // The binding blocks that carry a group key — the same three the
+    // projection guard above inventories, and for the same reason.
+    for (const block of SELF_PROJECTING_GROUP_BLOCKS) {
+      const groupBy = (view[block] as Rec | undefined)?.groupByField;
+      if (typeof groupBy !== 'string' || groupBy === '') continue;
+      out.push({ where, via: `${block}.groupByField`, groupsBy: [groupBy], statusScope });
+    }
   }
 
   return out;
@@ -1522,14 +1567,16 @@ export const groupedGridScopes = (views: readonly unknown[]): GroupedScope[] => 
 
 const scopeLines = (scopes: readonly GroupedScope[]): string[] =>
   scopes.map(
-    (s) => `${s.where} · groups by ${s.groupsBy.join(', ')} · status scope: ${s.statusScope.join(', ') || '(none)'}`,
+    (s) => `${s.where} · ${s.via}: ${s.groupsBy.join(', ')} · status scope: ${s.statusScope.join(', ') || '(none)'}`,
   );
 
-const groupedScopes = groupedGridScopes(stack.views);
+const groupedScopes = groupedLensScopes(stack.views);
+const scopeAt = (where: string, via: string): GroupedScope | undefined =>
+  groupedScopes.find((s) => s.where === where && s.via === via);
 
-describe('the by-unit lens stays scoped to open work (stopgap for objectui#7189)', () => {
+describe('grouped lenses keep the scope each one was given', () => {
   it('`by_unit` carries the open-work status filter its grouping depends on', () => {
-    const byUnit = groupedScopes.find((s) => s.where === 'view duly_task › listViews.by_unit');
+    const byUnit = scopeAt('view duly_task › listViews.by_unit', 'grid grouping');
     expect(byUnit, 'the by-unit lens no longer exists, or no longer groups').toBeDefined();
     expect(
       byUnit!.statusScope,
@@ -1542,23 +1589,44 @@ describe('the by-unit lens stays scoped to open work (stopgap for objectui#7189)
     ).toEqual(['in_progress', 'open']);
   });
 
-  it('inventories every grouped grid and the scope it carries', () => {
-    // Doubles as the non-vacuity counter for the assertion above. A NEW
-    // grouped grid appearing here is not automatically a defect — judge it
-    // the way `catalog_tree` was judged: does its whole result set fit in one
-    // page? If it can outgrow one, it needs a scope for its counts to mean
-    // anything.
+  it('`schedule` carries the open-work status filter that makes it a schedule', () => {
+    const schedule = scopeAt('view duly_task › listViews.schedule', 'gantt.groupByField');
+    expect(schedule, 'the schedule lens no longer exists, or no longer groups by owner').toBeDefined();
+    expect(
+      schedule!.statusScope,
+      'the schedule lens lost the open-work scope. This one is NOT a page-scoping stopgap and does not '
+        + 'retire with objectui#7189: a gantt of FINISHED work is not what the screen is for. Widen it and '
+        + '151 completed bars go back in front of the 33 open ones on the demo seed, and the footer\'s '
+        + '"more data may be available" goes back under a chart that is in fact complete. Measured in a '
+        + 'browser: the gantt is NOT page-scoped — its chart is served by an unpaginated fetch — so do not '
+        + 'restore this on the grounds that an owner group would otherwise vanish, and do not reach for a '
+        + 'page size, which is not what holds this chart together. Restore '
+        + '`status in [\'open\', \'in_progress\']`; the measurement is in the block above `filter` in '
+        + 'src/views/task.view.ts.',
+    ).toEqual(['in_progress', 'open']);
+  });
+
+  it('inventories every grouped lens and the scope it carries', () => {
+    // Doubles as the non-vacuity counter for both assertions above. A NEW
+    // grouped lens appearing here is not automatically a defect — judge it the
+    // way `catalog_tree` and `board` were judged. `catalog_tree`: does its
+    // whole result set fit in one page (31 duties, yes)? `board`: it groups BY
+    // `status`, so a status scope would delete columns from the board. Only a
+    // lens whose grouped set can outgrow a page, or whose subject is the wrong
+    // work, needs a scope here.
     expect(
       scopeLines(groupedScopes).sort(),
-      'the set of grouped grids, or the scope one carries, changed — read the note above before updating this',
+      'the set of grouped lenses, or the scope one carries, changed — read the note above before updating this',
     ).toEqual([
-      'view duly_duty › listViews.catalog_tree · groups by business_unit, owner · status scope: (none)',
-      'view duly_task › listViews.by_unit · groups by business_unit · status scope: in_progress, open',
+      'view duly_duty › listViews.catalog_tree · grid grouping: business_unit, owner · status scope: (none)',
+      'view duly_task › listViews.board · kanban.groupByField: status · status scope: (none)',
+      'view duly_task › listViews.by_unit · grid grouping: business_unit · status scope: in_progress, open',
+      'view duly_task › listViews.schedule · gantt.groupByField: owner · status scope: in_progress, open',
     ]);
   });
 });
 
-describe('grouped-grid scope guard — the guard can fail (self-test on synthetic metadata)', () => {
+describe('grouped-lens scope guard — the guard can fail (self-test on synthetic metadata)', () => {
   const grouped = (overrides: Rec, key = 'lens'): unknown => ({
     listViews: {
       [key]: {
@@ -1573,30 +1641,30 @@ describe('grouped-grid scope guard — the guard can fail (self-test on syntheti
   });
 
   it('reads the open-work scope off an `in` filter', () => {
-    const scopes = groupedGridScopes([
+    const scopes = groupedLensScopes([
       grouped({ filter: [{ field: 'status', operator: 'in', value: ['open', 'in_progress'] }] }),
     ]);
     expect(scopes.map((s) => s.statusScope)).toEqual([['in_progress', 'open']]);
   });
 
   it('reports `(none)` for a grouped grid carrying no filter at all — the pre-fix by_unit', () => {
-    const scopes = groupedGridScopes([grouped({})]);
+    const scopes = groupedLensScopes([grouped({})]);
     expect(scopeLines(scopes)).toEqual([
-      'view fx_task › listViews.lens · groups by business_unit · status scope: (none)',
+      'view fx_task › listViews.lens · grid grouping: business_unit · status scope: (none)',
     ]);
   });
 
   it('reports `(none)` when the filter is present but scopes another field', () => {
     // `catalog_tree` is unscoped this way too — a filter that narrows on
     // something else does not bound the grouped set by status.
-    const scopes = groupedGridScopes([
+    const scopes = groupedLensScopes([
       grouped({ filter: [{ field: 'due_date', operator: 'less_than', value: '{today}' }] }),
     ]);
     expect(scopes[0]!.statusScope).toEqual([]);
   });
 
   it('sees a WIDENED scope as a different scope — this is what catches the regression', () => {
-    const scopes = groupedGridScopes([
+    const scopes = groupedLensScopes([
       grouped({ filter: [{ field: 'status', operator: 'in', value: ['open', 'in_progress', 'done'] }] }),
     ]);
     expect(scopes[0]!.statusScope).toEqual(['done', 'in_progress', 'open']);
@@ -1605,20 +1673,49 @@ describe('grouped-grid scope guard — the guard can fail (self-test on syntheti
   it('does not read a `not_in` re-spelling as the same decision', () => {
     // Deliberate: `not_in ['done']` also admits `cancelled` and `skipped`, so
     // it is a different decision and should stop a human rather than pass.
-    const scopes = groupedGridScopes([
+    const scopes = groupedLensScopes([
       grouped({ filter: [{ field: 'status', operator: 'not_in', value: ['done'] }] }),
     ]);
     expect(scopes[0]!.statusScope).toEqual([]);
   });
 
   it('records every grouping level, so the inventory line names the real shape', () => {
-    const scopes = groupedGridScopes([
+    const scopes = groupedLensScopes([
       grouped({ grouping: { fields: [{ field: 'business_unit' }, { field: 'owner' }] } }),
     ]);
     expect(scopes[0]!.groupsBy).toEqual(['business_unit', 'owner']);
   });
 
-  it('examines nothing on a view that does not group', () => {
-    expect(groupedGridScopes([grouped({ grouping: undefined })])).toEqual([]);
+  it('reads a binding block\'s `groupByField` as a grouped lens too', () => {
+    // The extension for `schedule`. A gantt carries no `grouping` block, so a
+    // walk that only read that one would inventory nothing for it and the pin
+    // above would pass by finding nothing.
+    const scopes = groupedLensScopes([
+      grouped({
+        type: 'gantt',
+        grouping: undefined,
+        gantt: { groupByField: 'owner' },
+        filter: [{ field: 'status', operator: 'in', value: ['open', 'in_progress'] }],
+      }),
+    ]);
+    expect(scopeLines(scopes)).toEqual([
+      'view fx_task › listViews.lens · gantt.groupByField: owner · status scope: in_progress, open',
+    ]);
+  });
+
+  it('names WHICH mechanism groups, and reports a view using both as two entries', () => {
+    // The `via` field is why the inventory can hold both mechanisms without a
+    // reader having to guess which one a line is about.
+    const scopes = groupedLensScopes([
+      grouped({ type: 'kanban', kanban: { groupByField: 'status' } }),
+    ]);
+    expect(scopes.map((entry) => `${entry.via}:${entry.groupsBy.join('+')}`)).toEqual([
+      'grid grouping:business_unit',
+      'kanban.groupByField:status',
+    ]);
+  });
+
+  it('examines nothing on a view that groups by neither mechanism', () => {
+    expect(groupedLensScopes([grouped({ grouping: undefined })])).toEqual([]);
   });
 });

@@ -220,11 +220,12 @@ export const TaskViews = defineView({
      * Grouped by owner so an overloaded fortnight is visible as one person's
      * row going solid, before the period arrives.
      *
-     * The filter is not a scope narrowing, it is a correctness one: the
-     * renderer maps a missing date to `new Date()`, so an undated one-off
-     * would draw a zero-width bar on TODAY and read as load that does not
-     * exist. Both columns are stored and indexed; the unary operators carry
-     * their direction in the name and take no value.
+     * The two DATE rules in the filter are not a scope narrowing, they are a
+     * correctness one: the renderer maps a missing date to `new Date()`, so an
+     * undated one-off would draw a zero-width bar on TODAY and read as load
+     * that does not exist. Both columns are stored and indexed; the unary
+     * operators carry their direction in the name and take no value. The third
+     * rule IS a scope decision, and it has its own block above `filter`.
      *
      * No `colorField`, deliberately, and this is measured rather than an
      * oversight: the gantt renderer passes `record[colorField]` straight into
@@ -300,7 +301,71 @@ export const TaskViews = defineView({
         viewMode: 'week',
         tooltipFields: [{ field: 'status' }, { field: 'period_key' }, { field: 'source' }],
       },
+      /**
+       * ⚠ SCOPE — the `status` rule below is a DECISION, not a correctness
+       * fix, and `test/metadata-bindings.test.ts` fails if it is dropped or
+       * re-spelled. The two date rules beside it are the correctness ones; see
+       * the block above.
+       *
+       * ── Why this lens is scoped to open work ───────────────────────────
+       * A manager opens this to see an overloaded fortnight before it arrives.
+       * Nothing about that question involves work that is already finished, and
+       * on the #75 seed 151 of the 186 scheduled tasks are `done` — most of them
+       * months old — so unscoped the screen spends nearly all of its height
+       * drawing completed bars. Scoped, it draws the 33 rows (27 `open` + 6
+       * `in_progress`) the question is about. Same decision, same reasoning, as
+       * `by_unit` below, and it survives the platform being fixed: even with
+       * server-side ranging we would not want a gantt of finished tasks.
+       *
+       * ── What it is NOT doing — measured before changing anything ─────────
+       * The card that asked for this read the footer under the chart — "100
+       * records · Showing first 100 records. More data may be available." — and
+       * argued that the timeline range and the owner grouping were therefore
+       * computed over a 100-row slice, the way `by_unit`'s group counts
+       * genuinely are. Reproduced in a browser against `pnpm demo` first, and
+       * on this console build that is NOT what happens. One page load, two
+       * fetches of the same filtered set:
+       *
+       *   ?populate=owner&top=100&select=…&filter=…   → 100 rows   ← the footer
+       *   ?sort=visible_from&filter=…                 → 186 rows   ← the chart
+       *
+       * The chart is served by the non-grid fetch, which sends no `top` at all,
+       * and `@objectstack/rest` applies no cap when `limit` is absent — so it
+       * gets the whole result set. Counted off the DOM rather than inferred:
+       * 186 task rows + 12 group rows = 198 rows × 40px = the 7920px the task
+       * list scrolls. All 12 owners carrying scheduled work had a group,
+       * including the one whose only task falls outside the 100-row page, and
+       * the range read 2026-01-31 → 2026-12-31 — the true span of the whole
+       * set, not the page's 2026-06-30.
+       *
+       * So this filter is not restoring a missing owner: there was not one. Do
+       * not read it, or cite it, as though there were. What it removes is a
+       * lens full of finished work, and a "more data may be available" warning
+       * printed under a chart that was in fact complete.
+       *
+       * ── The residual ─────────────────────────────────────────────
+       * The paged fetch is real, still runs, and the footer already reads off
+       * it. Nothing in this repo decides which of the two the chart consumes,
+       * so a console change that pointed the gantt at the paged one would make
+       * the card's mechanism true — and on a gantt it lands harder than on a
+       * grid, because the timeline RANGE is derived from the rows in hand: the
+       * chart would draw the wrong SPAN rather than merely omit bars. Scoping
+       * keeps this deployment's result set inside a page either way, which is a
+       * size and not a mechanism. The grid half is objectstack-ai/objectui#7189;
+       * the two-fetch/footer mismatch measured above is filed separately — see
+       * the PR body.
+       *
+       * ⛔ Not a page-size raise. It would move the cliff rather than remove
+       * it, and on the evidence above the page size is not what is holding this
+       * chart together.
+       *
+       * ⚠ It DOES move objectui#7203's wrong month label: the toolbar formats
+       * `min(visible_from) - 7d`, which goes from January to late June. A side
+       * effect, not a reason — the label is still wrong, only about a different
+       * month now, and no filter here should ever be chosen to improve it.
+       */
       filter: [
+        { field: 'status', operator: 'in', value: ['open', 'in_progress'] },
         { field: 'visible_from', operator: 'is_not_null' },
         { field: 'due_date', operator: 'is_not_null' },
       ],
