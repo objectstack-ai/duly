@@ -24,19 +24,32 @@ import type { CatalogApplyResult, CatalogSyncResult } from '../src/actions/catal
 // ─── A fake engine ──────────────────────────────────────────────────────────
 //
 // `ActionEngineFacade` is four methods, so the handlers can be driven directly
-// without a kernel. The fake HONOURS `where` (equality plus `$in`) rather than
-// returning everything: a fake that ignored filters would make every test pass
-// for the wrong reason, and would hide a handler that forgot to narrow its
+// without a kernel. The fake HONOURS the filter (equality plus `$in`) rather
+// than returning everything: a fake that ignored filters would make every test
+// pass for the wrong reason, and would hide a handler that forgot to narrow its
 // read. The one test that needs an unfiltered read builds its own lenient
 // engine, deliberately — see "the source guard is in the code".
+//
+// ⚠️ `find(object, query)` reads `query` AS THE FILTER — flat, no `where`
+// wrapper — because that is what the runtime's own facade does
+// (`buildActionEngineFacade`, @objectstack/runtime 17.2.0: it wraps whatever it
+// is handed in a `where` of its own before calling ObjectQL). This fake used to
+// read `query.where`, honouring the handler's convention instead of the
+// runtime's, and that is exactly how the defect below survived a green suite:
+// all 78 duty assertions passed against a shape production never produced. A
+// fake encodes its author's belief about the contract, so it can only ever
+// confirm it — the coverage that can FALSIFY it dispatches through the real
+// route and lets the runtime build the facade, in
+// `test/catalog-engine-facade.test.ts`. Keep both: this suite is where the
+// handler's logic is exercised cheaply, that one is where its wire shape is.
 
 interface Row extends Record<string, unknown> {
   id: string;
 }
 
-function matches(row: Row, where: Record<string, unknown> | undefined): boolean {
-  if (!where) return true;
-  for (const [field, expected] of Object.entries(where)) {
+function matches(row: Row, filter: Record<string, unknown> | undefined): boolean {
+  if (!filter) return true;
+  for (const [field, expected] of Object.entries(filter)) {
     const actual = row[field];
     if (expected !== null && typeof expected === 'object' && '$in' in (expected as object)) {
       const set = (expected as { $in: unknown[] }).$in;
@@ -82,8 +95,8 @@ class FakeEngine implements ActionEngineFacade {
   }
 
   async find(object: string, query: Record<string, unknown>): Promise<Array<Record<string, unknown>>> {
-    const where = query?.where as Record<string, unknown> | undefined;
-    return (this.tables.get(object) ?? []).filter((row) => matches(row, where)).map((row) => ({ ...row }));
+    // `query` IS the filter. No `query.where` rung — see the note above.
+    return (this.tables.get(object) ?? []).filter((row) => matches(row, query)).map((row) => ({ ...row }));
   }
 
   rows(object: string): Row[] {
