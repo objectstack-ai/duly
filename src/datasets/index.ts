@@ -1,6 +1,6 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 //
-// Barrel for src/apps/.
+// Barrel for src/datasets/.
 //
 // Every metadata directory is pre-created and already wired into
 // objectstack.config.ts — including the empty ones — so a feature branch adds
@@ -13,6 +13,4 @@
 // makes `name` optional and fails the assignment. A named array is `never[]`
 // while empty and infers correctly the moment something is pushed into it.
 
-import { DulyApp } from './duly.app.js';
-
-export const dulyApps = [DulyApp];
+export const dulyDatasets = [];

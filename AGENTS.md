@@ -69,8 +69,16 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
 ## Rules that are not style
 
 1. **Zod first.** Types derive from schemas via `z.infer<>`.
-2. **Barrels.** Each `src/<type>/index.ts` re-exports; the config collects with
-   `Object.values()`. A file not in its barrel is dead metadata that type-checks.
+2. **Barrels — and never edit `objectstack.config.ts`.** Every metadata
+   directory is pre-created and already wired into the config, empty ones
+   included. Add your entry to your OWN `src/<type>/index.ts` named array
+   (`dulyFlows`, `dulyJobs`, …); the config is the one file every parallel task
+   would otherwise collide on. A file not in its barrel is dead metadata that
+   type-checks and never runs.
+   The collections are named arrays rather than `Object.values(barrel)` because
+   on an empty namespace `Object.values` has nothing to infer from and resolves
+   against the keyed branch of `MetadataCollectionInput`, which makes `name`
+   optional and fails the assignment.
 3. **Hooks are registered in `defineStack({ hooks })`**, not collected from the
    objects barrel. An unregistered `*.hook.ts` never runs.
 4. **Predicates are CEL** — `record.<field>`, never bare `<field>`.
@@ -80,12 +88,26 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
    `status` and `due_date` directly — they are stored and indexed.
 6. **`sharingModel` is mandatory and fail-closed.** Unset means private, and the
    publish linter errors on it (ADR-0090 D1/D7). State it deliberately.
-7. **Hierarchy scopes need the enterprise resolver.** `readScope: 'unit_and_below'`
-   and friends resolve to owner-only — silently, with no error — unless
-   `@objectstack/security-enterprise` is installed. Any feature relying on them
-   must say so in its issue and its docs.
+7. **Author hierarchy scopes normally; the enterprise edition resolves them.**
+   `readScope: 'own_and_reports' | 'unit' | 'unit_and_below' | 'org'` (ADR-0057)
+   are resolved by `@objectstack/security-enterprise`, which enterprise
+   deployments already carry. Do **not** build an application-level fallback,
+   and do **not** add `hierarchy-security` to `requires` — that would fail an
+   open-edition boot. In this open-edition checkout those scopes resolve to
+   owner-only, so a manager view will show you only your own rows: that is
+   expected here, and not a bug to chase.
 8. **English is the source language.** Every authored label gets an `en` entry;
    `zh-CN` is hand-translated. Do not hard-code display text in a hook or flow.
+
+## Landing your work
+
+Branch `claude/issue-<n>-<slug>` off `main`, in your own worktree. Push the
+branch and open a **draft PR** referencing the issue. All four gates must be
+green in the PR before you hand it back:
+
+```bash
+pnpm validate && pnpm typecheck && pnpm test && pnpm build
+```
 
 ## Product invariants — do not "improve" these away
 

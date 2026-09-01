@@ -3,6 +3,9 @@
 Milestones are capability gates, not dates. Each one ends with something a
 customer could actually run.
 
+**v1 = M0 + M1 + M2.** Dispatch plus visibility is the shippable product; M3 and
+M4 are planned and specified but do not gate the first release.
+
 ## M0 — Foundation ✅
 
 The repo boots, validates, type-checks, tests and builds. Five objects, five view
@@ -27,14 +30,16 @@ changes nothing.*
 *Gate: a manager can answer "what is late and what has stopped, across my unit"
 in one screen, having entered no data.*
 
-- Positions and permission sets; hierarchy scopes with an explicit, documented
-  fallback when `@objectstack/security-enterprise` is absent
+- Positions and permission sets, authored against the ADR-0057 depth scopes.
+  `@objectstack/security-enterprise` resolves them in enterprise deployments; no
+  application-level fallback is built, and an open-edition checkout correctly
+  shows owner-only rows
 - Unit rollups and the duty-health dataset
 - Manager dashboard: late, not-moving, on-time rate by unit — no rankings
 - Lead-time reminders, overdue escalation, stagnation alerts
 - Kanban / calendar / gantt lenses over the same data
 
-## M3 — The individual's reason to use it
+## M3 — The individual's reason to use it *(post-v1)*
 
 *Gate: a user who has kept the system current for a year can produce their own
 review material from it in under a minute.*
@@ -45,7 +50,7 @@ review material from it in under a minute.*
   navigation shell — `mobileNavigation` was removed in spec 17.0.0)
 - Offline completion queue
 
-## M4 — Sellable as a product, worldwide
+## M4 — Sellable as a product, worldwide *(post-v1)*
 
 *Gate: a customer can install it, load their own catalog, and run it without us.*
 

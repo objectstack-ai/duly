@@ -45,6 +45,10 @@ The Console is at `http://localhost:3000/_console/`, the REST API at
 `http://localhost:3000/api/v1`, and the app is itself an MCP server at
 `/api/v1/mcp`.
 
+Every metadata directory is pre-wired into `objectstack.config.ts`, empty ones
+included: add your entry to the named array in your own `src/<type>/index.ts` and
+leave the config alone. It is the one file parallel branches collide on.
+
 ## Verify before you ship
 
 ```bash
@@ -62,10 +66,14 @@ report a metadata change as done until `pnpm validate` passes.
 objectstack.config.ts    defineStack() — the single entry point
 src/objects/             duty · task · catalog_item · assignment · log_entry
 src/views/               list / calendar / kanban lenses
-src/apps/                navigation
+src/apps/  src/pages/    navigation and custom screens
 src/jobs/                the dispatcher and the alert jobs
-src/flows/               assignment fan-out, escalation, reminders
-src/security/            positions and permission sets
+src/flows/  src/actions/ assignment fan-out, escalation, one-click completion
+src/hooks/               object lifecycle hooks (collected here, not from objects/)
+src/functions/           pure callables a `script` flow node resolves by name
+src/datasets/  src/dashboards/   the semantic layer and what reads it
+src/security/            positions, permission sets, sharing rules
+src/mappings/  src/data/ catalog import and seed fixtures
 src/translations/        en (source) · zh-CN
 docs/product/            positioning, data model, design principles
 ```

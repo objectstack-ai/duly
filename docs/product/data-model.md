@@ -155,8 +155,12 @@ Every object states `sharingModel` explicitly — unset means private and the
 publish linter errors on it (ADR-0090 D1/D7).
 
 Manager visibility comes from permission sets with `readScope`, not from an
-org-wide default. **`readScope: 'own_and_reports' | 'unit' | 'unit_and_below' |
-'org'` requires `@objectstack/security-enterprise`.** Without that resolver they
-fail closed to owner-only — silently, with no error and no log line. Any feature
-that depends on a hierarchy scope must say so in its issue, its docs and its
-deployment checklist.
+org-wide default. The ADR-0057 depth scopes — `own_and_reports`, `unit`,
+`unit_and_below`, `org` — are resolved by `@objectstack/security-enterprise`,
+which enterprise deployments carry. We author against them directly and build no
+application-level fallback.
+
+In an open-edition checkout the resolver is absent and those scopes fall back to
+owner-only. That is the expected behaviour of this repo, not a defect: a manager
+view here shows you your own rows. Anyone verifying manager visibility needs an
+enterprise runtime to see it work.
