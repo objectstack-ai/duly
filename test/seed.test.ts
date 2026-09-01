@@ -480,6 +480,13 @@ describe('idempotence', () => {
     const objects = [
       'sys_business_unit',
       'sys_user',
+      // The junction (#74). It is the one dataset here with no single-column
+      // natural key, so its replay safety rests entirely on the composite
+      // `externalId: ['user_id', 'business_unit_id']` — and a dataset that
+      // cannot match its own rows re-inserts every one of them on every boot,
+      // reporting success each time. Counted here so that is a red test rather
+      // than a table that grows twelve rows per restart.
+      'sys_business_unit_member',
       'duly_catalog_item',
       'duly_duty',
       'duly_assignment',

@@ -19,7 +19,7 @@ import { assignmentSeed } from './assignment.seed.js';
 import { catalogSeed } from './catalog.seed.js';
 import { dutySeed } from './duty.seed.js';
 import { logEntrySeed } from './log-entry.seed.js';
-import { businessUnitSeed, userSeed } from './org.seed.js';
+import { businessUnitMemberSeed, businessUnitSeed, userSeed } from './org.seed.js';
 import {
   taskAdHocSeed,
   taskAdHocTouchSeed,
@@ -29,6 +29,7 @@ import {
 
 export {
   assignmentSeed,
+  businessUnitMemberSeed,
   businessUnitSeed,
   catalogSeed,
   dutySeed,
@@ -58,6 +59,16 @@ export {
  *    know that to see why the seed works. (#32: without the user rows, every
  *    task row is refused with `Owner is required` — measured, 0 inserted, 4
  *    errored.)
+ *  - **`sys_business_unit_member` comes THIRD — after both of them.** It is
+ *    the junction between the two, so both endpoints must exist before its
+ *    `user_id` / `business_unit_id` natural keys can resolve; a reference that
+ *    resolves to nothing on a `required: true` column takes the whole row with
+ *    it, exactly as `owner` does above. Same ordering rule as the bullet
+ *    above, one level further in — which is why it is stated here rather than
+ *    invented as a second convention. (#74: it is also the dataset that makes
+ *    `sys_user.primary_business_unit_id` exist at all — plugin-sharing derives
+ *    the projection from these rows; nothing writes that column directly any
+ *    more. See `org.seed.ts`.)
  *  - **The two `mode: 'update'` task passes come LAST, after both inserts.**
  *    Datasets targeting the same object keep their relative order through the
  *    sort (it is stable), and these two only work if the rows they backdate
@@ -74,8 +85,10 @@ export {
  */
 export const demoSeeds: Seed[] = [
   // 1. The org, first — everything below resolves its people and units here.
+  //    The junction is third because it references the two above it.
   businessUnitSeed,
   userSeed,
+  businessUnitMemberSeed,
 
   // 2. What roles owe, and who owes it.
   catalogSeed,

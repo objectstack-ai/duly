@@ -374,6 +374,48 @@ column is protected — assert against `protocol.createData` when the refusal is
 thing you care about. Flows are unaffected today because `assignment.flow.ts`
 declares `runAs: 'system'`, which is elevated regardless.
 
+### `isSystem` is a key to history, not a key to other people's columns
+
+`{ context: { isSystem: true } }` exempts a write from the readonly strip. That
+is what makes the section above work, and it is the whole mechanism — which
+means it exempts **every** `readonly` column, not just the ones this app owns.
+So it is a licence to write *history*, and it is not a licence to write a column
+another component maintains.
+
+**`readonly: true` marks two different things, and only one of them fights
+back.**
+
+| What the flag means | Example | How you seed it |
+|:--------------------|:--------|:----------------|
+| **A component owns this column and recomputes it.** There is a source table, and a hook derives this value from it. | `sys_user.primary_business_unit_id` — plugin-sharing recomputes it from `sys_business_unit_member.is_primary` (ADR-0057 addendum D12) | **Write the source.** Seed the rows the projection is computed from and let the platform derive the column. |
+| **Nothing recomputes it; its maintenance is just somebody else's surface.** No hook, no source table — the flag keeps it off the ordinary edit form. | `sys_user.manager_id` — `readonly` because org-structure maintenance is its own admin surface (ADR-0092); `completed_at`, for that matter | **Write it directly**, from a system context, exactly as above. There is nothing else to write. |
+
+The first kind fails in a way no gate catches, because it does not fail at
+write time at all. A direct write lands, reads back correct, and survives every
+boot **for as long as the source table stays empty** — the recompute has simply
+never had an input. The day anything writes one source row for that record, the
+hook fires and replaces your value with whatever the source says, or clears it.
+Nothing errors. Measured on #74: twelve users carried a hand-written
+`primary_business_unit_id` and `sys_business_unit_member` had 0 rows, for as
+long as the seed had existed.
+
+**How to tell which kind you are looking at**, before you write it:
+
+1. Read the column's `description` in `@objectstack/platform-objects`. The first
+   kind says so — "a denormalised projection of …, maintained by …. Do not edit
+   directly; set it via …". Take that sentence literally; it is not style.
+2. Grep the platform for a **writer**: `grep -rn "<column>\s*:" packages/plugins`
+   in the monorepo. The first kind has one (an `engine.update` in the plugin
+   that owns it) and a hook that calls it. The second kind has only reads.
+3. If it has a writer, find what that writer reads **from**. That table is what
+   your seed writes.
+
+⛔ Do not generalise from one column to its neighbours. `manager_id` and
+`primary_business_unit_id` sit next to each other in the same `Organization`
+field group with the same `readonly: true`, and they are opposite cases. "Both
+are readonly, so treat both the same" is precisely the inference that produced
+the defect.
+
 ## Product invariants — do not "improve" these away
 
 These are the product, not preferences. If a task seems to require breaking one,

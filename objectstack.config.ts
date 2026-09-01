@@ -22,6 +22,7 @@ import { dulyDashboards } from './src/dashboards/index.js';
 import { dulyDatasets } from './src/datasets/index.js';
 import { dulyMappings } from './src/mappings/index.js';
 import { dulyTranslations } from './src/translations/index.js';
+import { dulyEmailTemplates } from './src/email-templates/index.js';
 import { dulySeeds } from './src/data/index.js';
 // [#7036] Lifecycle hooks are NOT collected from the objects barrel — the
 // runtime reads them from `defineStack({ hooks })` only. A `*.hook.ts` that is
@@ -141,6 +142,7 @@ export default defineStack({
   datasets: dulyDatasets,
   mappings: dulyMappings,
   translations: dulyTranslations,
+  emailTemplates: dulyEmailTemplates,
   data: dulySeeds,
   hooks: dulyHooks,
   functions: dulyFunctions,
