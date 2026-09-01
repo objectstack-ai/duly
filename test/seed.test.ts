@@ -1,16 +1,14 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppPlugin, ObjectKernel, SeedLoaderService, createStandaloneStack } from '@objectstack/runtime';
 import { SeedLoaderRequestSchema } from '@objectstack/spec/data';
 
-import stack from '../objectstack.config.js';
 import { FREQUENCIES, periodBounds, periodKeyFor, type Frequency } from '../src/functions/period.js';
 import { ADMIN, PEOPLE, UNITS } from '../src/data/demo-org.js';
 import { CATALOG_ITEMS, DUTIES } from '../src/data/demo-catalog.js';
 import { AD_HOC_TASKS, ASSIGNMENTS } from '../src/data/demo-assignments.js';
 import { SEEDED_TASKS, SKIPS, TODAY } from '../src/data/demo-history.js';
-import { dulySeeds } from '../src/data/index.js';
 
 /**
  * The demo seed, asserted against a REAL BOOTED KERNEL with the declarative
@@ -41,6 +39,28 @@ import { dulySeeds } from '../src/data/index.js';
  *   "re-running the seed on a populated DB does not duplicate"   → `idempotence`
  */
 
+/**
+ * The demo seed is OPT-IN and off by default — see the gate in
+ * `src/data/index.ts` for why the product wants it that way. This suite is the
+ * one that asks for it, so it sets the variable in `beforeAll` and imports the
+ * config dynamically afterwards.
+ *
+ * Spelled out here rather than imported from `src/data/index.js` deliberately:
+ * that module reads the variable ONCE, when it is first evaluated, and a static
+ * import would evaluate it before `beforeAll` could set anything — after which
+ * the dynamic import below would hand back the cached, EMPTY barrel and every
+ * count in this file would be zero. A rename that desyncs this string fails on
+ * the assertion right after the import, naming the variable;
+ * `test/demo-seed-opt-in.test.ts` imports the real constant.
+ */
+const DEMO_SEED_ENV_VAR = 'DULY_DEMO_SEED';
+
+type SeedDataset = { object: string; records: Record<string, unknown>[] };
+
+/** Both assigned in `beforeAll`, after the opt-in is set. */
+let stack: Record<string, unknown>;
+let dulySeeds: SeedDataset[];
+
 const SYSTEM = { isSystem: true } as const;
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -63,6 +83,17 @@ const userId = async (name: string): Promise<string> => {
 };
 
 beforeAll(async () => {
+  // Ask for the demo BEFORE anything evaluates the config: the gate in
+  // src/data/index.ts reads the environment at module-evaluation time, because
+  // the seed is baked into the compiled artifact rather than chosen at boot.
+  vi.stubEnv(DEMO_SEED_ENV_VAR, '1');
+  stack = (await import('../objectstack.config.js')).default as unknown as Record<string, unknown>;
+  ({ dulySeeds } = (await import('../src/data/index.js')) as unknown as { dulySeeds: SeedDataset[] });
+  expect(
+    (stack.data as unknown[] | undefined)?.length ?? 0,
+    `this suite boots the demo, so ${DEMO_SEED_ENV_VAR} must be set before the config is imported`,
+  ).toBeGreaterThan(0);
+
   const { plugins } = await createStandaloneStack({
     databaseDriver: 'memory',
     skipSeedData: true,
@@ -75,8 +106,12 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
-  // skipSeedData FALSE, and `stack` unmodified — the app's own `dulySeeds`
-  // going through the platform's own loader is exactly what is under test.
+  // skipSeedData FALSE, and `stack` unmodified — the app's own `dulySeeds`,
+  // resolved by the opt-in gate above, going through the platform's own loader
+  // is exactly what is under test. Nothing here substitutes the demo array in
+  // by hand: that would leave the config's own wiring unexercised, and wiring
+  // it to the ungated `demoSeeds` is precisely how 459 rows would find their
+  // way back into the default `pnpm dev` path.
   await kernel.use(new AppPlugin(stack as any, undefined, { skipSeedData: false }));
   await kernel.bootstrap();
   data = kernel.getService('data');
@@ -100,6 +135,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await kernel?.shutdown?.();
+  vi.unstubAllEnvs();
 });
 
 // ───────────────────────────────────────────────────────────────────────────
