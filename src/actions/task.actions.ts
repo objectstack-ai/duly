@@ -66,6 +66,14 @@ export const TaskCompleteAction = defineAction({
   // record header rather than whatever registered first.
   order: 10,
   visible: P`record.status == "open" || record.status == "in_progress"`,
+  // [ADR-0066 D4] `visible` above is a UI hide and the handler's re-read is a
+  // ROW check ("is this row yours to see"). Neither answers the other
+  // question — "is completing a task a thing you may do at all" — which is
+  // what this declares: 403 on the platform action route and the MCP bridge.
+  // A read-only auditor with unit-wide visibility passes the row check and
+  // must fail this one. Granted by the `duly_member` set, and so by every set
+  // that inherits it.
+  requiredPermissions: ['duly.task.update_status'],
   // The platform's own one-click reversal: the runtime snapshots the record's
   // prior field values and offers Undo on the success toast. It covers the
   // mistake noticed IMMEDIATELY; `duly_task_undo` below covers the one noticed
@@ -95,6 +103,10 @@ export const TaskUndoAction = defineAction({
   variant: 'secondary',
   order: 20,
   visible: P`record.status == "done"`,
+  // [ADR-0066 D4] Same capability as complete: undo is the other half of the
+  // same one-click promise, and splitting them would produce a deployment
+  // where a tick cannot be taken back.
+  requiredPermissions: ['duly.task.update_status'],
   refreshAfter: true,
   successMessage: 'Reopened.',
 });
@@ -123,6 +135,9 @@ export const TaskSkipAction = defineAction({
   variant: 'secondary',
   order: 30,
   visible: P`record.status == "open" || record.status == "in_progress"`,
+  // [ADR-0066 D4] Skipping is a status entry like the other two, so it takes
+  // the same capability.
+  requiredPermissions: ['duly.task.update_status'],
   params: [
     {
       name: 'skip_reason',

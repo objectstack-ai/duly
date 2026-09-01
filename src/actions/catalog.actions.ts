@@ -60,6 +60,12 @@ export const CatalogApplyAction = defineAction({
   target: CATALOG_APPLY_ACTION,
   locations: [],
   variant: 'primary',
+  // [ADR-0066 D4] The ONLY boundary this action has. The handler runs against
+  // `ctx.engine`, the trusted facade — context-less and RLS/FLS-bypassing by
+  // design — so object permissions never see the write. Ungated, anyone who
+  // could reach the route could mint a duty for any `sys_user` id they typed,
+  // in bulk. Granted by the `duly_admin` permission set (src/security/).
+  requiredPermissions: ['duly.catalog.apply'],
   params: [
     {
       name: 'position_code',
@@ -103,6 +109,13 @@ export const CatalogSyncAction = defineAction({
   type: 'script',
   target: CATALOG_SYNC_ACTION,
   locations: [],
+  // [ADR-0066 D4] A SEPARATE capability from apply, though `duly_admin` grants
+  // both. Applying a catalog to a new hire is onboarding; syncing rewrites
+  // authored cadence on duties people are already working to — org-wide when
+  // `position_code` is omitted — and is reportable only after the fact. Two
+  // strings cost nothing and let a deployment hand out the first without the
+  // second; one merged string would make that distinction unexpressible.
+  requiredPermissions: ['duly.catalog.sync'],
   params: [
     {
       name: 'position_code',
