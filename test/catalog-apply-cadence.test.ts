@@ -23,7 +23,7 @@ import type { CatalogApplyResult } from '../src/actions/catalog.handlers.js';
  * apply path unprotected is half a fix.
  *
  * ── Why a REAL booted engine and not `catalog-instantiate.test.ts`'s fake ──
- * That suite's `FakeEngine` is a Map with a `where` matcher: it runs no
+ * That suite's `FakeEngine` is a Map with a filter matcher: it runs no
  * validation rules and stamps no defaults, so every claim below would pass on
  * it for the wrong reason. Validation and `applyFieldDefaults` are precisely
  * what is under test here, so the handler is dispatched through the app's own
@@ -60,7 +60,7 @@ afterAll(async () => {
   await kernel?.shutdown?.();
 });
 
-// ── The two engine facades ──────────────────────────────────────────────────
+// ── The engine facade ───────────────────────────────────────────────────────
 
 interface Facade {
   insert(object: string, values: AnyRow): Promise<{ id: string }>;
@@ -70,15 +70,29 @@ interface Facade {
 }
 
 /**
- * The facade `applyCatalogHandler` is WRITTEN against: `find(object, query)`
- * takes ObjectQL's own query envelope, `where` and all. It is the convention
- * `catalog-instantiate.test.ts`'s `FakeEngine` honours too, so this is the
- * shape every existing assertion about the handler is made under.
+ * The facade the RUNTIME builds, reproduced line for line —
+ * `buildActionEngineFacade` in @objectstack/runtime 17.2.0:
+ *
+ *     async find(object, query) {
+ *       const where = query && Object.keys(query).length ? { where: query } : {};
+ *       const rows = await ql.find(object, { ...where, context });
+ *
+ * `find(object, query)` therefore takes a BARE FILTER and wraps it here. This
+ * file used to carry TWO facades — this one honouring the handler's own
+ * `where` envelope, and a second reproducing the runtime — with a tripwire
+ * pinning the gap between them (#79). The handler now passes flat filters, so
+ * there is one convention and one facade.
+ *
+ * It is still a double, which is all it can be: the second test below has to
+ * put a row in front of the handler that `duly_catalog_item`'s own rules
+ * refuse, and only a hand-supplied facade can do that. What a double cannot do
+ * is prove the wire shape is right — it encodes the author's belief about it.
+ * That proof lives in `test/catalog-engine-facade.test.ts`, which dispatches
+ * through the real action route and lets the runtime build its own facade.
  *
  * `catalogItems`, when given, replaces the catalog read with rows handed
  * straight to the handler (unfiltered — the handler re-applies its own
- * `active` filter). That is how a row the object's own rules now REFUSE can
- * still be put in front of the handler, which one test below needs.
+ * `active` filter).
  */
 function handlerFacade(catalogItems?: AnyRow[]): Facade {
   return {
@@ -94,28 +108,6 @@ function handlerFacade(catalogItems?: AnyRow[]): Facade {
     },
     find: async (object, query) => {
       if (catalogItems && object === 'duly_catalog_item') return catalogItems.map((r) => ({ ...r }));
-      return data.find(object, query);
-    },
-  };
-}
-
-/**
- * The facade the RUNTIME actually builds — `buildActionEngineFacade` in
- * @objectstack/runtime 17.2.0, reproduced line for line:
- *
- *     async find(object, query) {
- *       const where = query && Object.keys(query).length ? { where: query } : {};
- *       const rows = await ql.find(object, { ...where, context });
- *       ...
- *
- * It wraps whatever it is handed in a `where` of its own. Used by exactly one
- * test, the tripwire at the bottom.
- */
-function runtimeFacade(): Facade {
-  const base = handlerFacade();
-  return {
-    ...base,
-    find: async (object, query) => {
       const where = query && Object.keys(query).length ? { where: query } : {};
       return data.find(object, { ...where });
     },
@@ -225,43 +217,5 @@ describe('duly_catalog_apply — the cadence it replicates (#65)', () => {
     const [duty] = await dutiesOf('u_s1');
     expect(duty?.form).toBe('standing');
     for (const field of CADENCE_FIELDS) expect(duty?.[field] ?? null, field).toBeNull();
-  });
-});
-
-// ───────────────────────────────────────────────────────────────────────────
-// A tripwire on a filed defect — NOT an assertion that this is correct
-// ───────────────────────────────────────────────────────────────────────────
-describe('the handler\'s query shape does not survive the runtime\'s own facade', () => {
-  /**
-   * Measured while covering the apply path for #65 and filed as #79 — a
-   * different defect from the missing validation rule, and not fixed here.
-   *
-   * `applyCatalogHandler` calls `engine.find('duly_catalog_item', { where: …
-   * })`. The runtime's `buildActionEngineFacade` wraps whatever it is given:
-   * `ql.find(object, { where: query })`. So through the real dispatcher the
-   * handler's own `where` becomes `{ where: { where: … } }`, no row has a
-   * field called `where`, and the read comes back EMPTY — with no error. The
-   * action then reports `{ created: 0 }` and a successful run.
-   *
-   * Pinned so the seam is visible rather than folklore. When #79 is fixed
-   * this goes red: delete this describe block — do not adjust it — and
-   * `handlerFacade` above becomes the only convention in the file.
-   */
-  it('finds nothing, creates nothing, and reports success', async () => {
-    const position = 'apply_runtime_facade';
-    await insertItem({ position_code: position, form: 'recurring', frequency: 'weekly' });
-
-    // Same item, same params, the only difference being which facade.
-    const viaHandlerConvention = await apply(handlerFacade(), {
-      position_code: position,
-      users: ['u_f1'],
-    });
-    expect(viaHandlerConvention.catalog_items).toBe(1);
-    expect(viaHandlerConvention.created).toBe(1);
-
-    const viaRuntime = await apply(runtimeFacade(), { position_code: position, users: ['u_f2'] });
-    expect(viaRuntime.catalog_items).toBe(0);
-    expect(viaRuntime.created).toBe(0);
-    expect(await dutiesOf('u_f2')).toEqual([]);
   });
 });

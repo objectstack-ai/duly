@@ -110,6 +110,41 @@ export function resolveDutyTimezone(): string {
   return DEFAULT_DUTY_TIMEZONE;
 }
 
+// ── The engine facade's query shape ───────────────────────────────────
+//
+// `ctx.engine.find(object, query)` takes a BARE FILTER, not an ObjectQL query
+// envelope. The runtime builds the envelope itself — `buildActionEngineFacade`
+// in @objectstack/runtime 17.2.0, read verbatim from its `dist/index.js`:
+//
+//     async find(object, query) {
+//       const where = query && Object.keys(query).length ? { where: query } : {};
+//       const rows = await ql.find(object, { ...where, context });
+//
+// So every read in this file passes `{ field: value }`, never
+// `{ where: { field: value } }`. Handing it an envelope produces
+// `{ where: { where: { … } } }`; no row has a field called `where`, so the read
+// comes back EMPTY WITH NO ERROR. That is the failure this file shipped with:
+// `duly_catalog_apply` reported a successful run of zero, `duly_catalog_sync`
+// scanned nothing and called every duty unchanged, and `resolveBusinessUnit`
+// anchored no duty at all — silently, because "no position row" is a legitimate
+// day-one state. The ONE unfiltered read survived, because
+// `Object.keys({}).length === 0` skips the wrapping entirely, which is exactly
+// what made the handler look partially alive.
+//
+// `ActionEngineFacade.find` in @objectstack/spec types `query` as a plain
+// record of string to unknown and says nothing about which of the two shapes it
+// is — the runtime's implementation is the only thing that decides, and this
+// app read it the other way. Filed upstream as
+// **objectstack-ai/objectstack#14175** so the shape is DECLARED rather than
+// discovered; until that lands this comment is the contract.
+//
+// ⛔ Do NOT add a tolerant `query.where ?? query` rung — not here, not in a
+// test double. A consumer that accepts both shapes is precisely what let the
+// wrong one ship green: `test/catalog-instantiate.test.ts`'s fake honoured the
+// envelope, so 78 assertions passed against a shape production never produces.
+// The test that can see this is one that dispatches through the REAL route and
+// lets the runtime build its own facade — `test/catalog-engine-facade.test.ts`.
+
 // ── Shapes ──────────────────────────────────────────────────────────────────
 
 export interface CatalogApplyParams extends Record<string, unknown> {
@@ -256,12 +291,21 @@ export function pairKey(catalogItem: unknown, owner: unknown): string {
  * exists on the platform. It is NOT read here — the issue names the
  * assignment-level anchor, and adding a fallback rung is a product decision,
  * reported rather than taken.)
+ *
+ * ⚠️ That tolerance is why this read's query shape matters more than the other
+ * three. The other reads fail into a visibly empty report — zero items, zero
+ * scanned — but this one fails into a state the handler is WRITTEN to accept:
+ * an envelope-shaped filter returned nothing, "nothing" reads as "not yet
+ * modelled", and every duty was created unanchored with no error anywhere. The
+ * rollups that the business unit exists to feed were simply empty. See the
+ * facade-shape note above; the end-to-end coverage is in
+ * `test/catalog-engine-facade.test.ts`.
  */
 async function resolveBusinessUnit(
   engine: ActionEngineFacade,
   userId: string,
 ): Promise<string | undefined> {
-  const rows = await engine.find('sys_user_position', { where: { user_id: userId } });
+  const rows = await engine.find('sys_user_position', { user_id: userId });
   for (const row of rows) {
     // A person can hold several positions; take the first anchored one.
     // Unanchored rows (`null`) are legacy/tenant-wide and carry no depth.
@@ -282,13 +326,14 @@ export const applyCatalogHandler: ActionHandler<CatalogApplyParams> = async (ctx
   // stopped asking for; handing it to a new hire on their first day is the
   // opposite of what deactivating it meant.
   const items = await engine.find('duly_catalog_item', {
-    where: { position_code: positionCode, active: true },
+    position_code: positionCode,
+    active: true,
   });
   const activeItems = items.filter((item) => item?.active !== false);
 
   // One probe for the whole run, not one per (item, user). The pair set is
   // what makes a second apply create nothing.
-  const existing = await engine.find('duly_duty', { where: { owner: { $in: users } } });
+  const existing = await engine.find('duly_duty', { owner: { $in: users } });
   const taken = new Set<string>();
   for (const duty of existing) {
     // Any duty already pointing at this catalog item for this person counts —
@@ -384,7 +429,7 @@ export const syncCatalogHandler: ActionHandler<CatalogSyncParams> = async (ctx) 
   // the retired report is made of, so it has to come back from this read.
   const items = await engine.find(
     'duly_catalog_item',
-    positionCode ? { where: { position_code: positionCode } } : {},
+    positionCode ? { position_code: positionCode } : {},
   );
   const byId = new Map<string, Record<string, unknown>>();
   for (const item of items) {
@@ -392,7 +437,7 @@ export const syncCatalogHandler: ActionHandler<CatalogSyncParams> = async (ctx) 
     byId.set(recordId(item), item);
   }
 
-  const duties = await engine.find('duly_duty', { where: { source: 'catalog' } });
+  const duties = await engine.find('duly_duty', { source: 'catalog' });
 
   const changes: CatalogSyncChange[] = [];
   const retired: CatalogSyncRetired[] = [];
