@@ -20,6 +20,27 @@ export const CATALOG_APPLY_ACTION = 'duly_catalog_apply';
 export const CATALOG_SYNC_ACTION = 'duly_catalog_sync';
 
 /**
+ * The OBJECT-BOUND twin of `duly_catalog_apply` — the same action, given a
+ * place to be clicked. See `catalog.actions.ts` for why it exists and what it
+ * is deliberately not.
+ *
+ * A DISTINCT name, not a second declaration of `duly_catalog_apply`, and that
+ * is measured rather than stylistic: `defineStack` accepts two actions sharing
+ * one `name` without a word — both survive into `stack.actions`, and it does
+ * so even for two GLOBAL actions, where the `<object>:<name>` handler map then
+ * has one silently shadow the other. Reported upstream rather than relied on.
+ */
+export const CATALOG_APPLY_TO_PEOPLE_ACTION = 'duly_catalog_apply_to_people';
+
+/**
+ * The object the twin binds to — and therefore the engine key its handler
+ * registers under. `executeAction` is an exact-string `Map` lookup on
+ * `<object>:<name>` and tries the action's OWN object before `global`, so an
+ * object-bound action's handler filed under `global` is unreachable.
+ */
+export const CATALOG_ITEM_OBJECT = 'duly_catalog_item';
+
+/**
  * The engine object key an object-less action registers under.
  *
  * `'global'` is the CANONICAL object-less key, not a wildcard: `executeAction`
@@ -447,10 +468,19 @@ export const syncCatalogHandler: ActionHandler<CatalogSyncParams> = async (ctx) 
  * Register both catalog handlers on the engine.
  *
  * Called from `registerDulyActionHandlers` in `register-handlers.ts`, which
- * `objectstack.config.ts` invokes from `onEnable`. Both register under
- * {@link GLOBAL_ACTION_OBJECT} because both actions are object-less.
+ * `objectstack.config.ts` invokes from `onEnable`. The two OBJECT-LESS actions
+ * register under {@link GLOBAL_ACTION_OBJECT}; the object-bound twin registers
+ * under {@link CATALOG_ITEM_OBJECT}, which is the only key its dispatch can
+ * reach.
+ *
+ * THREE registrations, TWO handler functions. The twin passes the very same
+ * `applyCatalogHandler` REFERENCE the global one does — not a copy, not a
+ * wrapper. A second key on one function is the whole cost of giving the action
+ * a button; a second function would be a second implementation to keep in step,
+ * which is the thing this placement was explicitly not allowed to buy.
  */
 export function registerCatalogActionHandlers(ql: HandlerRegistrationContext): void {
   ql.registerAction(GLOBAL_ACTION_OBJECT, CATALOG_APPLY_ACTION, applyCatalogHandler);
   ql.registerAction(GLOBAL_ACTION_OBJECT, CATALOG_SYNC_ACTION, syncCatalogHandler);
+  ql.registerAction(CATALOG_ITEM_OBJECT, CATALOG_APPLY_TO_PEOPLE_ACTION, applyCatalogHandler);
 }

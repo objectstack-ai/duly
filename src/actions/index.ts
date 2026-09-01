@@ -13,15 +13,26 @@
 // makes `name` optional and fails the assignment. A named array is `never[]`
 // while empty and infers correctly the moment something is pushed into it.
 
-import { CatalogApplyAction, CatalogSyncAction } from './catalog.actions.js';
+import {
+  CatalogApplyAction,
+  CatalogApplyToPeopleAction,
+  CatalogSyncAction,
+} from './catalog.actions.js';
 import { TaskCompleteAction, TaskSkipAction, TaskUndoAction } from './task.actions.js';
 
-export { CatalogApplyAction, CatalogSyncAction };
+export { CatalogApplyAction, CatalogApplyToPeopleAction, CatalogSyncAction };
 export { TaskCompleteAction, TaskSkipAction, TaskUndoAction };
 
 export const dulyActions = [
   CatalogApplyAction,
   CatalogSyncAction,
+  // The object-bound twin of `duly_catalog_apply` — same handler, given a
+  // place to be clicked. `objectName: 'duly_catalog_item'`, so defineStack()
+  // merges it into that object's actions and its `list_toolbar` button
+  // renders on the Role catalog list. Missing from this array it would be
+  // dead metadata: it type-checks, it reads as wired, and no toolbar ever
+  // sees it.
+  CatalogApplyToPeopleAction,
   // Object-bound (`objectName: 'duly_task'`), so defineStack() merges them
   // into duly_task.actions and the dispatcher can find their declaration.
   // An action reachable from a row still needs its handler registered in
