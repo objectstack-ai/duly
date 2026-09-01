@@ -89,14 +89,19 @@ const celSource = (v: unknown): string | undefined => {
  *
  * `ExpressionInputSchema` accepts `z.string()` and normalises it to
  * `{ dialect: 'cel', source }` at build, so an author may write either form
- * and both must be walked. The suffixes come from the platform's own predicate
- * table; `condition` is added because `FlowEdgeSchema.condition` and the start
- * node's `config.condition` are declared directly on `flow.zod.ts` rather than
- * in the node-config expression table.
+ * and both must be walked. The declared slots come from the platform's own
+ * predicate table; `condition` is added by hand, and that is the platform's
+ * instruction rather than a gap to report:
+ * `FLOW_NODE_EXPRESSION_PATHS` lists the slots a builtin's `configSchema`
+ * DECLARES, and its docstring says `config.condition` and `edge.condition` are
+ * left out deliberately because they are structural predicate surfaces present
+ * on every node and edge rather than declared config properties. So the table
+ * covers the declared slots and this constant adds the two structural ones —
+ * do not "fix" that upstream.
  *
  * Matching is on the FULL suffix, not the last segment: a schedule flow keeps
- * its cron at `config.schedule`, and `schedule.expression` must not be read as
- * `conditions.expression`.
+ * its cron at `config.schedule` on the start node, and `schedule.expression`
+ * must not be read as `conditions.expression`.
  */
 const CEL_STRING_PATH_SUFFIXES: readonly string[] = [
   'condition',
