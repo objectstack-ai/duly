@@ -371,6 +371,14 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'dataset.measures[].name': machine('measure name — bound by dashboards'),
   'dataset.measures[].field': machine('field path'),
   'dataset.measures[].aggregate': machine('aggregation function'),
+  'dataset.measures[].derived.op': machine('derived-measure operator'),
+  // Other MEASURE names, by ADR-0021 Q1 — a derived measure references
+  // measures and nothing else, which is what keeps it enumerable. Same
+  // category as `measures[].name` above, seen from the other end.
+  'dataset.measures[].derived.of[]': machine('operand measure names'),
+  // A numeral PATTERN (`0.00`), not a word: it says how many decimals and
+  // whether to render a percent. Nothing in it is language.
+  'dataset.measures[].format': machine('number format pattern'),
 
   // ── flow — no translator, no bundle group ─────────────────────────────
   'flow.name': machine('flow name'),

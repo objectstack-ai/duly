@@ -138,6 +138,40 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
    `is_open`. A stored flag needs a writer that runs every midnight; a formula
    field is virtual and a filter naming one silently matches nothing. Ask
    `status` and `due_date` directly — they are stored and indexed.
+
+   **The one exception, and its exact boundary (#52).** A value may be stored
+   when it is **written once, at the instant it becomes knowable, and never
+   recomputed** — a historical fact, not a maintained flag. `duly_task` carries
+   four: `completed_at` and `completed_late` (stamped at completion),
+   `visible_from` and `late_after` (`due_date + duty.grace_days`, stamped at
+   dispatch).
+
+   The test is not "is it derivable" — every one of these is derivable. It is
+   **what happens the day nobody writes it**:
+
+   | | maintained flag (`is_late`) | write-once fact (`completed_late`) |
+   |:--|:--|:--|
+   | needs a writer at midnight | yes — and lies the day it does not run | no |
+   | changes when config changes | yes, retroactively and silently | no, by design |
+   | wrong answer looks like | a stale flag nobody can see is stale | nothing: it is what was true then |
+
+   So the question to ask of a candidate column is: **would a second write ever
+   have to happen?** If yes — if it tracks the clock, or has to be refreshed
+   when a related record is edited — it is the banned shape, whatever it is
+   called. If no, and it records what was true at a moment that has passed, it
+   is the same category as `completed_at` and it may be stored.
+
+   Two obligations come with using this exception, both load-bearing:
+
+   - **`readonly: true` and ONE writer**, which is the hook or the planner. A
+     column a caller can set is a column that drifts.
+   - **Say what the write-once cost is, where the reader will hit it.** For
+     `late_after`: editing a duty's `grace_days` does not move the deadline on
+     tasks already dispatched. That surprises whoever has just corrected a
+     misconfiguration, so the `late` view's comment names `duly_catalog_sync`
+     — the action that already exists to replay duty edits — as the place a
+     recompute would belong. An undocumented denormalisation is the drift this
+     rule is really about.
 6. **`sharingModel` is mandatory and fail-closed.** Unset means private, and the
    publish linter errors on it (ADR-0090 D1/D7). State it deliberately.
 7. **A hierarchy scope REQUIRES `requires: ['hierarchy-security']`. Omitting it

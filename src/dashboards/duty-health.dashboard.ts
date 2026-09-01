@@ -11,45 +11,37 @@ import { Dashboard } from '@objectstack/spec/ui';
  * rather than on this file. Nothing on this screen writes — managers read
  * here, and assigning is their only write in the product.
  *
- * ── What is NOT on this dashboard, and why that is deliberate ─────────────
+ * ── The on-time rate, and what it is a rate OF ───────────────────────────
  *
- * The card asked for five things in reading order. Two of them — *"Late"* and
- * *"On-time rate, current period"* — are the SAME missing comparison, not two
- * separate omissions:
+ * The card asked for five things in reading order, and two of them — *"Late"*
+ * and *"On-time rate"* — used to be one missing comparison,
+ * `completed_at <= due_date + duty.grace_days`, which no filter grammar can
+ * express (no date arithmetic, no column-to-column comparison on the SQL path,
+ * and the offset is itself a column: objectstack#14104).
  *
- *     completed_at <= due_date + duty.grace_days      (on-time)
- *     now          >  due_date + duty.grace_days      (late)
+ * #52 answered it by moving the comparison off the query and onto the row:
+ * `late_after` is stamped at dispatch, `completed_late` at completion, both
+ * write-once. So the tile below binds `on_time_rate`, a derived ratio of two
+ * plain counts, and needs no platform change — #14104 stopped being a blocker
+ * rather than getting resolved. `src/datasets/duty-health.dataset.ts` carries
+ * the reasoning.
  *
- * Both need `due_date + duty.grace_days`, and the filter grammar cannot say
- * it: there is no date arithmetic in `FILTER_OPERATORS`, the `{N_days_ago}`
- * macro vocabulary is relative to NOW and never to another column, and the
- * offset here is itself a column. Column-to-column comparison (`$field`) is
- * refused by `driver-sql` while the in-memory evaluator resolves it, so even
- * the half that parses would be a per-deployment answer. Filed upstream as
- * **objectstack-ai/objectstack#14104**; `src/datasets/duty-health.dataset.ts`
- * carries the full measurement, and it is why no dataset in this app declares
- * an on-time or a late measure for a widget to bind.
+ * **It is a rate over COMPLETED work** — `tasks_done_on_time / tasks_done` —
+ * and the description below says so on the screen. That is the number a
+ * compliance manager is asked for, and it is not the same as "how much of what
+ * was owed got done": still-open work is not in it. Stagnation is what answers
+ * for work that has not finished, which is why the not-moving tile keeps the
+ * headline position rather than being displaced by this one.
  *
- * A grace-free approximation IS expressible here — a widget `filter` of
- * `due_date < {today}` over `tasks_due` needs no platform change at all — and
- * it is deliberately not built. It marks late every task still inside the
- * grace window its own duty grants, so a customer who configured 7 days of
- * grace gets its people listed as late the morning after the due date. That
- * is not a rounding error; it is wrong in exactly the direction the customer
- * configured against, and it would be wrong invisibly. The product decision is
- * open on **#52** (with **#48** on the `late` LIST view, which does carry the
- * grace-free definition today); when it lands, the tile lands with it.
+ * A grace-free approximation is STILL not built here, and is still the thing
+ * to refuse: a widget `filter` of `due_date < {today}` over `tasks_due` is a
+ * "late" count in two lines, and it marks late every task inside the grace its
+ * own duty grants. `test/dashboard.test.ts` pins that shape out.
  *
- * The reordering is an improvement rather than a loss: the card already wanted
- * the not-moving tile to be the visual focus, and with lateness deferred it is
- * unambiguously the headline. Stagnation is also the EARLIER signal — a task
- * untouched for three weeks and not due for another two is already a problem,
- * and no lateness measure can see it until it is too late to act.
- *
- * The absence is stated on the screen itself, in `description` below, for the
- * same reason the caliber note is: a manager reading "not moving: 3" on a
- * dashboard that says nothing about lateness will conclude there are three
- * problems. An unexplained absence is a wrong number with no digits.
+ * The ordering rule stands for the same reason it always did: stagnation is
+ * the EARLIER signal — a task untouched for three weeks and not due for
+ * another two is already a problem, and no lateness measure can see it until
+ * it is too late to act.
  *
  * ── Shapes this file is authored around ──────────────────────────────────
  *
@@ -117,9 +109,9 @@ export const DutyHealthDashboard = Dashboard.create({
    */
   description:
     'Governed duties only — role-catalog and manager-assigned work. Self-declared duties are '
-    + 'excluded from every number here. Lateness is not shown yet: it depends on each duty\'s '
-    + 'grace period, which this view cannot apply — the Team → Late list is the interim answer '
-    + 'and it does not account for grace.',
+    + 'excluded from every number here. On-time is measured against each task\'s own grace '
+    + 'period, as it stood when the task was dispatched, and counts completed work only — '
+    + 'open work is what the not-moving tiles answer for.',
 
   header: {
     showTitle: true,
@@ -189,6 +181,42 @@ export const DutyHealthDashboard = Dashboard.create({
     },
 
     /**
+     * 3b. The on-time rate — the number the product is asked for by name.
+     *
+     * `on_time_rate` is `tasks_done_on_time / tasks_done`, both counts over
+     * `completed_late`, the verdict stamped at completion against the grace in
+     * force then. It is a RATE OVER COMPLETED WORK; the tile description says
+     * so, because a rate whose denominator a reader has to guess is a number
+     * they will guess wrong.
+     *
+     * `default` rather than `warning` / `danger`: this is the one number on the
+     * screen that is good when it is high, and colouring it as an alert would
+     * read as a problem at 100%. The attention colours stay on the two
+     * not-moving tiles, which is where action is actually needed.
+     *
+     * No `owner` dimension, here or anywhere on this screen: an on-time rate
+     * split by person is a performance score, and this product does not have
+     * one. `test/dashboard.test.ts` pins that as a property of the barrel.
+     */
+    {
+      id: 'on_time_rate',
+      title: 'On-time rate',
+      description:
+        'Governed tasks completed within their own grace period, as a share of governed tasks '
+        + 'completed. Open work is not counted here.',
+      type: 'metric',
+      dataset: 'duly_duty_health',
+      values: ['on_time_rate'],
+      colorVariant: 'default',
+      // Directly under the headline tile and the same width as it — the second
+      // number a manager reads — but SHORTER, and that is a rule rather than a
+      // taste call: no other number on this screen may out-area the not-moving
+      // tile, because stagnation is the signal that arrives early enough to act
+      // on. `test/dashboard.test.ts` pins it.
+      layout: { x: 0, y: 4, w: 6, h: 3 },
+    },
+
+    /**
      * 4. By unit. Ordered by the unit DIMENSION, never by the count —
      * `sortBy` names a selected dimension, so the bar order is a property of
      * the org chart and not of who is doing badly this week. Unit comparison
@@ -230,7 +258,7 @@ export const DutyHealthDashboard = Dashboard.create({
         showDataLabels: false,
       },
       options: { sortBy: 'business_unit', sortOrder: 'asc' },
-      layout: { x: 0, y: 4, w: 7, h: 6 },
+      layout: { x: 0, y: 7, w: 7, h: 6 },
     },
 
     /**
@@ -268,7 +296,7 @@ export const DutyHealthDashboard = Dashboard.create({
       },
       // Chronological, and — like the chart above — independent of the count.
       options: { sortBy: 'due_week', sortOrder: 'asc' },
-      layout: { x: 7, y: 4, w: 5, h: 6 },
+      layout: { x: 7, y: 7, w: 5, h: 6 },
     },
   ],
 });

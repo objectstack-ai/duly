@@ -5,6 +5,7 @@ import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/run
 
 import stack from '../objectstack.config.js';
 import { dulyHooks } from '../src/hooks/index.js';
+import { planDispatch } from '../src/jobs/dispatch.plan.js';
 
 /**
  * `duly_task` lifecycle stamps.
@@ -633,5 +634,451 @@ describe('last_update_at on a predicate write — one payload, N rows', () => {
     const edited = await data.update('duly_task', { id: task.id, note: SHARED_NOTE });
 
     expect(edited.last_update_at as string > before, 'the by-id path is unchanged').toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// The lateness stamps (#52)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** A civil date `days` from today, in UTC — the boundary the stamps use. */
+const dayFromToday = (days: number): string =>
+  new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+describe('late_after — the deadline the row is born with', () => {
+  it('is filled from the due date when nothing supplies one — zero grace, not "no deadline"', async () => {
+    // The dispatcher stamps this itself, with the duty's grace. Every other
+    // producer — the assignment fan-out, a member creating their own task —
+    // has no duty to read, and zero grace is what "no duty governs this row"
+    // already means to the overdue escalation. A blank here would be a task
+    // that can never be late on any surface.
+    const task = await newTask({ due_date: '2026-05-04' });
+    expect(task.late_after).toBe('2026-05-04');
+  });
+
+  it('keeps the deadline the dispatcher stamped, grace and all', async () => {
+    // The planner's value must survive the insert leg untouched, or every task
+    // in the system would silently be judged at zero grace.
+    const task = await newTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
+    expect(task.late_after).toBe('2026-05-11');
+  });
+
+  it('a task with no due date has no deadline, and no lateness filter can match it', async () => {
+    // The honest answer rather than a convenient one: nothing was owed by any
+    // particular day. The `late` view is `late_after < {today}`, so this row
+    // never appears there — asserted through a real query rather than by
+    // reading the column, because "a blank does not match a date filter" is the
+    // claim the view's comment actually makes.
+    const task = await newTask({ subject: 'no due date at all' });
+    expect(task.late_after ?? null).toBeNull();
+
+    const late = await data.find('duly_task', {
+      where: { late_after: { $lt: dayFromToday(3650) }, id: task.id },
+    });
+    expect(late, 'a task with no deadline must not surface in the Late lens').toEqual([]);
+  });
+
+  it('fills a blank deadline if a due date arrives later, and only then', async () => {
+    const task = await newTask({ subject: 'due date added afterwards' });
+    expect(task.late_after ?? null).toBeNull();
+
+    const dated = await data.update('duly_task', { id: task.id, due_date: '2026-06-30' });
+    expect(dated.late_after, 'a dated task must become answerable to the Late lens').toBe('2026-06-30');
+  });
+
+  it('a re-date NEVER moves a deadline the row already carries', async () => {
+    // Write-once, in its smallest form: `late_after` is what the row was born
+    // with. Anything else and a task's compliance deadline could be moved by
+    // an ordinary edit, with no trace.
+    const task = await newTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
+    await data.update('duly_task', { id: task.id, due_date: '2026-09-30' });
+    expect((await read(task.id)).late_after).toBe('2026-05-11');
+  });
+
+  it('is not writable by a caller', async () => {
+    const task = await newTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
+    await data.update('duly_task', { id: task.id, late_after: '2099-01-01' });
+    expect((await read(task.id)).late_after, 'readonly, and the hook is its only writer')
+      .toBe('2026-05-11');
+  });
+});
+
+describe('WRITE-ONCE — editing a duty\'s grace never rewrites history', () => {
+  /**
+   * The assertion this whole card turns on.
+   *
+   * An admin who widens a duty's grace from 3 days to 14 is correcting a
+   * configuration. They are NOT re-adjudicating last quarter's compliance
+   * record — and a system that let them do it silently would be a system whose
+   * on-time rate changes when nobody completed anything. The stamps are the
+   * mechanism: `late_after` is resolved at dispatch and `completed_late` at
+   * completion, and no leg of this hook recomputes either.
+   *
+   * The duty here is a real record, edited through the engine, and the task is
+   * produced by the real planner from that duty's own fields — so this walks
+   * the actual path rather than asserting on hand-made values.
+   */
+  const GRACE_AT_DISPATCH = 3;
+
+  const dispatchedTaskFor = async (dutyId: string, grace: number | null) => {
+    const duty = await data.findOne('duly_duty', { where: { id: dutyId } });
+    const [draft] = planDispatch({
+      duties: [{
+        id: duty.id,
+        name: duty.name,
+        form: 'recurring',
+        status: 'active',
+        owner: 'user_alice',
+        business_unit: null,
+        source: 'catalog',
+        frequency: 'monthly',
+        due_anchor: 'period_start',
+        due_offset_days: 4,
+        lead_days: 0,
+        grace_days: grace,
+        timezone: 'UTC',
+      }],
+      now: new Date('2026-08-15T09:00:00Z'),
+      window: null,
+    }).drafts;
+    return { draft, duty };
+  };
+
+  const newDuty = async (subject: string, grace: number) =>
+    data.insert('duly_duty', {
+      name: subject,
+      owner: 'user_alice',
+      form: 'recurring',
+      status: 'active',
+      source: 'catalog',
+      frequency: 'monthly',
+      due_anchor: 'period_start',
+      due_offset_days: 4,
+      lead_days: 0,
+      grace_days: grace,
+      timezone: 'UTC',
+    });
+
+  it('an open task keeps the deadline it was dispatched with', async () => {
+    const duty = await newDuty('Grace widened after dispatch', GRACE_AT_DISPATCH);
+    const { draft } = await dispatchedTaskFor(duty.id, GRACE_AT_DISPATCH);
+    expect(draft!.late_after).toBe('2026-08-08');
+
+    const task = await data.insert('duly_task', { ...draft, subject: draft!.subject, owner: 'user_alice' });
+
+    // The correction an admin makes on Monday morning.
+    const widened = await data.update('duly_duty', { id: duty.id, grace_days: 21 });
+    expect(widened.grace_days).toBe(21);
+
+    expect(
+      (await read(task.id)).late_after,
+      'an already-dispatched task must keep the deadline it was born with — duly_catalog_sync is '
+        + 'where a replay would belong, and it does not do this today',
+    ).toBe('2026-08-08');
+  });
+
+  it('a completed task keeps its verdict — the on-time rate does not move when nobody completed anything', async () => {
+    const duty = await newDuty('Grace widened after completion', GRACE_AT_DISPATCH);
+    const { draft } = await dispatchedTaskFor(duty.id, GRACE_AT_DISPATCH);
+
+    // Dispatched with a deadline that is already past, so completing it NOW is
+    // late under the grace that was in force.
+    const task = await data.insert('duly_task', {
+      ...draft,
+      subject: 'completed after its grace ran out',
+      owner: 'user_alice',
+      late_after: dayFromToday(-2),
+    });
+    const done = await data.update('duly_task', { id: task.id, status: 'done' });
+    expect(done.completed_late, 'completed two days past its grace').toBe(true);
+
+    // Widen the grace so that, recomputed today, the same completion would be
+    // on time. Nothing may recompute it.
+    await data.update('duly_duty', { id: duty.id, grace_days: 30 });
+
+    const after = await read(task.id);
+    expect(after.completed_late, 'a compliance verdict that rewrites itself is worth nothing').toBe(true);
+    expect(after.late_after, 'and the deadline it was judged against stands too').toBe(dayFromToday(-2));
+  });
+});
+
+describe('completed_late — the verdict, stamped with completed_at', () => {
+  it('is false for a completion inside the grace window', async () => {
+    const task = await newTask({ due_date: dayFromToday(-3), late_after: dayFromToday(2) });
+    const done = await data.update('duly_task', { id: task.id, status: 'done' });
+    expect(done.completed_late, 'past due but inside its grace — the whole point of grace').toBe(false);
+  });
+
+  it('is false on the LAST day of the window, not true', async () => {
+    // `late_after` is the last day still inside the window: grace is granted in
+    // whole days, so a task completed at any hour of that day is on time. Off
+    // by one here and every duty grants a day less grace than it says.
+    const task = await newTask({ due_date: dayFromToday(-5), late_after: dayFromToday(0) });
+    const done = await data.update('duly_task', { id: task.id, status: 'done' });
+    expect(done.completed_late).toBe(false);
+  });
+
+  it('is true the day after the window closes', async () => {
+    const task = await newTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-1) });
+    const done = await data.update('duly_task', { id: task.id, status: 'done' });
+    expect(done.completed_late).toBe(true);
+  });
+
+  it('a task with no deadline is completed ON TIME, never "unknown"', async () => {
+    // A definite answer, so `done` always splits into on-time + late and the
+    // dashboard's two counts add up to the third.
+    const task = await newTask({ subject: 'nothing was owed by any day' });
+    const done = await data.update('duly_task', { id: task.id, status: 'done' });
+    expect(done.completed_late).toBe(false);
+  });
+
+  it('every row that reaches done carries a definite verdict', async () => {
+    // The invariant behind `tasks_done_on_time + tasks_completed_late =
+    // tasks_done`. A null verdict is not a third state; it is a done row
+    // missing from the metric that this card exists to make computable.
+    for (const over of [
+      { subject: 'verdict: no dates at all' },
+      { subject: 'verdict: due, inside grace', due_date: dayFromToday(-1), late_after: dayFromToday(1) },
+      { subject: 'verdict: due, past grace', due_date: dayFromToday(-9), late_after: dayFromToday(-4) },
+    ]) {
+      const task = await newTask(over);
+      const done = await data.update('duly_task', { id: task.id, status: 'done' });
+      expect(typeof done.completed_late, `${over.subject}`).toBe('boolean');
+    }
+  });
+
+  it('is stamped on an ALREADY-done insert — a seeded history or an import', async () => {
+    // These rows never make a completion transition, so the beforeUpdate leg
+    // never sees them. Without the insert leg the whole seeded six months would
+    // read as verdict-less and the demo's on-time rate would be empty.
+    const late = await newTask({
+      subject: 'seeded, and late',
+      status: 'done',
+      due_date: '2026-05-01',
+      late_after: '2026-05-04',
+      completed_at: '2026-05-09T09:00:00.000Z',
+    });
+    expect(late.completed_late).toBe(true);
+
+    const onTime = await newTask({
+      subject: 'seeded, and on time',
+      status: 'done',
+      due_date: '2026-05-01',
+      late_after: '2026-05-04',
+      completed_at: '2026-05-04T23:30:00.000Z',
+    });
+    expect(onTime.completed_late).toBe(false);
+  });
+
+  it('is cleared when a task is reopened — a completion that did not happen has no verdict', async () => {
+    const task = await newTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-4) });
+    await data.update('duly_task', { id: task.id, status: 'done' });
+    expect((await read(task.id)).completed_late).toBe(true);
+
+    await data.update('duly_task', { id: task.id, status: 'in_progress' });
+    const reopened = await read(task.id);
+    expect(reopened.completed_at ?? null).toBeNull();
+    expect(reopened.completed_late ?? null, 'the verdict goes with the timestamp').toBeNull();
+  });
+
+  it('is not re-judged when an already-done task is saved again', async () => {
+    // Same reason `completed_at` is not re-stamped: a re-save is a state, not a
+    // transition. Re-judging here would silently turn every on-time record late
+    // the moment someone edits a note after the deadline.
+    const task = await newTask({ due_date: dayFromToday(-2), late_after: dayFromToday(0) });
+    await data.update('duly_task', { id: task.id, status: 'done' });
+    expect((await read(task.id)).completed_late).toBe(false);
+
+    await data.update('duly_task', {
+      id: task.id,
+      status: 'done',
+      note: 'a note added long after the fact',
+      late_after: dayFromToday(-10),
+    });
+    expect((await read(task.id)).completed_late, 'a saved record is not a new completion').toBe(false);
+  });
+
+  it('is not writable by a caller', async () => {
+    const task = await newTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-4) });
+    const done = await data.update('duly_task', { id: task.id, status: 'done', completed_late: false });
+    expect(done.completed_late, 'the caller does not get to choose this either').toBe(true);
+  });
+});
+
+// ── The verdict on the shared-payload path ─────────────────────────────────
+//
+// `completed_late` is read off THIS row's `late_after`, so it is the rewrite
+// ADR-0058 Addendum II D3 puts outside the contract — and worse than
+// `completed_at`, because two rows in one batch can legitimately disagree.
+//
+// The response is asymmetric, and the asymmetry is what makes the write sound:
+// a row that would be stamped LATE refuses the write, and every row that
+// survives its own guard computes `false`, which is row-invariant by
+// construction. So a batch is either wholly on time and stamped correctly, or
+// refused — and bulk complete, which this product is built around, keeps
+// working for the case it is actually used for.
+describe('completed_late on a predicate write — one payload, N rows', () => {
+  const refusal = async (promise: Promise<unknown>) => {
+    try {
+      await promise;
+    } catch (error: any) {
+      return { code: error?.code, status: error?.status, message: String(error?.message ?? '') };
+    }
+    throw new Error('expected the predicate write to be refused, but it resolved');
+  };
+
+  const openTask = (subject: string, lateAfterDays: number) =>
+    newTask({ subject, due_date: dayFromToday(lateAfterDays - 1), late_after: dayFromToday(lateAfterDays) });
+
+  it('refuses a bulk completion that contains a late row, naming it', async () => {
+    // THE assertion. Without it, whichever dispatch runs last decides the
+    // compliance verdict for every row in the selection — five tasks ticked
+    // together, one of them late, and the answer is either "all late" or "all
+    // on time" depending on an order the caller cannot see or control.
+    const onTime = (await openTask('bulk: inside its grace', 4)).id;
+    const late = (await openTask('bulk: past its grace', -2)).id;
+
+    const { code, status, message } = await refusal(
+      data.update('duly_task', { status: 'done' }, { multi: true, where: { id: { $in: [onTime, late] } } }),
+    );
+
+    expect(code).toBe('DULY_TASK_BULK_LATE_COMPLETION');
+    expect(status).toBe(409);
+    expect(message, 'the refusal must name the row a caller has to remove').toContain(late);
+    expect(message, 'and the day its grace ran out, which is why it was refused')
+      .toContain(dayFromToday(-2));
+  });
+
+  it('writes nothing at all — the refusal is not a partial batch', async () => {
+    const onTime = (await openTask('bulk partial: on time', 4)).id;
+    const late = (await openTask('bulk partial: late', -3)).id;
+
+    await refusal(
+      data.update('duly_task', { status: 'done' }, { multi: true, where: { id: { $in: [onTime, late] } } }),
+    );
+
+    for (const id of [onTime, late]) {
+      const row = await read(id);
+      expect(row.status, 'no row in a refused batch may commit').toBe('open');
+      expect(row.completed_at ?? null).toBeNull();
+      expect(row.completed_late ?? null).toBeNull();
+    }
+  });
+
+  it('refuses whichever dispatch order the batch arrives in', async () => {
+    // Decided from the ROW alone. An accumulator would only catch the orders in
+    // which the late row happens to be dispatched second.
+    for (const lateFirst of [true, false]) {
+      const onTime = (await openTask(`order on-time ${lateFirst}`, 5)).id;
+      const late = (await openTask(`order late ${lateFirst}`, -1)).id;
+      const ids = lateFirst ? [late, onTime] : [onTime, late];
+
+      const { code } = await refusal(
+        data.update('duly_task', { status: 'done' }, { multi: true, where: { id: { $in: ids } } }),
+      );
+      expect(code, `late-first=${lateFirst} must refuse`).toBe('DULY_TASK_BULK_LATE_COMPLETION');
+    }
+  });
+
+  it('refuses an all-late batch too, even though nothing would leak', async () => {
+    // The hook cannot see the batch — `dispatch.index` is a position, not a
+    // total — so the rule is stated on the ROW: one a caller can predict and a
+    // test can pin. Same boundary the already-done guard draws.
+    const ids = [
+      (await openTask('all late a', -2)).id,
+      (await openTask('all late b', -6)).id,
+    ];
+    const { code } = await refusal(
+      data.update('duly_task', { status: 'done' }, { multi: true, where: { id: { $in: ids } } }),
+    );
+    expect(code).toBe('DULY_TASK_BULK_LATE_COMPLETION');
+  });
+
+  it('still completes an on-time batch — every row stamped false, in one write', async () => {
+    // The negative control, and the feature this guard must not cost: a week of
+    // ticks in one gesture. Every row that survives its own guard computes the
+    // SAME value, so what reaches the shared payload is row-invariant.
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i += 1) ids.push((await openTask(`on-time batch ${i}`, 2 + i)).id);
+
+    const affected = await data.update('duly_task', { status: 'done' }, {
+      multi: true,
+      where: { id: { $in: ids } },
+    });
+    expect(affected).toBe(5);
+
+    for (const id of ids) {
+      const row = await read(id);
+      expect(row.status).toBe('done');
+      expect(row.completed_at, `${id} must be stamped like any other completion`).toBeTruthy();
+      expect(row.completed_late, `${id} must carry a verdict, not a blank`).toBe(false);
+    }
+  });
+
+  it('completes a batch of deadline-less rows — no deadline is not a refusal', async () => {
+    // The shape the existing bulk-complete tests use, and the one a hand-created
+    // task arrives in. "No deadline to miss" is `false` for every row, so the
+    // batch is uniform and allowed.
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i += 1) ids.push((await newTask({ subject: `undated batch ${i}` })).id);
+
+    await data.update('duly_task', { status: 'done' }, { multi: true, where: { id: { $in: ids } } });
+    for (const id of ids) expect((await read(id)).completed_late).toBe(false);
+  });
+
+  it('leaves bulk SKIP alone — skipped is not a completion', async () => {
+    const ids = [
+      (await openTask('skip late a', -4)).id,
+      (await openTask('skip on-time b', 4)).id,
+    ];
+    const affected = await data.update(
+      'duly_task',
+      { status: 'skipped', skip_reason: 'the plant was down for the whole period' },
+      { multi: true, where: { id: { $in: ids } } },
+    );
+    expect(affected, 'a late row must not block a bulk skip — nothing is being judged').toBe(2);
+    for (const id of ids) {
+      expect((await read(id)).status).toBe('skipped');
+      expect((await read(id)).completed_late ?? null).toBeNull();
+    }
+  });
+
+  it('a predicate write clearing done is NOT refused — null is right for every row', async () => {
+    const late = (await openTask('cleared late', -3)).id;
+    const onTime = (await openTask('cleared on-time', 3)).id;
+    await data.update('duly_task', { id: late, status: 'done' });
+    await data.update('duly_task', { id: onTime, status: 'done' });
+    expect((await read(late)).completed_late).toBe(true);
+
+    const affected = await data.update('duly_task', { status: 'in_progress' }, {
+      multi: true,
+      where: { id: { $in: [late, onTime] } },
+    });
+    expect(affected).toBe(2);
+    for (const id of [late, onTime]) {
+      expect((await read(id)).completed_at ?? null).toBeNull();
+      expect((await read(id)).completed_late ?? null, 'the verdict is cleared with the timestamp')
+        .toBeNull();
+    }
+  });
+
+  it('does not fill a blank late_after on the shared-payload path', async () => {
+    // The fill leg is row-conditional in the other direction — "this row has no
+    // stamp" — so on a batch it would write one row's due date onto every
+    // matched row, overwriting a deadline another row was born with. Nothing is
+    // written instead: an unstamped row stays where it already was.
+    const blank = (await newTask({ subject: 'bulk re-date: no deadline yet' })).id;
+    const stamped = (await openTask('bulk re-date: already stamped', 6)).id;
+    const original = (await read(stamped)).late_after;
+
+    await data.update('duly_task', { due_date: '2026-12-24' }, {
+      multi: true,
+      where: { id: { $in: [blank, stamped] } },
+    });
+
+    expect((await read(stamped)).late_after, 'a stamped row must not be re-dated by another row')
+      .toBe(original);
+    expect((await read(blank)).late_after ?? null, 'and the blank row is left blank, not filled from a batch')
+      .toBeNull();
   });
 });

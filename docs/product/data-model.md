@@ -80,14 +80,32 @@ percentage describes work that already finished. `last_update_at` describes work
 that has quietly stopped, and it says so weeks before the due date does. It is
 server-owned, stamped on every status change and note edit.
 
+**`late_after` and `completed_late` are the lateness pair, and they are stamped
+once each.** `late_after` is `due_date + duty.grace_days`, written by the
+dispatcher; `completed_late` is `completed_at > late_after`, written by the
+completion hook. Both are server-owned and neither is ever recomputed — so the
+Late list is a plain date filter, the on-time rate is a count over a boolean,
+and the platform gap that made `completed_at <= due_date + duty.grace_days`
+unaskable (objectstack#14104) stops being a blocker rather than being resolved.
+
+The consequence is deliberate and worth stating plainly: **editing a duty's
+grace does not re-adjudicate work already dispatched or already completed.** A
+task records what was owed when it was owed, and a compliance record that
+rewrites itself when configuration changes is worth nothing in front of an
+auditor. The place a replay onto open tasks would belong is `duly_catalog_sync`,
+which already exists to push duty edits onto instantiated records; it does not
+do this today.
+
 **Deliberately absent.** `is_late`, `is_overdue`, `is_open`, `is_completed`,
 `progress_percent`.
 
-The first four are derivable from `due_date`, `grace_days` and `status`, all of
-which are stored and indexed. A stored copy needs a writer that runs every
-midnight, and the night it does not run, every view lies without erroring. A
-formula field is worse: it is virtual, so a *filter* naming one silently matches
-nothing at all. Consumers ask the stored columns.
+The first four are the *maintained-flag* shape, which is a different thing from
+the two stamps above: their truth changes with the clock rather than with the
+record, so each needs a writer that runs every midnight, and the night it does
+not run every view lies without erroring. A formula field is worse: it is
+virtual, so a *filter* naming one silently matches nothing at all. The test is
+not "is it derivable" — everything here is derivable — but "would a second write
+ever have to happen". `AGENTS.md` rule 5 carries the boundary.
 
 `progress_percent` is a number nobody can verify, which is exactly why it becomes
 the number everyone reports. Progress lives in `status` and `last_update_at`.

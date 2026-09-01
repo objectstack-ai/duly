@@ -63,6 +63,20 @@ export const DEFAULT_TIMEZONE = 'UTC';
 export const DEFAULT_DUE_ANCHOR: DueAnchor = 'period_start';
 export const DEFAULT_DUE_OFFSET_DAYS = 0;
 export const DEFAULT_LEAD_DAYS = 7;
+/**
+ * Zero grace, and it is the DECLARED default like the others — `duly_duty`
+ * writes `record.form == "standing" ? null : 0`.
+ *
+ * It is also the reading the rest of the product already gives an absent
+ * grace: the overdue escalation's CEL gate is
+ * `has(grace_days) && !isBlank(grace_days) ? grace_days : 0`
+ * (`src/flows/reminders.flow.ts`), so a task whose duty grants no grace
+ * escalates the day after its due date. `late_after` agreeing with that is what
+ * keeps the two surfaces from giving one person two answers — which is the
+ * whole defect this stamp closes. A null grace producing a null `late_after`
+ * would instead produce a task that can never be late anywhere.
+ */
+export const DEFAULT_GRACE_DAYS = 0;
 
 /** The status a duty must hold to dispatch. */
 export const DISPATCHABLE_STATUS = 'active';
@@ -90,6 +104,10 @@ export const DISPATCH_DUTY_FIELDS = [
   'due_anchor',
   'due_offset_days',
   'lead_days',
+  // Read for `late_after` only. The planner does not otherwise care about
+  // grace: a task is dispatched the same way whether its duty grants 0 days
+  // or 30.
+  'grace_days',
   'timezone',
   'effective_from',
   'effective_to',
@@ -113,6 +131,7 @@ export interface DispatchDuty {
   due_anchor?: string | null;
   due_offset_days?: number | null;
   lead_days?: number | null;
+  grace_days?: number | null;
   timezone?: string | null;
   effective_from?: string | null;
   effective_to?: string | null;
@@ -131,6 +150,14 @@ export interface TaskDraft {
   period_key: string;
   due_date: string;
   visible_from: string;
+  /**
+   * `due_date + duty.grace_days`, resolved at dispatch and carried on the row.
+   *
+   * The duty's grace is knowable exactly once — now — and a task is a record of
+   * what was owed WHEN IT WAS OWED. Editing the duty afterwards does not reach
+   * back through this column; `duly_catalog_sync` is where a replay would live.
+   */
+  late_after: string;
   status: 'open';
 }
 
@@ -329,6 +356,7 @@ function planForDuty(duty: DispatchDuty, now: Date, window: BackfillWindow | nul
   const dueAnchor = (duty.due_anchor ?? DEFAULT_DUE_ANCHOR) as DueAnchor;
   const dueOffsetDays = duty.due_offset_days ?? DEFAULT_DUE_OFFSET_DAYS;
   const leadDays = duty.lead_days ?? DEFAULT_LEAD_DAYS;
+  const graceDays = duty.grace_days ?? DEFAULT_GRACE_DAYS;
 
   try {
     // "Today" is resolved in the DUTY's zone, not the server's. A single UTC
@@ -383,6 +411,10 @@ function planForDuty(duty: DispatchDuty, now: Date, window: BackfillWindow | nul
         period_key: periodKey,
         due_date: dueDate,
         visible_from: visibleFrom,
+        // Civil-date arithmetic through the period engine, like `visible_from`
+        // beside it — a second `addDays` is a second thing that can be wrong
+        // about February.
+        late_after: addCalendarDays(dueDate, graceDays),
         status: 'open',
       });
     }

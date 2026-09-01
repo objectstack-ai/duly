@@ -93,6 +93,11 @@ export const DISPATCH_DUTIES: readonly DispatchDuty[] = DUTIES.map((duty) => {
     due_anchor: cadence.due_anchor ?? null,
     due_offset_days: cadence.due_offset_days ?? null,
     lead_days: cadence.lead_days ?? null,
+    // The grace the catalog authored, so `late_after` on every seeded row is
+    // the deadline the real dispatcher would have stamped. Omit it and the
+    // whole fixture reads as zero grace: the demo's Late list would show tasks
+    // still inside a 7-day window, which is the exact defect #52 removed.
+    grace_days: cadence.grace_days ?? null,
     timezone: timezoneOf(unit),
     // The same window `duty.seed.ts` writes onto `duly_duty.effective_from`.
     // Stated HERE too, not only there: the planner clips every period whose
@@ -217,6 +222,18 @@ const NOTES: Readonly<Record<string, string>> = {
 export interface SeededTask extends Omit<TaskDraft, 'status'> {
   status: 'open' | 'in_progress' | 'done' | 'skipped' | 'cancelled';
   completed_at?: string;
+  /**
+   * `completed_late` is deliberately NOT on this interface.
+   *
+   * The verdict is `completed_at` past `late_after`, and both of those are on
+   * the row this fixture emits — so `task.hook.ts` stamps it on the way in,
+   * from the same comparison it makes on a live completion. Computing it here
+   * as well would be a second spelling of one rule, in a file whose whole
+   * point is that it re-uses the dispatcher's own arithmetic instead of
+   * re-deriving it. The drift each row completes with (below) is what decides
+   * which way the verdict falls; the grace it is judged against comes from the
+   * catalog, through `late_after`.
+   */
   skip_reason?: string;
   note?: string;
   /** Written by a SECOND seed pass — an insert can never carry it. See `task.seed.ts`. */
@@ -332,6 +349,10 @@ const resolveDraft = (draft: TaskDraft, index: number): SeededTask => {
     const completed = iso(
       new Date(Math.max(dueInstant.getTime() + drift * DAY + 14 * HOUR, dispatched.getTime())),
     );
+    // The `+1` drift lands a day past the due date, so whether a row is
+    // stamped late depends on the grace its own duty granted — which is what
+    // makes the seeded on-time rate a number worth looking at rather than 100%
+    // by construction. The stamp itself is the hook's, on the way in.
     return withNote({ ...draft, status: 'done', completed_at: completed, last_update_at: completed });
   }
 

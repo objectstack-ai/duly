@@ -11,62 +11,55 @@ import { governed } from './governed.js';
  * dimension or measure this file does not declare renders an empty chart and
  * reports success, so the names below are a contract. `#10` binds them.
  *
- * ── What is NOT here, and why it is upstream rather than worked around ────
+ * ── How the on-time measures became expressible ──────────────────────────
  *
- * The card asks for three more measures — `done on time`, `late`, and the
- * `on-time rate` derived from them. All three reduce to ONE comparison:
+ * The card's three measures — `done on time`, `late`, and the `on-time rate`
+ * over them — all reduce to ONE comparison:
  *
  *     completed_at <= due_date + duty.grace_days
  *
- * That comparison cannot be expressed by a dataset measure filter, and the
- * reason is worth stating precisely, because one third of it DOES work and
- * the other two thirds are separate platform gaps:
+ * A dataset measure filter cannot say that, and still cannot: `FILTER_OPERATORS`
+ * has no date arithmetic and its `{N_days_ago}` macros are relative to NOW
+ * rather than to a column, so "+ grace_days" has no spelling; and a
+ * column-to-column reference (`{ completed_at: { $lte: { $field: 'due_date' } } }`)
+ * is resolved by the in-memory evaluator and REFUSED by driver-sql with
+ * `INVALID_FILTER` / 400 (objectstack#5222), which for a dataset is worse than
+ * a uniform gap — the same measure would answer on one deployment and 400 on
+ * another. Both halves are objectstack#14104.
  *
- * 1. **Reaching the related field works.** `include: ['duty']` plus a
- *    `duty.grace_days` path is exactly what the semantic layer is for — joins
- *    are compiled from `include` (ADR-0071, ≤3 hops) and the author writes no
- *    ON clause. `frequency` below is that same reach, in production, so this
- *    half is proven rather than assumed.
+ * What changed in #52 is not the grammar: it is WHEN the comparison is made.
+ * Both operands are knowable at a definite instant, so each is resolved there
+ * and stored on `duly_task` —
  *
- * 2. **Comparing two COLUMNS is refused on the SQL path.** The filter grammar
- *    declares a field reference — `{ completed_at: { $lte: { $field:
- *    'due_date' } } }` — and `@objectstack/spec`'s own `filter.zod.ts` records
- *    that `driver-sql` (and `driver-sqlite-wasm`, which inherits its compiler)
- *    reject it with `INVALID_FILTER` / HTTP 400, while the in-memory evaluator
- *    resolves it. Tracked upstream as objectstack#5222. That split is worse
- *    than a uniform gap for a DATASET in particular: the same declaration
- *    would answer on a memory driver and 400 on a SQL one, so the measure's
- *    correctness would depend on the deployment.
+ *     late_after     = due_date + grace_days     stamped at DISPATCH
+ *     completed_late = completed_at > late_after  stamped at COMPLETION
  *
- * 3. **There is no date arithmetic in the grammar at all.** `FILTER_OPERATORS`
- *    is closed — equality, ordering, set, range, string, null/exists — and
- *    nothing adds an interval to a column. The `{N_days_ago}` macro
- *    vocabulary (`DATE_MACRO_PARAM_RE`) is relative to NOW, never to another
- *    column, so it cannot express "+ grace_days" either. And here the interval
- *    is itself a column, which is strictly harder than a literal offset. So
- *    even if #5222 landed tomorrow, `due_date + duty.grace_days` would still
- *    have no spelling.
+ * — and what is left at query time is a count over a boolean, which this
+ * grammar has always been able to express. **objectstack#14104 stops being a
+ * blocker rather than being resolved**: with `late_after` on the row there is
+ * no column-to-column comparison left to make. If it ever lands, nothing here
+ * needs to change — and the stamps would still be right, because they answer
+ * "was this late" with the grace that was in force at the time, which a
+ * query-time comparison against today's `duty.grace_days` cannot do.
  *
- * The two workarounds were both considered and both rejected on the card's own
- * terms. Denormalising `grace_days` (or a pre-computed `grace_deadline`) onto
- * `duly_task` is a second writer that drifts the day a duty's grace is edited —
- * `AGENTS.md` rule 5 forbids it outright. Reducing the rate in TypeScript over
- * query results is the hand-written aggregation the metadata-first instruction
- * on this card exists to prevent, and it would also put the number outside the
- * semantic layer where no dashboard could bind it.
+ * That is also why this is not the denormalisation `AGENTS.md` rule 5 forbids.
+ * Rule 5 is about a MAINTAINED flag — one that needs a writer every midnight
+ * and lies on the day it does not run. These are written once, at the moment
+ * they become true, and never recomputed; the boundary is stated under rule 5
+ * itself. The consequence is deliberate: editing a duty's `grace_days` does not
+ * move the verdict on work already completed. `duly_catalog_sync` is where a
+ * replay onto open tasks would belong, and it does not do that today.
  *
- * So the measures are absent rather than approximated. An `on_time_rate` that
- * silently ignored grace would be wrong in the direction that matters — it
- * would mark late every task completed inside the grace its own duty grants —
- * and it would be wrong invisibly, which is how a number nobody trusts becomes
- * the number everybody reports. Note what the gap currently costs: `grace_days`
- * is authored on `duly_catalog_item`, propagated to `duly_duty` at
- * instantiation, and read by NOTHING. This dataset was its only intended
- * consumer.
+ * The rejected alternative has not changed either: reducing the rate in
+ * TypeScript over query results is the hand-written aggregation the
+ * metadata-first rule exists to prevent, and it would put the number outside
+ * the semantic layer where no dashboard could bind it.
  *
- * Filed upstream as **objectstack-ai/objectstack#14104**, with parts 2 and 3 above
- * as the two independent halves. Do not close this hole locally: an approximation
- * here is exactly how a platform gap becomes permanent and invisible.
+ * ⛔ What must still never be built here is the GRACE-FREE approximation —
+ * a `due_date < {today}` window standing in for lateness. It marks late every
+ * task completed inside the grace its own duty grants, which is wrong in
+ * exactly the direction a customer configures grace against, and wrong
+ * invisibly. `test/dashboard.test.ts` and `test/datasets.test.ts` both pin it.
  *
  * ── `tasks_due` excludes cancelled, in every dataset that uses the name ───
  * A cancelled task was withdrawn: it was never owed, so it is neither load nor
@@ -123,6 +116,76 @@ export const DutyHealth = defineDataset({
       label: 'Tasks skipped',
       aggregate: 'count',
       filter: governed({ status: 'skipped' }),
+    },
+    {
+      /**
+       * Completed inside the grace its duty granted. `completed_late` is the
+       * verdict the completion hook stamped against the `late_after` the task
+       * was dispatched with — so this counts what was on time AT THE TIME,
+       * which is the only reading an audit accepts.
+       *
+       * `status: 'done'` is carried as well as the flag, rather than trusted
+       * to imply it: the verdict is cleared when a task is reopened, but a
+       * measure that leaned on that would silently start counting skipped and
+       * cancelled rows the day the clearing leg changed.
+       */
+      name: 'tasks_done_on_time',
+      label: 'Done on time',
+      aggregate: 'count',
+      filter: governed({ status: 'done', completed_late: false }),
+    },
+    {
+      // The other half of the same population — never a separate question, and
+      // never a person's score. `tasks_done_on_time + tasks_completed_late`
+      // is `tasks_done` exactly, because every done row carries a definite
+      // verdict (a task with no due date has no deadline to miss and is
+      // stamped `false`).
+      name: 'tasks_completed_late',
+      label: 'Completed late',
+      aggregate: 'count',
+      filter: governed({ status: 'done', completed_late: true }),
+    },
+    {
+      /**
+       * The product's headline number, at last expressible.
+       *
+       * A DERIVED measure (ADR-0021 Q1) — it names other measures and nothing
+       * else, so the caliber gate it inherits is theirs and cannot drift from
+       * them. Deliberately over `tasks_done` rather than `tasks_due`: this
+       * answers "of the work that was completed, how much was on time", and
+       * folding still-open or skipped work into the denominator would answer a
+       * different question under the same name.
+       */
+      name: 'on_time_rate',
+      label: 'On-time rate',
+      derived: { op: 'ratio', of: ['tasks_done_on_time', 'tasks_done'] },
+      /**
+       * A fraction rendered to two decimals, and NOT a percent — measured
+       * against the console, not chosen by taste.
+       *
+       * `format` here is a numeral PATTERN, not a keyword: the renderer takes
+       * the decimals from the digits after the point (`format.split('.')[1]`)
+       * and switches to percent only on a literal `%`. Measured against this
+       * demo's own 0.94, in the browser:
+       *
+       *   (none)    `0.94`
+       *   'percent' `1` — no `%` in the pattern, so this is not a percent at
+       *             all, just zero decimals. Silently wrong on the one tile
+       *             the product is judged by, which is why the obvious
+       *             spelling is written down here as refuted.
+       *   '0.00'    `0.94`. What ships.
+       *
+       * `'0.0%'` is the spelling that would print `94.0%`, and it is
+       * deliberately NOT used. Read off the renderer rather than measured,
+       * because the demo cannot currently produce the value it goes wrong on:
+       * a percent is scaled by a HEURISTIC — `value > -1 && value < 1 ? value
+       * * 100 : value` — because a measure, unlike a field, cannot declare its
+       * scale. A rate of exactly 1 (100% on time, the number a customer most
+       * wants to see) falls outside that window and renders as `1.0%`. A tile
+       * that reports a perfect month as one percent is worse than one that
+       * says `1.00`. Filed as #101.
+       */
+      format: '0.00',
     },
   ],
 });

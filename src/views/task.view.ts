@@ -44,6 +44,30 @@ const columns = [
  * route ADR-0058 Addendum II D3 sanctions for a row-conditional decision on a
  * batch-scoped payload.
  *
+ * ── A second refusal on the same route: a LATE completion ────────────────
+ * Since #52 a completion also stamps `completed_late`, and that verdict is read
+ * off the row's own `late_after` — so one batch cannot carry two answers. The
+ * hook refuses a bulk completion whose row would be stamped late
+ * (`DULY_TASK_BULK_LATE_COMPLETION`, 409) and stamps `false` otherwise, which
+ * every row that survived its own guard would have written.
+ *
+ * **The action below is unaffected, and that is measured rather than hoped
+ * for.** The toolbar does not issue a predicate write at all: recorded against
+ * a live `pnpm demo`, selecting two rows and pressing Complete sends
+ * `POST /api/v1/data/duly_task/updateMany` with `records: [{ id, data }, …]` —
+ * one payload PER RECORD. A selection of one late and one on-time task
+ * completed in one gesture, with `completed_late` landing `true` and `false` on
+ * the right rows. The shared payload the hook guards is the `multi: true` +
+ * `where` shape an import, a backfill or an MCP caller assembles, which is
+ * exactly the caller that never reads this file.
+ *
+ * So that refusal deliberately has NO predicate half here — and it would be
+ * the wrong place for one anyway. It turns on the completion instant against a
+ * stored date, a boundary that moves at midnight between the render and the
+ * write, so a client-side copy would sooner or later hide an action the server
+ * would have accepted. A missing bulk action with no explanation is worse than
+ * a refusal that names its cause.
+ *
  * This predicate is kept because it is still the right UX: it stops the
  * console from assembling a batch the server would refuse, so a user gets an
  * unavailable action rather than an error they did not cause.
@@ -126,20 +150,56 @@ export const TaskViews = defineView({
       sort: [{ field: 'due_date', order: 'asc' }],
     },
 
-    // Late = past due and still open. Read from stored columns, never from a
-    // flag: a stored `is_late` needs a writer that runs every midnight, and the
-    // day it does not run the view lies without erroring.
+    /**
+     * Late = past the GRACE the duty granted, and still open.
+     *
+     * `late_after` is `due_date + duty.grace_days`, stamped on the row at
+     * dispatch (`src/jobs/dispatch.plan.ts`), so the filter here is an ordinary
+     * date comparison against a stored, indexed column — no column-to-column
+     * comparison, no date arithmetic, nothing this grammar cannot say.
+     *
+     * It reads a stored column, and that is still not a stored FLAG. An
+     * `is_late` boolean would need a writer running every midnight and would
+     * lie on the day it did not run; `late_after` is a date the row was born
+     * with, and the clock moving past it is what makes the row late. The
+     * comparison still happens at read time — it just has both operands now.
+     *
+     * ── What changed, and why the old comment is gone ────────────────────
+     * This view used to filter `due_date < {today}` and say, in its own
+     * comment, that reading stored columns was the point — which was right —
+     * without mentioning that it was also dropping grace. A duty granting 7
+     * days had its people listed as late the morning after the due date, six
+     * days early, while the overdue escalation (which DOES read `grace_days`)
+     * correctly stayed silent: one system, two answers about the same person on
+     * the same day. That was #48, and both surfaces now answer from the same
+     * stamp.
+     *
+     * ── The write-once consequence, named so the next reader finds it ────
+     * `late_after` carries the grace in force AT DISPATCH. Edit a duty's
+     * `grace_days` and tasks already dispatched keep the deadline they were
+     * born with, so this list does not move for them. That is deliberate — a
+     * task records what was owed when it was owed — and the place a replay
+     * belongs is `duly_catalog_sync`, which already exists to push duty edits
+     * onto instantiated records. It does not do this today, and this card did
+     * not build it.
+     *
+     * A task with no `due_date` has no `late_after` and never appears here.
+     * That is the honest answer: nothing was owed by any particular day.
+     */
     late: {
       label: 'Late',
       type: 'grid',
       data,
-      columns,
+      // `late_after` is carried as a column, not just filtered on: the whole
+      // complaint behind #48 was a screen that would not show you why it
+      // thought a task was late.
+      columns: [...columns, { field: 'late_after' }],
       filter: [
-        { field: 'due_date', operator: 'less_than', value: '{today}' },
+        { field: 'late_after', operator: 'less_than', value: '{today}' },
         { field: 'status', operator: 'in', value: ['open', 'in_progress'] },
       ],
       bulkActionDefs: bulkActions,
-      sort: [{ field: 'due_date', order: 'asc' }],
+      sort: [{ field: 'late_after', order: 'asc' }],
     },
 
     // Stagnation: open, and untouched for a fortnight. This is the earliest

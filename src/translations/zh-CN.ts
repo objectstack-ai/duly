@@ -239,6 +239,17 @@ export const dulyChinese = defineTranslationBundle({
             help: '跳过是一种正当结果——“当时装置停车，没有任何东西需要申报”。记下原因，才不会让“跳过”变成“完成”的同义词。',
           },
           completed_at: { label: '完成时间' },
+          // 逾期判定的两个「盖章」字段（#52）。用「宽限期」与职责上的
+          // grace_days 保持同一个词，读者才能把两处联系起来；用「派发时」
+          // 而不是「当时」，是因为这里要说清楚盖的是哪一刻的章。
+          late_after: {
+            label: '逾期起算日',
+            help: '到期日加上派发这条任务时职责给出的宽限期。过了这一天仍未完成，或在这一天之后才完成，即为逾期。此值在派发时写入一次——之后修改职责的宽限期不会改动它。',
+          },
+          completed_late: {
+            label: '逾期完成',
+            help: '完成时间晚于「逾期起算日」时为是。此值在完成的那一刻写入一次，按当时生效的宽限期判定——之后修改职责的宽限期不会改动它。',
+          },
           last_update_at: { label: '最后更新' },
           note: {
             label: '备注',
@@ -470,7 +481,7 @@ export const dulyChinese = defineTranslationBundle({
     dashboards: {
       duly_duty_health: {
         label: '职责健康度',
-        description: '仅统计组织认定的职责——来自岗位职责库与主管指派的工作；自行申报的职责不计入这里的任何数字。逾期暂未展示：它取决于每条职责各自的宽限期，而本视图无法应用宽限期——“团队 → 逾期”列表是目前的替代答案，它不考虑宽限期。',
+        description: '仅统计组织认定的职责——来自岗位职责库与主管指派的工作；自行申报的职责不计入这里的任何数字。按期与否，按每条任务派发当时自身的宽限期判定；分母只含已完成的工作——未完成的工作由「停滞」几块指标回答。',
         widgets: {
           not_moving_14d: {
             title: '停滞',
@@ -483,6 +494,12 @@ export const dulyChinese = defineTranslationBundle({
           oldest_touch: {
             title: '最久未动的任务',
             description: '最停滞的那个待办任务上一次有动静的时间——是一个日期，不是一个分数。',
+          },
+          // 「按期率」用 #52 的原词。分母写清楚是「已完成」，是因为读者若
+          // 默认分母是「应完成」，同一块指标会读出完全不同的数。
+          on_time_rate: {
+            title: '按期率',
+            description: '在各自宽限期内完成的、组织认定的任务，占已完成的组织认定任务的比例。未完成的工作不计入这里。',
           },
           not_moving_by_unit: {
             title: '停滞情况（按部门）',

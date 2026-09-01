@@ -200,9 +200,12 @@ describe('the lenses say what the product means', () => {
   });
 
   /**
-   * Lateness and stagnation are asked of stored, indexed columns. A stored
-   * flag needs a writer that runs every midnight; a formula field is virtual
-   * and a filter naming one silently matches nothing.
+   * Lateness and stagnation are asked of stored, indexed columns — since #52
+   * that includes `late_after`, the deadline stamped on the row at dispatch.
+   * What stays banned is the MAINTAINED flag: one whose truth changes with the
+   * clock, needing a writer every midnight and lying the night it does not run.
+   * A formula field is worse again — virtual, so a filter naming one silently
+   * matches nothing.
    */
   it('no filter reaches for a derived flag', () => {
     for (const { where, view } of allViews) {
