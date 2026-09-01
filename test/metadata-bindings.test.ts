@@ -6,6 +6,7 @@ import { isPlatformProvidedObjectName } from '@objectstack/spec/system';
 import { SystemFieldName } from '@objectstack/spec/system';
 
 import { dulyApps } from '../src/apps/index.js';
+import { dulyDashboards } from '../src/dashboards/index.js';
 import { dulyDatasets } from '../src/datasets/index.js';
 import { dulyObjects } from '../src/objects/index.js';
 import { dulyViews } from '../src/views/index.js';
@@ -413,6 +414,18 @@ interface Stack {
   readonly datasets: readonly unknown[];
   readonly apps: readonly unknown[];
   readonly objects: readonly DeclaredObject[];
+  /**
+   * Dashboards are here for ONE reason: a `type: 'dashboard'` nav entry
+   * targets one by name, and the walk has to READ that name rather than skip
+   * the type. (The platform does resolve this one — see the branch in
+   * `walkNav` — unlike the `viewName` case #14108 is about.)
+   *
+   * The bindings INSIDE a dashboard (widget → dataset → dimension/measure,
+   * and the widget's own `filter` keys) are NOT walked here; they are the
+   * subject of `test/dashboard.test.ts`, which resolves them against
+   * `dulyDatasets`. Optional so the self-test fixtures below can omit it.
+   */
+  readonly dashboards?: readonly unknown[];
 }
 
 /**
@@ -421,6 +434,9 @@ interface Stack {
  */
 export const metadataBindingFindings = (stack: Stack): WalkResult => {
   const objects = new Map(stack.objects.map((o) => [o.name, o]));
+  const dashboardNames = new Set(
+    (stack.dashboards ?? []).map((d) => String((d as Rec).name ?? '')).filter(Boolean),
+  );
   const resolveObject = makeObjectResolver(objects);
   const resolvePath = makePathResolver(resolveObject);
   const result = emptyResult();
@@ -620,11 +636,39 @@ export const metadataBindingFindings = (stack: Stack): WalkResult => {
         walkNav(item.children as Rec[] | undefined, appName);
         continue;
       }
+      if (type === 'dashboard') {
+        /**
+         * `DashboardNavItemSchema` carries `dashboardName`, not an object, so
+         * the reference to resolve is the DASHBOARD.
+         *
+         * Unlike `viewName` (#14108), this one is NOT an unguarded reference:
+         * measured on `@objectstack/cli` 17.2.0 by pointing the entry at a
+         * `duly_ghost`, `defineStack`'s own cross-reference validation refuses
+         * the stack — validate exits 1, build exits 2, and every test that
+         * imports the config goes red at once. The branch is here so the walk
+         * READS the type instead of dropping it into `unknownSlots`, and so a
+         * miss names the nav entry at unit level before the whole suite
+         * explodes at config load. It is not standing in for a missing gate.
+         */
+        const dashboardName = String(item.dashboardName ?? '');
+        if (dashboardNames.has(dashboardName)) {
+          result.resolved.push(`${where} · dashboardName → ${dashboardName}`);
+          continue;
+        }
+        result.findings.push({
+          where: `${where} · dashboardName`,
+          reference: dashboardName || '(none)',
+          reason:
+            `no dashboard named "${dashboardName || '(nothing)'}" is declared — the entry keeps its `
+            + `authored label and opens nothing. Declared: ${[...dashboardNames].sort().join(', ') || '(none)'}`,
+        });
+        continue;
+      }
       if (type !== 'object') {
-        // Not a hole: dashboard / page / url / report / action / component
-        // entries carry no object binding for this walk to resolve. The
-        // `knows every nav item type` tripwire is what keeps a NEW
-        // object-bearing type from slipping through unchecked.
+        // Not a hole: page / url / report / action / component entries carry
+        // no object binding for this walk to resolve. The `knows every nav
+        // item type` tripwire is what keeps a NEW object-bearing type from
+        // slipping through unchecked.
         result.unknownSlots.push(`${where} · nav type '${type}'`);
         continue;
       }
@@ -728,6 +772,7 @@ const stack: Stack = {
   datasets: dulyDatasets as unknown[],
   apps: dulyApps as unknown[],
   objects: dulyObjects as unknown as DeclaredObject[],
+  dashboards: dulyDashboards as unknown[],
 };
 
 const result = metadataBindingFindings(stack);
@@ -831,8 +876,12 @@ describe('metadata bindings — every reference resolves (stopgap for objectstac
       }
     };
     for (const app of stack.apps as Array<{ navigation?: Rec[] }>) walk(app.navigation);
+    // `dashboard` joined `group` / `object` when the manager dashboard landed:
+    // `walkNav` reads its `dashboardName` and resolves it against the
+    // dashboards barrel, so it is a READ type, not an ignored one. Anything
+    // else still fails here rather than passing unchecked.
     expect(
-      [...navTypes].filter((t) => t !== 'group' && t !== 'object').sort(),
+      [...navTypes].filter((t) => t !== 'group' && t !== 'object' && t !== 'dashboard').sort(),
       'a nav item type this walk does not read — teach walkNav about it before trusting the nav check',
     ).toEqual([]);
   });
@@ -1082,6 +1131,28 @@ describe('metadata bindings — the guard can fail (self-test on synthetic metad
     // The other half of the case above — otherwise "no viewName" is a hole.
     const r = run({ apps: [app([{ id: 'n', type: 'object', objectName: 'fx_task' }])] });
     expect(r.findings[0]!.reason).toContain('no default `list` view');
+  });
+
+  // ── 5. Dashboard nav ───────────────────────────────────────────────────
+  it('fires on a nav `dashboardName` that names no dashboard', () => {
+    const r = run({
+      apps: [app([{ id: 'd', type: 'dashboard', dashboardName: 'fx_ghost', label: 'Ghost' }])],
+      dashboards: [{ name: 'fx_real' }],
+    });
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]!.reference).toBe('fx_ghost');
+    expect(r.findings[0]!.where).toContain('dashboardName');
+  });
+
+  it('does not fire on a nav `dashboardName` that names a declared dashboard', () => {
+    const r = run({
+      apps: [app([{ id: 'd', type: 'dashboard', dashboardName: 'fx_real', label: 'Real' }])],
+      dashboards: [{ name: 'fx_real' }],
+    });
+    expect(messages(r)).toEqual([]);
+    expect(r.resolved.some((entry) => entry.endsWith('dashboardName → fx_real'))).toBe(true);
+    // And it is a READ type, not one dropped into `unknownSlots` unchecked.
+    expect(r.unknownSlots).toEqual([]);
   });
 
   it('reports every dangling reference in one view, not just the first', () => {
