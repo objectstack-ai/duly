@@ -78,22 +78,40 @@ export const CatalogItem = ObjectSchema.create({
       description: 'Anchors the due date inside a period. Only a recurring duty has one; blank (and forbidden) for standing and one-off.',
     }),
 
+    // `scale` and the bounds are `duly_duty`'s, to the digit — see the long
+    // block on that object for what each one was measured to prevent (#82).
+    // They belong HERE as well as there because this object is where the
+    // values are AUTHORED: `applyCatalogHandler` copies all three onto every
+    // duty it creates, through `engine.insert`, which validates. A catalog
+    // item carrying `due_offset_days: 1.5` is therefore not a quiet
+    // inconsistency — it is an apply that refuses partway through, having
+    // already created duties for the first N people, and the refusal names
+    // `duly_duty` rather than the catalog item the value actually lives on.
+    // Stopping it at the source is the difference between one loud refusal on
+    // the row being edited and a half-finished fan-out.
     due_offset_days: Field.number({
       label: 'Offset (days, 0 = anchor day)',
       defaultValue: F`record.form != "recurring" ? null : 0`,
-      description: 'Days from the anchor day, which is offset 0. On "Start of period": 0 = the first day of the period, 4 = the fifth day. On "End of period": 0 = the last day of the period, -3 = three days before the last. Only a recurring duty has a period to offset into; blank (and forbidden) for standing and one-off.',
+      scale: 0,
+      min: -366,
+      max: 366,
+      description: 'Days from the anchor day, which is offset 0. On "Start of period": 0 = the first day of the period, 4 = the fifth day. On "End of period": 0 = the last day of the period, -3 = three days before the last. Whole days, and within a year either side of the anchor. Only a recurring duty has a period to offset into; blank (and forbidden) for standing and one-off.',
     }),
     lead_days: Field.number({
       label: 'Lead time (days)',
       defaultValue: F`record.form != "recurring" ? null : 7`,
+      scale: 0,
       min: 0,
-      description: 'Only a recurring duty is dispatched with a lead window; blank (and forbidden) for standing and one-off.',
+      max: 366,
+      description: 'Whole days, up to a year. Only a recurring duty is dispatched with a lead window; blank (and forbidden) for standing and one-off.',
     }),
     grace_days: Field.number({
       label: 'Grace (days)',
       defaultValue: F`record.form == "standing" ? null : 0`,
+      scale: 0,
       min: 0,
-      description: 'Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
+      max: 14,
+      description: 'Whole days, up to 14 — the overdue reminder sweeps 15 days back, so a longer grace would never fire. Meaningless for a standing duty, which never has a task; still applies to a one-off\'s.',
     }),
 
     regulation_ref: Field.text({

@@ -177,13 +177,18 @@ const DUTY_GATE_FIELDS = ['id', 'grace_days', 'effective_from', 'effective_to'] 
  * How far back the overdue sweep looks, and therefore the largest
  * `grace_days` the day-one escalation can honour.
  *
- * `duly_duty.grace_days` declares `min: 0` and NO maximum, so these two
- * numbers are coupled with nothing to hold them together but this comment and
- * the test that pins it: a duty with grace ≥ 15 has its escalation day fall
- * outside the swept window and is never escalated. Raising the field's ceiling
- * means raising this. The alternative — an unbounded lookback — re-launches
- * the flow every day for every task ever missed, which is the "ancient record
- * re-alerting forever" the trigger's own `withinDays` doc warns about.
+ * A duty with grace ≥ 15 has its escalation day fall outside the swept window
+ * and is never escalated — silently. That used to be reachable: `grace_days`
+ * declared `min: 0` and no maximum, and the demo catalog shipped an item with
+ * 21. Since #82 the field declares `max: 14`, which is THIS number minus one,
+ * so every value the object accepts is a value this sweep can honour.
+ *
+ * The two are still two numbers in two files, coupled by nothing but this
+ * comment and `test/reminders.test.ts`, which reads both and refuses to let
+ * either move alone. Raising the field's ceiling means raising this. The
+ * alternative — an unbounded lookback — re-launches the flow every day for
+ * every task ever missed, which is the "ancient record re-alerting forever"
+ * the trigger's own `withinDays` doc warns about.
  */
 const OVERDUE_LOOKBACK_DAYS = 15;
 
