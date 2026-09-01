@@ -261,8 +261,6 @@ describe('untranslatable display text is declared rather than dropped', () => {
       'flow.description',
       'flow.edges[].label',
       'flow.label',
-      'flow.nodes[].config.message',
-      'flow.nodes[].config.title',
       'flow.nodes[].label',
       'hook.description',
       'hook.label',
@@ -298,7 +296,11 @@ describe('untranslatable display text is declared rather than dropped', () => {
     expect(count('view.bulkActionDefs'), 'bulk-action toolbar copy').toBe(35);
     expect(count('object.validations'), 'custom validation messages').toBe(11);
     expect(count('dataset.'), 'dataset labels behind chart axes').toBe(26);
-    expect(count('flow.nodes[].config.'), 'reminder notification title and body (#69)').toBe(6);
+    // Was 6 before #99 (#69) landed: three `notify` nodes' inline title and
+    // message. They now reference an email template, whose per-locale rows are
+    // checked below — so this is a gap that CLOSED, pinned at zero so it
+    // cannot silently reopen as inline copy.
+    expect(count('flow.nodes[].config.'), 'inline notification copy — closed by #69').toBe(0);
   });
 });
 
@@ -312,7 +314,7 @@ describe('untranslatable display text is declared rather than dropped', () => {
  * collection that is still empty, so #69's templates are covered the moment
  * they are wired in rather than after somebody remembers.
  */
-interface TemplateLike { name?: unknown; locale?: unknown; subject?: unknown }
+interface TemplateLike { name?: unknown; locale?: unknown; subject?: unknown; bodyHtml?: unknown; bodyText?: unknown }
 
 const templateGaps = (templates: readonly TemplateLike[], locales: readonly string[]): string[] => {
   const byName = new Map<string, Set<string>>();
@@ -334,6 +336,30 @@ const templateGaps = (templates: readonly TemplateLike[], locales: readonly stri
   return gaps.sort();
 };
 
+/** Literal authored words in a template row, with `{{holes}}` removed. */
+const literalWords = (template: TemplateLike & { bodyHtml?: unknown; bodyText?: unknown }): string =>
+  [template.subject, template.bodyHtml, template.bodyText]
+    .map((value) => (typeof value === 'string' ? value : ''))
+    .join(' ')
+    .replace(/\{\{\{?[^}]*\}?\}\}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** Names whose locale rows carry identical authored wording. */
+const sameWordsAcrossLocales = (templates: readonly TemplateLike[]): string[] => {
+  const byName = new Map<string, string[]>();
+  for (const template of templates) {
+    const name = typeof template?.name === 'string' ? template.name : '';
+    if (!name) continue;
+    byName.set(name, [...(byName.get(name) ?? []), literalWords(template)]);
+  }
+  return [...byName]
+    .filter(([, words]) => words.length > 1 && words.some((w) => w.length > 0)
+      && new Set(words).size < words.length)
+    .map(([name]) => name)
+    .sort();
+};
+
 describe('email templates carry a sibling per supported locale', () => {
   const templates = ((stackConfig as { emailTemplates?: readonly TemplateLike[] }).emailTemplates ?? []);
   const locales = (stackConfig as { i18n?: { supportedLocales?: string[] } }).i18n?.supportedLocales ?? [];
@@ -346,15 +372,29 @@ describe('email templates carry a sibling per supported locale', () => {
     ).toEqual([]);
   });
 
-  it('says plainly when there is nothing to check yet', () => {
-    // Non-vacuity, stated rather than hidden: while #69 is in flight this
-    // suite passes because the collection is empty, and the self-test below is
-    // what proves the rule can fail.
-    if (templates.length === 0) {
-      expect(Object.keys(stackConfig as Rec)).not.toContain('emailTemplates');
-    } else {
-      expect(templates.length).toBeGreaterThan(0);
-    }
+  it('is checking real rows, not passing on an empty collection', () => {
+    // Non-vacuity. #69 landed three template NAMES × two locales; if the
+    // collection ever empties, the assertion above would pass by having
+    // nothing to check, and this is what says so.
+    const names = new Set(templates.map((t) => String(t.name)));
+    expect(names.size, 'no email template reached the config — the check above is vacuous')
+      .toBeGreaterThan(0);
+    expect(templates.length, 'one row per (name, locale): three names across two locales')
+      .toBe(names.size * locales.length);
+  });
+
+  it('gives each locale row its own words, not a copy of the source row', () => {
+    // A sibling row that duplicates the source-locale wording is a row that
+    // exists and translates nothing — the row-shaped version of an English
+    // value pasted into `zh-CN`, and the shape a per-locale COUNT cannot see.
+    //
+    // Compared on LITERAL text only: `{{holes}}` are stripped first, because a
+    // field that is nothing but a placeholder is carrying record data rather
+    // than authored words. `subject: '{{{subject}}}'` is the same string in
+    // both rows on purpose — it renders the task's own subject line — and
+    // flagging it would be flagging the data.
+    expect(sameWordsAcrossLocales(templates), 'a locale row repeats the source row\'s wording')
+      .toEqual([]);
   });
 });
 
@@ -443,6 +483,23 @@ describe('i18n coverage guard — the guard can fail (self-test on synthetic met
         ['en', 'zh-CN'],
       ),
     ).toEqual(['email template "duly_task_overdue" has no zh-CN sibling']);
+  });
+
+  it('reports a locale row that copies the source row\'s wording', () => {
+    expect(sameWordsAcrossLocales([
+      { name: 'duly.copied', locale: 'en', subject: 'Due soon', bodyText: 'Due {{due_date}}.' },
+      { name: 'duly.copied', locale: 'zh-CN', subject: 'Due soon', bodyText: 'Due {{due_date}}.' },
+      { name: 'duly.real', locale: 'en', subject: 'Due soon', bodyText: 'Due {{due_date}}.' },
+      { name: 'duly.real', locale: 'zh-CN', subject: '即将到期', bodyText: '{{due_date}} 到期。' },
+    ])).toEqual(['duly.copied']);
+  });
+
+  it('does not flag a field that is nothing but a placeholder', () => {
+    // `subject: '{{{subject}}}'` is identical in every locale by design.
+    expect(sameWordsAcrossLocales([
+      { name: 'duly.holes', locale: 'en', subject: '{{{subject}}}', bodyText: 'Due {{due_date}}.' },
+      { name: 'duly.holes', locale: 'zh-CN', subject: '{{{subject}}}', bodyText: '{{due_date}} 到期。' },
+    ])).toEqual([]);
   });
 
   it('treats a template with no explicit locale as the source locale', () => {

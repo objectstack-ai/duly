@@ -190,6 +190,8 @@ const OPAQUE: Readonly<Record<string, string>> = {
   'dashboard.widgets[].filter': 'presentation-scope filter — field paths and date macros',
   'dataset.measures[].filter': 'measure filter — field paths, stored values and date macros',
   'flow.nodes[].config.fields': 'record payload — field names and `{template}` reads',
+  'flow.nodes[].config.templateData': 'email render payload — `{{placeholder}}` values '
+    + 'read off the record; the SENTENCES around them live in the email-template rows',
   'flow.nodes[].config.filter': 'record lookup filter — field names and `{template}` reads',
   'flow.nodes[].config.schedule': 'cron schedule',
   'flow.nodes[].config.timeRelative': 'time-relative trigger window — field, object and filter',
@@ -379,12 +381,23 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'flow.description': untranslatable(FLOW_WHY()),
   'flow.nodes[].label': untranslatable(FLOW_WHY()),
   'flow.edges[].label': untranslatable(FLOW_WHY()),
-  // The user-facing half. #69 moves these into email templates, which ARE
-  // locale-resolved — a template is resolved by `(name, locale)`, so its
-  // translation is a SIBLING TEMPLATE, not a bundle key. Until that lands the
-  // three strings below reach a person in English in every locale.
-  'flow.nodes[].config.title': untranslatable(NOTIFY_WHY()),
-  'flow.nodes[].config.message': untranslatable(NOTIFY_WHY()),
+  // ── The user-facing half, and how #69 closed it ──────────────────────
+  // These nodes USED to carry an inline `title` / `message`, which reached a
+  // person in English in every locale and had no bundle key of any kind. #69
+  // replaced them with a template reference plus a render payload, and an
+  // email template IS locale-resolved — `IEmailService` resolves
+  // `(name, locale)` and renders the row it picks, so the translation is a
+  // SIBLING ROW rather than a bundle key. Nothing here needs a bundle entry;
+  // what needs checking is that every template name has a row per supported
+  // locale, which `test/i18n-coverage.test.ts` asserts against the collection.
+  //
+  // This gate is what noticed the change: the two `untranslatable` verdicts
+  // that used to sit here failed as STALE the moment #69 merged, rather than
+  // sitting in the exemption list describing metadata that no longer exists.
+  'flow.nodes[].config.template': machine(
+    'email template NAME — resolved by `(name, locale)` against the '
+    + '`emailTemplates` collection, whose per-locale rows carry the display text',
+  ),
   'flow.nodes[].id': machine('node id'),
   'flow.nodes[].type': machine('node kind'),
   'flow.nodes[].config.objectName': machine('bound object'),
@@ -452,13 +465,6 @@ function FLOW_WHY(): string {
   return 'a flow is not one of the platform\'s translatable metadata types and the '
     + '`flows` bundle group addresses only `label` and SCREEN copy — this app declares '
     + 'no screen node. Designer-facing text; see the PR body.';
-}
-
-function NOTIFY_WHY(): string {
-  return 'a `notify` node\'s title and message are user-facing text with no bundle key '
-    + 'at all. #69 moves these into email templates, which the platform resolves by '
-    + '`(name, locale)` — i.e. a translation is a SIBLING TEMPLATE, not a bundle key. '
-    + 'Until it lands these reach a person in English in every locale.';
 }
 
 function ADMIN_WHY(kind: string): string {
