@@ -9,7 +9,7 @@ import {
   dulyFlows,
   dulyReminderFlows,
 } from '../src/flows/index.js';
-import { Duty, Task } from '../src/objects/index.js';
+import { CatalogItem, Duty, Task } from '../src/objects/index.js';
 import { planDispatch } from '../src/jobs/dispatch.plan.js';
 
 /**
@@ -202,18 +202,28 @@ describe('reminder sweeps — the windows say what the card says', () => {
   it('the lookback still covers the largest grace a duty can declare', () => {
     // The escalation day is `due_date + grace_days + 1`, so a duty whose grace
     // pushes that day outside the swept window is never escalated — silently.
-    // `grace_days` declares `min: 0` and no maximum, so nothing but this
-    // assertion holds the two numbers together.
+    // Nothing but this assertion holds the two numbers together: they live in
+    // two files (`src/flows/reminders.flow.ts`, `src/objects/duty.object.ts`)
+    // and neither can see the other.
     const lookback = -Number(timeRelativeOf(OverdueOwnerEscalation as unknown as FlowLike).withinDays);
     const graceMax = (Duty.fields.grace_days as { max?: number }).max;
     expect(
-      graceMax === undefined || graceMax + 1 <= lookback,
+      graceMax !== undefined && graceMax + 1 <= lookback,
       `duly_duty.grace_days declares max ${String(graceMax)}, which needs a lookback of at least ` +
         `${Number(graceMax) + 1} days; the sweep looks back ${lookback}`,
     ).toBe(true);
-    // And the unbounded case, stated so it is a known limit and not a surprise:
-    // grace ≥ lookback is out of range whatever the field says.
-    expect(graceMax, 'grace_days grew a max — re-read the coupling above').toBeUndefined();
+    // The direction the previous version of this test guarded — an UNBOUNDED
+    // grace — is now closed by declaration (#82), and this half is what keeps
+    // it closed. Deleting the field's `max` would put the silent case back:
+    // every value above 14 saves clean and is never escalated, which is not a
+    // gap a reader of either file would notice.
+    expect(graceMax, 'grace_days lost its max — an unbounded grace is silently never escalated').toBe(
+      lookback - 1,
+    );
+    // Both objects declare the same ceiling. `duly_catalog_item.grace_days` is
+    // copied onto every duty an apply creates, so a laxer bound there is the
+    // same silent hole reached one object earlier.
+    expect((CatalogItem.fields.grace_days as { max?: number }).max).toBe(graceMax);
   });
 });
 
