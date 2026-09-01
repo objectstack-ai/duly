@@ -84,7 +84,45 @@ export default defineStack({
   // resolver. Do not silence it: the only ways to are installing the
   // enterprise package (not wanted in this repo) or deleting this entry,
   // which puts the hard error back.
-  requires: ['automation', 'hierarchy-security'],
+  //
+  // `triggers` is what makes an autolaunched flow actually FIRE. `automation`
+  // ships the flow ENGINE and the `FlowTrigger` wiring; it registers no
+  // concrete trigger, so without this token every flow in the app is inert.
+  //
+  // ONE token mounts all four kinds — there is no second declaration to make.
+  // `triggers` is the only trigger entry in the platform vocabulary
+  // (`PLATFORM_CAPABILITY_TOKENS`), and the CLI's capability map keys it to
+  // `@objectstack/trigger-record-change` plus three `extras`:
+  // `ScheduleTriggerPlugin` and `TimeRelativeTriggerPlugin` (both from
+  // `@objectstack/trigger-schedule`) and `ApiTriggerPlugin` (from
+  // `@objectstack/trigger-api`). So `record_change` (the #33 fan-out) and
+  // `time_relative` (the three #70 sweeps) come from this single entry.
+  // The sweeps also need the job service; `job` is in
+  // `PLATFORM_ALWAYS_ON_CAPABILITIES` and mounts whether or not it is named.
+  //
+  // ⛔ Omitting it fails SILENT — that is the whole reason this comment is
+  // long. Unlike `hierarchy-security` above, whose absence
+  // `validateHierarchyScopeCapability` turns into an author-time HARD ERROR,
+  // an undeclared trigger capability is caught by nothing at author time.
+  // Measured on @objectstack/cli 17.2.0 with this entry absent: `validate`,
+  // `typecheck`, `test` and `build` all exit 0, and `validate` prints
+  // `Logic: 4 Flows` and says nothing further. The ONLY channel that tells
+  // you is the CLI startup banner:
+  //
+  //   Flows:   4 flow(s) 0 bound to triggers
+  //   ⚠ flow 'duly_assignment_fanout' declares a 'record_change' trigger but
+  //     is NOT bound — no 'record_change' trigger is registered —
+  //     add requires: ['triggers']
+  //
+  // Four gates green, `defineStack` happy, and the assignment fan-out dark
+  // from the day it merged. With this entry the same boot reads
+  // `4 flow(s) 4 bound to triggers` and prints no unbound warning.
+  //
+  // `test/trigger-capability.test.ts` goes red if this token is ever dropped
+  // while `dulyFlows` is non-empty — the four gates will not catch it again.
+  // The author-time asymmetry itself is filed upstream as
+  // objectstack-ai/objectstack#14153.
+  requires: ['automation', 'triggers', 'hierarchy-security'],
 
   plugins: [
     new ConnectorRestPlugin(),
