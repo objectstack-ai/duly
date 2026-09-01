@@ -25,6 +25,11 @@
   },
   "devDependencies": {
     "@objectstack/cli": "^17.2.0",
+    "@objectstack/plugin-email": "^17.2.0",
+    "@objectstack/service-automation": "^17.2.0",
+    "@objectstack/service-job": "^17.2.0",
+    "@objectstack/service-messaging": "^17.2.0",
+    "@objectstack/trigger-schedule": "^17.2.0",
     "typescript": "^6.0.0",
     "vitest": "^4.1.10"
   }
