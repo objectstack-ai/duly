@@ -59,23 +59,30 @@ describe('product invariants', () => {
     }
   });
 
-  it('a hand-created duty is self-declared, not born governed (#50)', () => {
-    // The safe default for an ambiguous duty is the UNscoreable one. A duty
-    // created with no `source` supplied must land as 'self' — never
-    // 'catalog', which would additionally expose it to duly_catalog_sync's
-    // cadence rewrite for a catalog item it never came from.
-    const options = Duty.fields.source.options ?? [];
-    const defaults = options.filter((o) => o.default);
-    expect(defaults, 'exactly one option may claim the default').toHaveLength(1);
-    expect(defaults[0]?.value).toBe('self');
+  it('a hand-created record is self-declared, not born governed (#50, #55)', () => {
+    // The safe default for an ambiguous caliber is the UNscoreable one, on
+    // every object that carries the column — not just the one that surfaced
+    // it first. A duty or task created with no `source` supplied must land
+    // as 'self' — never 'catalog' (which additionally exposes a duty to
+    // duly_catalog_sync's cadence rewrite for a catalog item it never came
+    // from) and never 'assigned'.
+    //
+    // Both governed calibers are reachable only when the producer that knows
+    // states them explicitly: on duly_duty, duly_catalog_apply writes
+    // 'catalog' (#34); on duly_task, the dispatcher copies `duty.source`
+    // (#43) and the assignment fan-out writes 'assigned' directly (#33).
+    // Neither may ride in on the field default — the default is reached only
+    // by a hand-created record, which is self-declared by definition.
+    for (const [name, schema] of [['duly_duty', Duty], ['duly_task', Task]] as const) {
+      const options = schema.fields.source.options ?? [];
+      const defaults = options.filter((o) => o.default);
+      expect(defaults, `${name}.source: exactly one option may claim the default`).toHaveLength(1);
+      expect(defaults[0]?.value, `${name}.source`).toBe('self');
 
-    // The two governed calibers are reachable only when the producer that
-    // knows states them explicitly — duly_catalog_apply writes 'catalog'
-    // (#34), the assignment fan-out writes 'assigned' (#33). Neither may ride
-    // in on the field default.
-    for (const governed of ['catalog', 'assigned'] as const) {
-      const option = options.find((o) => o.value === governed);
-      expect(option?.default, `${governed} must not be the default`).not.toBe(true);
+      for (const governed of ['catalog', 'assigned'] as const) {
+        const option = options.find((o) => o.value === governed);
+        expect(option?.default, `${name}.source: ${governed} must not be the default`).not.toBe(true);
+      }
     }
   });
 
