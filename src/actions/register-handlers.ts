@@ -1,6 +1,7 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
 import { registerCatalogActionHandlers } from './catalog.handlers.js';
+import { registerTaskActionHandlers } from './task.handlers.js';
 
 /**
  * Action handler registration.
@@ -19,7 +20,7 @@ export interface HandlerRegistrationContext {
 }
 
 export function registerDulyActionHandlers(ql: HandlerRegistrationContext): void {
-  // Register handlers here, one call per action:
-  //   registerTaskActionHandlers(ql);
+  // Register handlers here, one call per feature:
   registerCatalogActionHandlers(ql);
+  registerTaskActionHandlers(ql);
 }

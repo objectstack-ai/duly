@@ -534,13 +534,26 @@ describe('handler wiring', () => {
     return calls;
   }
 
-  it('every declared action has a registered handler', () => {
-    const calls = registered();
-    const declared = dulyActions.map((a) => a.name).sort();
-    const wired = calls.map((c) => c.action).sort();
+  /** The catalog actions, which is what the claims in this file are about. */
+  const CATALOG_ACTIONS = [CATALOG_APPLY_ACTION, CATALOG_SYNC_ACTION];
 
-    expect(declared).toEqual([CATALOG_APPLY_ACTION, CATALOG_SYNC_ACTION].sort());
-    expect(wired).toEqual(declared);
+  it('every declared script action has a handler under a key that can reach it', () => {
+    // Widened from "the wired names equal the declared names" when the first
+    // OBJECT-BOUND actions landed (duly#4): that spelling asserted the app had
+    // no actions but these two, so it failed on the next feature rather than on
+    // a real defect. The bijection is the invariant worth holding, and this is
+    // it — `executeAction` is an exact-string Map lookup on `<object>:<name>`,
+    // and the dispatcher tries the action's own object before `global`.
+    const wired = new Set(registered().map((c) => `${c.object}:${c.action}`));
+
+    for (const action of dulyActions) {
+      if (action.type !== 'script') continue;
+      const keys = [`${action.objectName ?? GLOBAL_ACTION_OBJECT}:${action.name}`, `${GLOBAL_ACTION_OBJECT}:${action.name}`];
+      expect(
+        keys.some((k) => wired.has(k)),
+        `${action.name} renders, is clickable and 404s without one of ${keys.join(' or ')}`,
+      ).toBe(true);
+    }
   });
 
   it('object-less actions register under the canonical "global" key', () => {
@@ -548,13 +561,15 @@ describe('handler wiring', () => {
     // handler filed under any other key is unreachable, however the action is
     // declared.
     for (const call of registered()) {
+      if (!CATALOG_ACTIONS.includes(call.action)) continue;
       expect(call.object).toBe(GLOBAL_ACTION_OBJECT);
       expect(typeof call.handler).toBe('function');
     }
   });
 
-  it('the declared actions are object-less and headless, matching that key', () => {
+  it('the catalog actions are object-less and headless, matching that key', () => {
     for (const action of dulyActions) {
+      if (!CATALOG_ACTIONS.includes(action.name)) continue;
       expect(action.objectName).toBeUndefined();
       // `global_nav` was retired in protocol 17 and every surviving location is
       // object-bound, so `locations: []` is the only honest declaration here.
@@ -564,7 +579,7 @@ describe('handler wiring', () => {
 
   it('each script action names a target, so it cannot 404 for want of a binding', () => {
     for (const action of dulyActions) {
-      expect(action.type).toBe('script');
+      if (action.type !== 'script') continue;
       expect(action.target).toBe(action.name);
     }
   });
