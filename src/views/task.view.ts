@@ -161,5 +161,136 @@ export const TaskViews = defineView({
       },
       sort: [{ field: 'due_date', order: 'asc' }],
     },
+
+    /**
+     * Kanban. Columns come from `duly_task.status` — the renderer reads the
+     * field's own `options` for the column set, their order and their labels
+     * (measured in the console's `plugin-kanban`), so the board cannot drift
+     * from the object.
+     *
+     * Dragging a card writes ONE field. Measured against the renderer's move
+     * handler: `dataSource.update(object, id, { [groupBy]: toColumnId })` —
+     * `status` and nothing else, which is the same write the row action does.
+     * It is NOT gated on `inlineEdit`; it is gated on update permission, so a
+     * user who may not write `status` gets the platform's rejection rather
+     * than a silent no-op.
+     *
+     * `inlineEdit` is still declared, and it is not decoration: the toolbar
+     * lets a viewer switch this view to its grid visualisation, and the
+     * adapter honours `inlineEdit` on that branch (`editable:` is set in the
+     * grid case only). On the kanban branch itself it is inert.
+     *
+     * No `summarizeField`: it renders a per-column SUM, and there is no number
+     * on a task worth totalling. The nearest candidate would be a count, and
+     * counts are never ranked or compared here.
+     */
+    board: {
+      label: 'Board',
+      type: 'kanban',
+      data,
+      columns: [{ field: 'subject' }, { field: 'due_date' }, { field: 'owner' }, { field: 'source' }],
+      kanban: {
+        groupByField: 'status',
+        // The card face, in reading order: what it is, when it is owed, whose
+        // it is, and where it came from.
+        columns: ['subject', 'due_date', 'owner', 'source'],
+      },
+      inlineEdit: true,
+      sort: [{ field: 'due_date', order: 'asc' }],
+    },
+
+    /**
+     * Gantt. The bar runs `visible_from` → `due_date`, and that span IS the
+     * lead time: a bar that starts on its own due date is a task that first
+     * appeared the day it was already owed, which is a report on a failure
+     * rather than a reminder. `lead_days` on the duty is what produces the
+     * length, and this is the only screen where you can see it.
+     *
+     * Grouped by owner so an overloaded fortnight is visible as one person's
+     * row going solid, before the period arrives.
+     *
+     * The filter is not a scope narrowing, it is a correctness one: the
+     * renderer maps a missing date to `new Date()`, so an undated one-off
+     * would draw a zero-width bar on TODAY and read as load that does not
+     * exist. Both columns are stored and indexed; the unary operators carry
+     * their direction in the name and take no value.
+     *
+     * No `colorField`, deliberately, and this is measured rather than an
+     * oversight: the gantt renderer passes `record[colorField]` straight into
+     * `backgroundColor`, so `colorField: 'status'` sets `background: "open"` —
+     * not a colour, silently dropped, every bar identical. With the key
+     * ABSENT the same renderer falls through to its status-derived palette and
+     * the bars separate by state. Filed upstream; see the PR body.
+     */
+    schedule: {
+      label: 'Schedule',
+      type: 'gantt',
+      data,
+      columns: [
+        { field: 'subject' },
+        { field: 'status' },
+        { field: 'owner' },
+        { field: 'visible_from' },
+        { field: 'due_date' },
+      ],
+      gantt: {
+        startDateField: 'visible_from',
+        endDateField: 'due_date',
+        titleField: 'subject',
+        groupByField: 'owner',
+        viewMode: 'week',
+        tooltipFields: [{ field: 'status' }, { field: 'period_key' }, { field: 'source' }],
+      },
+      filter: [
+        { field: 'visible_from', operator: 'is_not_null' },
+        { field: 'due_date', operator: 'is_not_null' },
+      ],
+      sort: [{ field: 'visible_from', order: 'asc' }],
+    },
+
+    /**
+     * Timeline — the visual companion to `stalled`. Ordered by
+     * `last_update_at`, which `task.hook.ts` stamps on a status change or a
+     * note edit and deliberately does NOT advance on an administrative write,
+     * so this really is "what has been happening" and not "what has been
+     * touched".
+     *
+     * `colorField` earns its place here: the timeline renderer resolves it
+     * against the object's own `status` options and uses the AUTHORED colours
+     * (`#35674D` for done, and so on), so this lens and the status badge in
+     * every grid read the same.
+     */
+    recent: {
+      label: 'Recent activity',
+      type: 'timeline',
+      data,
+      columns: [{ field: 'subject' }, { field: 'status' }, { field: 'owner' }, { field: 'last_update_at' }],
+      timeline: {
+        startDateField: 'last_update_at',
+        titleField: 'subject',
+        colorField: 'status',
+        scale: 'day',
+      },
+      sort: [{ field: 'last_update_at', order: 'desc' }],
+    },
+
+    /**
+     * The same rows a manager already reads, bucketed by team. `business_unit`
+     * is denormalised onto the task at dispatch precisely so a rollup like
+     * this survives a later transfer.
+     *
+     * Groups sort by LABEL — measured in the grid's grouping hook, which sorts
+     * group keys with a locale compare on the label and never on the bucket
+     * size. Nothing here ranks a unit, or a person, by a count.
+     */
+    by_unit: {
+      label: 'By business unit',
+      type: 'grid',
+      data,
+      columns,
+      grouping: { fields: [{ field: 'business_unit' }] },
+      bulkActionDefs: bulkActions,
+      sort: [{ field: 'due_date', order: 'asc' }],
+    },
   },
 });
