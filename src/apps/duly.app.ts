@@ -42,6 +42,12 @@ export const DulyApp = App.create({
       label: 'Team',
       icon: 'users',
       children: [
+        // First in the group, and the only non-list entry in it: this is the
+        // screen a manager opens to be told what to look at, and every entry
+        // below it is a list they go to once it has told them. A `dashboard`
+        // nav item carries `dashboardName` (resolved against the dashboards
+        // barrel), never an `objectName` — nothing on it is entered.
+        { id: 'nav_duty_health', type: 'dashboard', dashboardName: 'duly_duty_health', label: 'Duty health', icon: 'activity' },
         { id: 'nav_late', type: 'object', objectName: 'duly_task', viewName: 'late', label: 'Late', icon: 'alert-circle' },
         { id: 'nav_stalled', type: 'object', objectName: 'duly_task', viewName: 'stalled', label: 'Not moving', icon: 'pause-circle' },
         { id: 'nav_assignments', type: 'object', objectName: 'duly_assignment', viewName: 'sent_by_me', label: 'Assignments', icon: 'send' },

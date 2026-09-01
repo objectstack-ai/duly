@@ -13,4 +13,18 @@
 // makes `name` optional and fails the assignment. A named array is `never[]`
 // while empty and infers correctly the moment something is pushed into it.
 
-export const dulyDashboards = [];
+// ⚠ A widget binds its dataset, dimensions and measures BY NAME (ADR-0021),
+// and NOTHING resolves those names at author time: `pnpm validate` and
+// `pnpm build` both exit 0 on a widget naming a dataset, dimension or measure
+// that does not exist, and the widget then renders EMPTY. An empty "not
+// moving" tile reads exactly like a healthy team, which is the worst possible
+// silent failure on this particular screen. `test/dashboard.test.ts` resolves
+// every binding in this barrel against `dulyDatasets` until the platform
+// does — same stopgap posture as `test/metadata-bindings.test.ts`, which
+// covers views, datasets and nav but does NOT reach dashboard widgets.
+
+import { DutyHealthDashboard } from './duty-health.dashboard.js';
+
+export { DutyHealthDashboard };
+
+export const dulyDashboards = [DutyHealthDashboard];
