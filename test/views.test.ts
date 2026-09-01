@@ -3,14 +3,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { dulyApps } from '../src/apps/index.js';
-import { dulyObjects } from '../src/objects/index.js';
 import { dulyViews } from '../src/views/index.js';
 
 /**
  * View tests — two jobs, kept apart on purpose.
  *
  * ── 1. A STOPGAP for what `pnpm validate` does not see ───────────────────
- * ⚠️ Delete the stopgap half when the upstream rules land. It is not a house
+ * ⚠️ Delete the stopgap half when the upstream rule lands. It is not a house
  * rule that wants maintaining forever; it is author-time coverage every
  * ObjectStack app would otherwise re-implement, and it is written to be
  * removed rather than kept in step with the platform:
@@ -18,14 +17,26 @@ import { dulyViews } from '../src/views/index.js';
  *   objectstack-ai/objectstack#14106 — `view/layout-without-binding` covers
  *     `kanban` / `calendar` / `gantt` only. `timeline`, `tree` and `map` have
  *     the same literal-default fallback in the renderer and no gate.
- *   objectstack-ai/objectstack#14107 — NO field reference on a list view is
- *     resolved at author time: not `columns`, `filter`, `sort`, `grouping`,
- *     nor any binding block. Neither `os validate` NOR `os build` sees it.
- *   objectstack-ai/objectstack#14108 — a nav `viewName` naming a view that
- *     does not exist silently opens the default view instead.
  *
- * All three were measured against this repo on `@objectstack/cli` 17.2.0 by
- * mutating a view and re-running the gates. The readings are in the issues.
+ * Measured against this repo on `@objectstack/cli` 17.2.0 by mutating a view
+ * and re-running the gates. The reading is in the issue.
+ *
+ * What is left here is binding-block PRESENCE and nothing else: "is there a
+ * `gantt` block at all", which is what #14106 is about.
+ *
+ * ── Reference RESOLUTION lives in `test/metadata-bindings.test.ts` ───────
+ * This file used to carry a second, weaker copy of it — one assertion
+ * resolving view field names, one resolving nav `viewName` (#14107 / #14108).
+ * duly#58 deleted both after measuring, mutation by mutation, that the walk
+ * in `test/metadata-bindings.test.ts` reports every defect they did. It is a
+ * genuine superset: it resolves dotted paths (the copy here returned early on
+ * every one), reads the platform's own `SystemFieldName` registry instead of
+ * a hand-copied list that had already drifted, and covers datasets, bulk
+ * actions and dashboards besides.
+ *
+ * Presence and resolution are DIFFERENT properties. Do not move the check
+ * below across to that file, and do not re-grow a resolution check here: two
+ * guards on one rule is the cost both headers warn against.
  *
  * ── 2. PRODUCT pins that outlive the platform gaps ───────────────────────
  * The gantt starting at `visible_from`, the timeline ordering by
@@ -34,21 +45,6 @@ import { dulyViews } from '../src/views/index.js';
  */
 
 type Rec = Record<string, unknown>;
-
-const objectFields = new Map<string, Set<string>>(
-  (dulyObjects as unknown as Array<{ name: string; fields: Rec }>).map(
-    (o) => [o.name, new Set(Object.keys(o.fields))] as const,
-  ),
-);
-
-/**
- * Fields the platform provides on every object. A view may legitimately name
- * one, and they are not in the authored `fields` map.
- */
-const SYSTEM_FIELDS = new Set([
-  'id', 'created_at', 'updated_at', 'created_by', 'updated_by', 'owner_id',
-  'organization_id', 'business_unit_id',
-]);
 
 interface NamedView {
   /** e.g. `duly_task › listViews.board` — the string an assertion failure prints. */
@@ -74,9 +70,6 @@ const byName = (name: string): NamedView => {
   if (!found) throw new Error(`no list view named "${name}" — declared: ${allViews.map((v) => v.where).join(', ')}`);
   return found;
 };
-
-const fieldOf = (col: unknown): string | undefined =>
-  typeof col === 'string' ? col : typeof (col as Rec)?.field === 'string' ? (col as Rec).field as string : undefined;
 
 describe('every non-grid lens is bound to real fields', () => {
   /**
@@ -119,47 +112,11 @@ describe('every non-grid lens is bound to real fields', () => {
   });
 
   /**
-   * #14107: a misspelt field name anywhere on a view is parse-clean, publishes
-   * green, and renders blank. Resolve every one of them here instead.
+   * Whether the names INSIDE that block resolve is a different property, and
+   * it is checked in `test/metadata-bindings.test.ts` (#14107) — over dotted
+   * paths, the platform's real system columns, and every binding-block key
+   * the Zod schemas declare, none of which this file did.
    */
-  it('names only fields that exist on the object it is bound to', () => {
-    const bindingFieldKeys = [
-      'groupByField', 'summarizeField', 'startDateField', 'endDateField', 'titleField',
-      'colorField', 'labelField', 'parentField', 'progressField', 'dependenciesField',
-      'assigneeField', 'effortField', 'baselineStartField', 'baselineEndField',
-      'locationField', 'latitudeField', 'longitudeField', 'coverField', 'allDayField',
-    ];
-
-    for (const { where, object, view } of allViews) {
-      const known = objectFields.get(object);
-      expect(known, `${where}: bound to "${object}", which no object in this stack defines`).toBeDefined();
-      const check = (name: string | undefined, at: string) => {
-        if (!name || name.includes('.')) return;
-        expect(
-          known!.has(name) || SYSTEM_FIELDS.has(name),
-          `${where}: ${at} names "${name}", which is not a field on ${object}. `
-          + `Fields: ${[...known!].sort().join(', ')}`,
-        ).toBe(true);
-      };
-
-      for (const col of (view.columns as unknown[]) ?? []) check(fieldOf(col), 'columns[]');
-      for (const rule of (view.filter as Rec[]) ?? []) check(rule.field as string, 'filter[].field');
-      if (Array.isArray(view.sort)) for (const s of view.sort as Rec[]) check(s.field as string, 'sort[].field');
-      for (const g of ((view.grouping as Rec | undefined)?.fields as Rec[]) ?? []) {
-        check(g.field as string, 'grouping.fields[].field');
-      }
-      check((view.rowColor as Rec | undefined)?.field as string, 'rowColor.field');
-
-      for (const spec of Object.values(REQUIRED_BINDINGS)) {
-        const block = view[spec.block] as Rec | undefined;
-        if (!block) continue;
-        for (const key of bindingFieldKeys) check(block[key] as string, `${spec.block}.${key}`);
-        for (const col of (block.columns as unknown[]) ?? []) check(fieldOf(col), `${spec.block}.columns[]`);
-        for (const f of (block.fields as unknown[]) ?? []) check(fieldOf(f), `${spec.block}.fields[]`);
-        for (const t of (block.tooltipFields as unknown[]) ?? []) check(fieldOf(t), `${spec.block}.tooltipFields[]`);
-      }
-    }
-  });
 });
 
 describe('the lenses say what the product means', () => {
@@ -271,30 +228,12 @@ describe('navigation', () => {
   for (const app of dulyApps as unknown as Array<{ navigation?: NavItem[] }>) walk(app.navigation);
 
   /**
-   * #14108: a nav entry naming a view that does not exist does not fail — it
-   * falls back to the default view, keeps its authored label, and looks right
-   * in review. This is the check that would have caught it.
+   * That a nav entry's `objectName` / `viewName` RESOLVE (#14108) is checked
+   * in `test/metadata-bindings.test.ts`, which also reaches entries nested
+   * under an `object` parent and resolves `dashboardName` and `filters` keys.
+   * The two tests below are the other question — reachability and placement —
+   * and no reference walk can answer either.
    */
-  it('every nav entry resolves to a view that exists on the object it names', () => {
-    for (const item of navItems) {
-      if (item.type !== 'object' || !item.objectName) continue;
-      expect(
-        objectFields.has(item.objectName),
-        `nav "${item.id}" targets object "${item.objectName}", which this stack does not define`,
-      ).toBe(true);
-      if (!item.viewName) continue; // no viewName = the object's default list
-      const known = allViews
-        .filter((v) => v.object === item.objectName)
-        .map((v) => v.where.split('listViews.')[1])
-        .filter(Boolean);
-      expect(
-        known,
-        `nav "${item.id}" opens viewName "${item.viewName}", which ${item.objectName} does not declare — `
-        + 'the shell silently falls back to the default view',
-      ).toContain(item.viewName);
-    }
-  });
-
   it('every lens this app adds is reachable from navigation', () => {
     const reachable = new Set(navItems.map((i) => `${i.objectName}.${i.viewName}`));
     const expected = [
