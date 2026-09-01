@@ -22,16 +22,27 @@ import { dulyObjects } from '../src/objects/index.js';
  * When the platform rule ships, `pnpm validate` covers this and the right move
  * is to REMOVE this file, not to keep two guards in step.
  *
- * ── What the gap is ──────────────────────────────────────────────────────
- * `objectstack validate` resolves every `record.<field>` / `previous.<field>`
- * read in a flow predicate against the bound object and fails loudly on a
- * typo, located. It deliberately never flags a BARE identifier:
- * `collectBoundRecordReads` skips them because, in a flattened flow scope, a
- * bare name may genuinely be a flow variable — and a false finding there is
- * the trust-killer ADR-0072 D1 names. Measured on `@objectstack/cli` 17.2.0:
- * mutating a start condition to `status == "dispatched"` passes validate with
+ * ── What the gap is, and how narrow it is ────────────────────────────────
+ * This file covers the ONLY predicate surfaces the platform leaves open. What
+ * decides that is SCOPE, not surface name. A record-scoped expression — an
+ * object validation rule, a field conditional rule, an action `visible` /
+ * `disabled`, a sharing rule, a hook condition — binds the record as the
+ * `record` namespace and nothing at top level, so a bare name binds nothing
+ * and `validate` rejects it, located and corrective. Measured on
+ * `@objectstack/cli` 17.2.0, `duly_task`'s `skip_needs_reason` rule mutated to
+ * a bare `status` exits 1 with "bare reference `status` — … resolves to
+ * nothing and the expression silently evaluates to null. Write
+ * `record.status`."
+ *
+ * Flow node and edge conditions are the exception. They run in FLATTENED
+ * scope, where the engine spreads the trigger record's fields to top-level
+ * names and a bare identifier may genuinely be a flow variable, so
+ * `collectBoundRecordReads` deliberately never judges one — a false finding
+ * there is the trust-killer ADR-0072 D1 names. Measured at the same version:
+ * a start condition mutated to `status == "dispatched"` passes validate with
  * exit 0, while `record.needs_colection` at the same site fails with a located
- * message. So the gate exists for qualified reads and is absent for bare ones.
+ * message. So the gate exists for qualified reads everywhere, and for bare
+ * ones everywhere EXCEPT here — which is the whole scope of this file.
  *
  * ── The bar this file enforces ───────────────────────────────────────────
  * A bare identifier in a flow predicate is a finding when BOTH hold:

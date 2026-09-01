@@ -43,8 +43,9 @@ assignee field says.
 
 Metadata mistakes fail **silently at runtime**: a dangling widget binding
 renders an empty chart, a flow left out of its barrel never fires, an
-unregistered hook never runs. `pnpm validate` catches most of them. It does not
-catch all of them, and rule 4 below names the gap that matters most for flows.
+unregistered hook never runs. `pnpm validate` catches most of them — including
+a bare field reference on every predicate surface but one. Rule 4 below says
+which one, and why it is the exception.
 
 ```bash
 pnpm validate    # same gates as build, no artifact — the fast inner loop
@@ -83,34 +84,56 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
 3. **Hooks are registered in `defineStack({ hooks })`**, not collected from the
    objects barrel. An unregistered `*.hook.ts` never runs.
 4. **Predicates are CEL** — `record.<field>`, never bare `<field>`, on every
-   surface: `visible` / `disabled` / `requiredWhen`, validation rules, sharing
-   rules, and flow and job conditions.
+   surface: object validation rules, field `requiredWhen` / conditional rules,
+   action `visible` / `disabled`, sharing rules, hook conditions, and flow node
+   and edge conditions.
 
-   *What `pnpm validate` enforces, and where it stops.* The author-time rule
-   resolves every `record.` / `previous.` read against the bound object and
-   fails loudly and located on a typo — measured on `@objectstack/cli` 17.2.0,
-   a flow condition reading `record.needs_colection` gives ``unknown field
+   *What decides whether the gate catches you is SCOPE, not which surface you
+   are on.* An expression is evaluated either with the record bound as the
+   `record` namespace and nothing at top level (**record scope**), or with the
+   record's fields additionally flattened into top-level variables
+   (**flattened scope**). `validate` judges a bare identifier only in the first.
+
+   **Record-scoped surfaces — `validate` enforces this, and the failure really
+   is `null`.** Object validation rules, field conditional rules, action
+   `visible` / `disabled`, sharing rules and hook conditions all bind the record
+   as a namespace only, so a bare name binds nothing, the expression evaluates
+   to null, and the rule or action silently never fires. `validate` catches it
+   before it ships. Measured on `@objectstack/cli` 17.2.0, mutating
+   `duly_task`'s `skip_needs_reason` rule to `status == "skipped" && …` exits 1
+   with:
+
+   > object 'duly_task' · validation 'skip_needs_reason': bare reference
+   > `status` — a formula/validation expression binds the record as the
+   > `record` namespace, not at top level, so `status` resolves to nothing and
+   > the expression silently evaluates to null. Write `record.status`.
+
+   A misspelt **qualified** read is caught everywhere, flows included:
+   `record.needs_colection` in a flow condition gives ``unknown field
    `needs_colection` on `duly_assignment` — did you mean `needs_collection`?``.
-   What it does **not** flag, on any surface, is a **bare** identifier: the same
-   predicate written `status == "dispatched"` passes `validate` with exit 0.
-   That is deliberate. In a flattened flow scope a bare name may genuinely be a
-   flow variable, so the platform's `collectBoundRecordReads` never reads a bare
-   identifier as a record reference. Filed upstream as
-   **objectstack-ai/objectstack#14089**; until it lands,
-   `test/flow-predicates.test.ts` is a repo-local **stopgap** over `dulyFlows`
-   and `dulyJobs` — written to be deleted when #14089 ships, not maintained.
 
-   *The failure mode is not `null`.* A bare name in a flow does not evaluate to
-   null and quietly hide a branch. The engine flattens the trigger record's
-   fields into top-level variables, so a bare `status` genuinely **resolves** —
-   to the field, or to a same-named flow variable that was seeded first and
-   **shadows** it. And when a name resolves to nothing the engine **throws**
-   (ADR-0032 §1c: no silent fallback — a non-`ok` result is a real fault, not a
-   false condition). So the two real outcomes are "silently means something
-   else" and "loud runtime fault". Neither is recoverable by reading the
-   predicate, which is why the rule stands: `record.<field>` is the only
-   spelling that cannot be captured by a variable declared elsewhere in the
-   file, and the only one `validate` can check for you.
+   **Flow node and edge conditions are the one exception — no gate at all.**
+   They run in flattened scope, where a bare name may genuinely be a flow
+   variable (a loop iterator, a `get_record` output, an assignment target), so
+   the platform's `collectBoundRecordReads` deliberately never reads a bare
+   identifier as a record reference. The same predicate written
+   `status == "dispatched"` in a flow start condition passes `validate` with
+   **exit 0**.
+
+   *And in a flow the failure is not `null` either.* A bare `status` there
+   **resolves** — to the flattened field, or to a same-named flow variable that
+   was seeded first and **shadows** it. That shadowing case is the subtler bug:
+   the predicate reads correctly and silently means something else. When a name
+   resolves to nothing the engine **throws** (ADR-0032 §1c: no silent fallback —
+   a non-`ok` result is a real fault, not a false condition). So on this one
+   surface the outcomes are "silently means something else" and "loud runtime
+   fault", never the quiet null of the record-scoped surfaces above.
+
+   Filed upstream as **objectstack-ai/objectstack#14089**. Until it lands,
+   `test/flow-predicates.test.ts` is a repo-local **stopgap** covering exactly
+   the unguarded surfaces — flow node and edge conditions, walked over
+   `dulyFlows`, with `dulyJobs` walked as a tripwire — and it is written to be
+   deleted when #14089 ships, not maintained.
 5. **Never store what you can filter.** No `is_late`, no `is_overdue`, no
    `is_open`. A stored flag needs a writer that runs every midnight; a formula
    field is virtual and a filter naming one silently matches nothing. Ask
