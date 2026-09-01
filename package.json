@@ -1,0 +1,30 @@
+{
+  "name": "duly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Duly — recurring obligation and duty management on ObjectStack.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "objectstack dev",
+    "start": "objectstack start",
+    "build": "objectstack build",
+    "validate": "objectstack validate",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "verify": "pnpm validate && pnpm typecheck && pnpm test"
+  },
+  "dependencies": {
+    "@objectstack/spec": "^17.2.0",
+    "@objectstack/runtime": "^17.2.0",
+    "@objectstack/plugin-hono-server": "^17.2.0",
+    "@objectstack/connector-rest": "^17.2.0",
+    "@objectstack/connector-openapi": "^17.2.0",
+    "@objectstack/connector-mcp": "^17.2.0"
+  },
+  "devDependencies": {
+    "@objectstack/cli": "^17.2.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.10"
+  }
+}
