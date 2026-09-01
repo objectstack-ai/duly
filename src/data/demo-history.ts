@@ -171,6 +171,9 @@ const LATE_MOST_RECENT: Readonly<Record<string, 'open' | 'in_progress'>> = {
   'Calibration verification — Lab 1': 'open',
 };
 
+/** How long ago each actively-chased late row was last touched. */
+const CHASED_DAYS_AGO = [2, 6, 10] as const;
+
 /** Untouched since dispatch as well as late — the fourth Late row above. */
 const STALLED_LATE = 'Calibration verification — Lab 1';
 
@@ -245,6 +248,31 @@ const inFlightKey = (duty: string): string | undefined =>
   byDuty.get(duty)?.find((draft) => !isPast(draft))?.period_key;
 
 /**
+ * How long ago a task that is still moving was last touched.
+ *
+ * Two constraints, and the interesting one is the second:
+ *
+ *  1. **Never before the task was dispatched.** A row cannot have been worked
+ *     on before it existed. This clamps the whole band for a freshly
+ *     dispatched monthly.
+ *  2. **Never 14 days or more.** Anything that old lands in "Not moving", and
+ *     which rows stagnate is a decision this fixture makes deliberately —
+ *     see {@link STALLED_IN_FLIGHT} — not a side effect of a spread.
+ *
+ * Between those, the age is spread by how long the task has BEEN open rather
+ * than uniformly. A task dispatched five months ago and still being worked was
+ * realistically last touched a week or two back; one dispatched on Monday was
+ * touched this week. A uniform spread collapses to "everything was touched in
+ * the last few days" once constraint 1 clamps it, which makes the dashboard's
+ * nested >7d / >14d / >30d buckets read identically and look broken.
+ */
+const touchedDaysAgo = (draft: TaskDraft, dispatched: Date, index: number): number => {
+  const openFor = Math.floor((NOW.getTime() - dispatched.getTime()) / DAY);
+  if (openFor >= 14) return 8 + (index % 5);
+  return Math.max(0, Math.min(index % 6, openFor));
+};
+
+/**
  * Decide what actually happened to one dispatched task.
  *
  * Deterministic: every variation is a function of the draft's position in the
@@ -268,10 +296,15 @@ const resolveDraft = (draft: TaskDraft, index: number): SeededTask => {
     return withNote({
       ...draft,
       status: LATE_MOST_RECENT[draft.duty]!,
+      // Chased, but at different tempos — 2, 6 and 10 days. A month-overdue
+      // task that was last touched yesterday, every time, is not what being
+      // chased looks like; and spreading these across the fortnight is what
+      // puts anything at all in the dashboard's 7-to-14-day band, which would
+      // otherwise be empty and make its >7d and >14d tiles read identically.
       last_update_at:
         draft.duty === STALLED_LATE
           ? untouchedSinceDispatch
-          : iso(new Date(NOW.getTime() - ((index % 9) + 1) * DAY)),
+          : iso(new Date(NOW.getTime() - CHASED_DAYS_AGO[index % CHASED_DAYS_AGO.length]! * DAY)),
     });
   }
   if (isMostRecentPast && draft.duty === SKIPPED_MOST_RECENT) {
@@ -307,12 +340,7 @@ const resolveDraft = (draft: TaskDraft, index: number): SeededTask => {
   return withNote({
     ...draft,
     status: isInFlightHead && IN_PROGRESS_IN_FLIGHT.includes(draft.duty) ? 'in_progress' : 'open',
-    // Not stalled ⇒ touched inside the fortnight, spread across it so the
-    // Recent-activity timeline reads as a stream rather than one boot-time
-    // spike. Never earlier than the day the task was dispatched.
-    last_update_at: stalled
-      ? untouchedSinceDispatch
-      : iso(new Date(Math.max(NOW.getTime() - (index % 13) * DAY, dispatched.getTime()))),
+    last_update_at: stalled ? untouchedSinceDispatch : iso(new Date(NOW.getTime() - touchedDaysAgo(draft, dispatched, index) * DAY)),
   });
 };
 

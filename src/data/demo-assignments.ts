@@ -9,12 +9,16 @@ import { NOW, TODAY } from './demo-history.js';
  * The two assignments, and the tasks their fan-out would have produced.
  *
  * ⚠️ **The fan-out tasks are seeded directly, and that is not a shortcut.**
- * `assignment.flow.ts` is a `record_change` flow, and booting this app prints
- * `record_change triggers are not bound`. The flow therefore does not fire — on
- * a seeded assignment or on one created by hand in the UI. Seeding an
- * assignment and waiting for its children would leave the Assignments screen
- * showing two rows with `task_count: 0` and nothing to open, which is exactly
- * the "renders an empty screen" failure this card exists to prevent.
+ * `assignment.flow.ts` is a `record_change` flow, and the seed loader writes
+ * with `SEED_OPTIONS = { isSystem: true, skipTriggers: true, seedReplay: true }`.
+ * `skipTriggers` suppresses record-change AUTOMATION — that is its whole job —
+ * so a seeded assignment never fans out, and it never will, however the
+ * trigger plugins are wired. (#72 has since bound `record_change`, so the flow
+ * does fire for an assignment created by hand in the UI. That does not change
+ * anything here: it is the SEED path that is exempt.) Seeding an assignment
+ * and waiting for its children would leave the Assignments screen showing two
+ * rows with `task_count: 0` and nothing to open, which is exactly the "renders
+ * an empty screen" failure this card exists to prevent.
  *
  * So the rows below are written to be **byte-identical to what
  * `assignment.flow.ts` would have created**, field for field: `subject` copied
@@ -22,10 +26,11 @@ import { NOW, TODAY } from './demo-history.js';
  * the owner, `assignment` the parent, `source: 'assigned'`, `visible_from`
  * equal to `due_date` (an assignment has no lead time to spread), `status:
  * 'open'` at creation — and NO `period_key`, because an assignment has no
- * period and the dispatch identity index does not apply to it. When the
- * trigger binding is fixed, the flow's own idempotency guard (it looks for an
- * existing task on `(assignment, owner)` before creating one) sees these rows
- * and creates nothing, so the seed and the flow do not fight.
+ * period and the dispatch identity index does not apply to it. If one of these
+ * assignments is ever re-saved by hand and the flow does fire, its own
+ * idempotency guard (it looks for an existing task on `(assignment, owner)`
+ * before creating one) sees these rows and creates nothing, so the seed and
+ * the flow do not fight.
  *
  * The statuses below are then moved on from `open` by hand, because "mixed
  * completion" is the thing an assignment is worth looking at for.
