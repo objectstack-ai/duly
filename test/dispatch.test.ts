@@ -521,7 +521,7 @@ afterEach(async () => {
 });
 
 let seq = 0;
-const seedDuty = async (over: AnyRow = {}): Promise<string> => {
+const seedDuty = async (over: AnyRow = {}, options?: AnyRow): Promise<string> => {
   const created = await data.insert('duly_duty', {
     name: `Duty ${++seq}`,
     form: 'recurring',
@@ -534,7 +534,7 @@ const seedDuty = async (over: AnyRow = {}): Promise<string> => {
     lead_days: 0,
     timezone: 'UTC',
     ...over,
-  });
+  }, options);
   const row = (Array.isArray(created) ? created[0] : created) as AnyRow;
   seeded.push(String(row.id));
   return String(row.id);
@@ -735,7 +735,20 @@ describe('the job handler', () => {
   it('reports degraded — not failed — when a duty could not be dispatched', async () => {
     // `degraded` is "ran to completion, work did not happen". It never retries,
     // which is right: retrying a typo'd timezone at 01:05 will not fix it.
-    await seedDuty({ timezone: 'Mars/Olympus' });
+    //
+    // ── Why this row needs `skipAutomations` to exist at all (#24) ────────
+    // `duly_duty_timezone_guard` now refuses an unresolvable zone on the way
+    // in, so an ordinary write can no longer produce this row — which is the
+    // point of that guard, and this assertion would otherwise have to be
+    // deleted along with the defect it describes. It must NOT be deleted: the
+    // rows it models still exist. `skipAutomations` is the platform's own
+    // "import with run automations unchecked" opt-out (`triggerHooks` skips
+    // metadata-bound hooks on it), and it is exactly how such a duty is born
+    // in the wild — an import that bypassed the guard, a row that predates it,
+    // or a zone the host's tzdata stopped recognising after the duty was
+    // saved. Dispatch must still degrade rather than fail on those, and must
+    // still not retry them.
+    await seedDuty({ timezone: 'Mars/Olympus' }, { context: { skipAutomations: true } });
     bindDispatchEngine(data);
     const outcome = await dulyDispatch({ jobId: DISPATCH_JOB_NAME });
     expect(outcome.outcome).toBe('degraded');

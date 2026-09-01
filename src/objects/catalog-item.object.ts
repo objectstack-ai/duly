@@ -112,12 +112,41 @@ export const CatalogItem = ObjectSchema.create({
   nameField: 'name',
   highlightFields: ['name', 'position_code', 'form', 'frequency'],
 
-  // Mirrors the three new `duly_duty` rules (#61) — not its full validation
-  // set. `duly_duty`'s `recurring_needs_frequency` and `effective_window_ordered`
-  // are pre-existing gaps on THIS object (no `effective_*` fields exist here
-  // at all, and nothing currently requires a recurring item to carry a
-  // frequency); left alone as out of this issue's scope and filed separately.
+  // Mirrors `duly_duty`'s cadence rules (#61, #65) — not its full validation
+  // set. `effective_window_ordered` has no equivalent here and never will:
+  // this object declares no `effective_from` / `effective_to` at all, so
+  // there is no window to order. That is the one deliberate divergence.
   validations: [
+    {
+      // The gap #65 closes, and the LAST place a blank recurring frequency
+      // can be caught. Measured on @objectstack/runtime 17.2.0, not assumed:
+      //
+      //  - On INSERT the conditional default masks it. `applyFieldDefaults`
+      //    treats an explicit `frequency: null` as absent and re-stamps
+      //    `"monthly"` from the CEL default two dozen lines up, so an insert
+      //    could never have reached this rule blank in the first place.
+      //  - On UPDATE nothing runs. `applyFieldDefaults` is INSERT-only, so
+      //    `{ frequency: null }` on a still-recurring item landed with no
+      //    refusal — the one write that produces the state, and the one this
+      //    rule exists for.
+      //  - Downstream does NOT catch it either. `applyCatalogHandler` copies
+      //    `frequency` onto every new `duly_duty` verbatim, and that insert
+      //    hits the SAME default-masking: the duty is stamped `"monthly"`
+      //    and `duly_duty`'s own `recurring_needs_frequency` never fires. So
+      //    a blank here does not fan out as N loud refusals — it fans out as
+      //    N duties silently dispatching on a monthly cadence nobody chose.
+      //    Pinned in `test/catalog-apply-cadence.test.ts`.
+      //
+      // Wording is `duly_duty`'s, verbatim, as the three rules below already
+      // are: a catalog item IS a duty template ("Duty" is even this object's
+      // `name` label), and one message per cadence rule is what lets the
+      // suites assert both objects against one constant.
+      name: 'recurring_needs_frequency',
+      type: 'script',
+      severity: 'error',
+      message: 'A recurring duty needs a frequency — otherwise nothing can dispatch it.',
+      condition: P`record.form == "recurring" && isBlank(record.frequency)`,
+    },
     {
       name: 'standing_no_frequency',
       type: 'script',

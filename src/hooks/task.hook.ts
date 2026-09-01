@@ -32,6 +32,48 @@ import type { Hook, HookContext } from '@objectstack/spec/data';
  *      holding exactly what the caller supplied, so a value derived here
  *      replaces a caller-supplied one instead of being dropped with it.
  *
+ * ── The shared-payload path, and why this hook REFUSES it ────────────────
+ * A predicate (`multi: true`) write carries ONE payload for all N matched rows
+ * — `driver.updateMany` takes a single SET clause — and ADR-0058 Addendum II
+ * governs what a hook may do with it. D1: a `before*` event dispatches once per
+ * matched row. D3: every per-row context carries THAT one payload, so "a
+ * rewrite takes effect on the WHOLE batch, whichever row's dispatch made it",
+ * and therefore "a rewrite CONDITIONED on the row (`ctx.previous`,
+ * `ctx.input.id`) is outside this contract". D3 names the sanctioned route in
+ * as many words: per-row `previous` is supplied "so a guard can REFUSE the
+ * write, not so a rewrite can be aimed at one row".
+ *
+ * `completed_at` is precisely such a rewrite: it is read off THIS row's
+ * pre-image. Measured against a booted engine — a batch of one `open` row and
+ * one already-`done` row, both written `status: 'done'` — the open row's
+ * dispatch stamps `completed_at = now` and the done row's completion instant,
+ * days old, is silently overwritten. Nothing errors; the history just moves.
+ *
+ * So on this path the hook throws. The guard is decided from the ROW ALONE —
+ * its own pre-image plus the payload — never from what an earlier dispatch left
+ * in the shared payload, because dispatch order is not the caller's to control
+ * and an accumulator would only catch the orders in which the done row happens
+ * to come second.
+ *
+ * Three boundaries this guard deliberately holds:
+ *
+ *  - It turns on `status` being IN THE PAYLOAD. A predicate write that does not
+ *    write `status` computes no stamp, so there is nothing to leak — an
+ *    administrative bulk backfill over done rows, and the seed's `mode:
+ *    'update'` backdating pass, are untouched.
+ *  - Only the stamping direction is guarded. A batch moving rows OUT of done
+ *    writes `completed_at = null`, and null is the correct value for every row
+ *    being moved out of done, including one that was never completed. That
+ *    rewrite is genuinely row-invariant, so it is allowed.
+ *  - A batch in which EVERY row is already done is refused too, even though
+ *    nothing would leak. The hook cannot see the batch — `dispatch.index` is a
+ *    position, not a total — and a rule stated on the row is one a caller can
+ *    predict and a test can pin. Re-completing a done task in bulk is a caller
+ *    mistake either way, and the answer is now loud instead of silent.
+ *
+ * The single-record path (`dispatch.mode === 'record'`) has a payload of its
+ * own, so the row-conditional stamp is sound there and is unchanged.
+ *
  * ── Why the handler is one self-contained function ───────────────────────
  * `objectstack build` lowers an inline handler into a metadata `body`, and a
  * body ships without its module scope. A handler that referenced a
@@ -75,6 +117,22 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
   const nextStatus = 'status' in input ? input.status : previous.status;
   const wasDone = previous.status === 'done';
   const isDone = nextStatus === 'done';
+
+  // ── The shared-payload guard — refuse, never aim a rewrite at one row ──
+  // `ctx.dispatch` is the engine's own dispatch marker: `'record'` for a
+  // single-record write, `'per-row'` for one dispatch of a predicate write.
+  // Conditioned on `status` being in the payload because that is the only
+  // shape that computes a stamp at all — see the module header.
+  if (ctx.dispatch?.mode === 'per-row' && 'status' in input && wasDone && isDone) {
+    throw Object.assign(
+      new Error(
+        `Task ${String(input.id ?? previous.id ?? '')} is already done. A bulk status write carries one `
+        + 'payload for every matched row, so completing this batch would overwrite that task\'s original '
+        + 'completion timestamp. Leave the done rows out of the selection, or write them one at a time.',
+      ),
+      { code: 'DULY_TASK_BULK_ALREADY_DONE', status: 409 },
+    );
+  }
 
   if (!wasDone && isDone) {
     input.completed_at = now;
@@ -125,7 +183,9 @@ export const TaskLifecycleHook: Hook = {
   description:
     'Server-owned timestamps on duly_task: completed_at on the transition into and out of '
     + 'done, and last_update_at only when status, note or skip_reason actually changed — '
-    + 'never on an administrative or bulk write, which would reset the stagnation signal.',
+    + 'never on an administrative or bulk write, which would reset the stagnation signal. '
+    + 'A predicate write that would re-stamp an already-done row is refused outright '
+    + '(ADR-0058 Addendum II D3: one payload for the whole batch, so a guard throws).',
   // Explicit because it is load-bearing rather than a default worth inheriting:
   // if this handler throws, the write MUST be refused. Committing a task whose
   // stamps were not applied is the exact silent corruption the

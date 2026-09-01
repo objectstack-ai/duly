@@ -73,10 +73,28 @@ export const DutyViews = defineView({
       label: 'What each team owes',
       type: 'grid',
       data,
+      /**
+       * Both grouping fields are columns here because the grid's query
+       * projection is built from `columns` ALONE — `grouping` contributes
+       * nothing to it. Measured on the seeded app: without them the request
+       * was `select=id,name,form,frequency,source,status`, both fields
+       * arrived `undefined`, and this two-level lens collapsed into a single
+       * `(empty)` group nested inside another `(empty)` group. Nothing
+       * errored and every gate stayed green.
+       *
+       * Filed upstream as objectstack-ai/objectui#7179 — the projection
+       * should union the grouping fields rather than making authors mirror
+       * them here. They are listed in the grouping's own order, so the row
+       * reads the way the hierarchy nests, and they earn their place on a
+       * "what does this team owe" screen regardless.
+       * `test/metadata-bindings.test.ts` fails if either is dropped again.
+       */
       columns: [
         { field: 'name' },
         { field: 'form' },
         { field: 'frequency' },
+        { field: 'business_unit' },
+        { field: 'owner' },
         { field: 'source' },
         { field: 'status' },
       ],

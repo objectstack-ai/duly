@@ -27,17 +27,28 @@ const columns = [
  * habit and a chore, so this is not a convenience: it is the same interaction
  * budget as the row tick, applied to the week.
  *
- * ── `visible` here is load-bearing, not decoration ────────────────────────
+ * ── `visible` here is the OUTER of two layers ─────────────────────────────
  * It is evaluated once PER SELECTED RECORD, and the run covers only the rows
- * that pass. That is what keeps an already-`done` row out of the batch — and
- * it has to, for a reason that is MEASURED rather than theoretical: a
- * predicate update carries ONE payload for all N rows (`driver.updateMany`
- * takes one SET clause), so `task.hook.ts` stamping `completed_at` for a row
- * that is genuinely transitioning writes that timestamp to the whole batch.
- * Verified against a booted engine: bulk-completing a selection that already
- * contains a done row moves that row's `completed_at` to now. The predicate
- * is what makes such a selection unreachable from the UI;
- * `test/task-actions.test.ts` pins both halves.
+ * that pass, which is what keeps an already-`done` row out of the batch. That
+ * matters for a reason that is MEASURED rather than theoretical: a predicate
+ * update carries ONE payload for all N rows (`driver.updateMany` takes one SET
+ * clause), so `task.hook.ts` stamping `completed_at` for a row that is
+ * genuinely transitioning would write that timestamp to the whole batch —
+ * silently re-dating a task completed days ago.
+ *
+ * A view predicate is a client-side hide, though, and the write it guards is
+ * server-side: an import, a backfill, the dispatcher or an MCP caller
+ * reassembles the same batch without ever reading this file. So the authority
+ * lives at the write. `task.hook.ts` REFUSES a predicate write that would
+ * re-stamp an already-done row (`DULY_TASK_BULK_ALREADY_DONE`, 409) — the one
+ * route ADR-0058 Addendum II D3 sanctions for a row-conditional decision on a
+ * batch-scoped payload.
+ *
+ * This predicate is kept because it is still the right UX: it stops the
+ * console from assembling a batch the server would refuse, so a user gets an
+ * unavailable action rather than an error they did not cause.
+ * `test/task-hook.test.ts` pins the refusal; `test/task-actions.test.ts` pins
+ * both layers.
  *
  * Labels are plain strings: an authored def is not i18n-resolved. That is a
  * real cost, accepted here because the repo carries no translation bundle yet
@@ -287,7 +298,24 @@ export const TaskViews = defineView({
       label: 'By business unit',
       type: 'grid',
       data,
-      columns,
+      /**
+       * `business_unit` is in the columns because the grid's query
+       * projection is built from `columns` ALONE — `grouping` contributes
+       * nothing to it. Measured on the seeded app: without this the request
+       * was `select=id,subject,status,due_date,period_key,owner,source`, the
+       * field arrived `undefined` on all 186 rows, and the renderer bucketed
+       * every one of them into a single `(empty)` group. Nothing errored and
+       * every gate stayed green.
+       *
+       * Filed upstream as objectstack-ai/objectui#7179 — the projection
+       * should union the grouping fields rather than making authors mirror
+       * them here. This is not a workaround waiting on it: on a by-unit view
+       * the unit column is worth showing anyway, and it is the shared six
+       * plus one rather than a column every other lens has to carry.
+       * `test/metadata-bindings.test.ts` fails if a grouped grid ever drops
+       * it again.
+       */
+      columns: [...columns, { field: 'business_unit' }],
       grouping: { fields: [{ field: 'business_unit' }] },
       bulkActionDefs: bulkActions,
       sort: [{ field: 'due_date', order: 'asc' }],
