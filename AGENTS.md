@@ -140,14 +140,48 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
    `status` and `due_date` directly — they are stored and indexed.
 6. **`sharingModel` is mandatory and fail-closed.** Unset means private, and the
    publish linter errors on it (ADR-0090 D1/D7). State it deliberately.
-7. **Author hierarchy scopes normally; the enterprise edition resolves them.**
-   `readScope: 'own_and_reports' | 'unit' | 'unit_and_below' | 'org'` (ADR-0057)
-   are resolved by `@objectstack/security-enterprise`, which enterprise
-   deployments already carry. Do **not** build an application-level fallback,
-   and do **not** add `hierarchy-security` to `requires` — that would fail an
-   open-edition boot. In this open-edition checkout those scopes resolve to
-   owner-only, so a manager view will show you only your own rows: that is
-   expected here, and not a bug to chase.
+7. **A hierarchy scope REQUIRES `requires: ['hierarchy-security']`. Omitting it
+   is an author-time hard error, not a silent fallback.**
+   `readScope`/`writeScope` `'own_and_reports' | 'unit' | 'unit_and_below'`
+   (ADR-0057) are the hierarchy scopes, resolved by
+   `@objectstack/security-enterprise`. `objectstack.config.ts` already declares
+   the capability — you should not need to touch it — and you author the scopes
+   normally. Build no application-level fallback.
+
+   **Grant one without the declaration and `defineStack` refuses to load**, in
+   `validateHierarchyScopeCapability`. It is not the config file being fussy;
+   it is the platform closing the exact hole this rule used to tell you to live
+   with. The platform's own words:
+
+   > A stack that uses one MUST declare `requires: ['hierarchy-security']`;
+   > otherwise the open runtime would silently fail closed to owner-only (the
+   > metadata would lie, ADR-0049). **This makes that an authoring-time error
+   > instead.**
+
+   Because the check runs inside `defineStack()`, an undeclared scope takes
+   `validate`, `build` **and** every test that imports the config — so the
+   symptom is the whole suite going red at once, not one assertion.
+
+   **Declaring it does NOT fail an open-edition boot.** Measured on this
+   checkout with `@objectstack/security-enterprise` **not** installed:
+   `validate`, `typecheck`, `test` and `build` all exit 0, the kernel logs
+   `Bootstrap complete`, and `validate` prints exactly one warning naming the
+   package that provides the capability. **That warning is the expected state
+   of this repo — do not silence it.** The only two ways to make it go away are
+   installing the enterprise package (deliberately not done here) and deleting
+   the declaration (which puts the hard error back).
+
+   In this open-edition checkout the scopes then resolve to **owner-only**, so
+   a manager view shows you only your own rows. That is the edition, not a bug
+   to chase; verifying manager visibility for real needs an enterprise runtime
+   and a populated business-unit tree.
+
+   ⛔ **`org` is not a hierarchy scope** and passes the check with no
+   declaration at all. That is the trapdoor: it is the nearest thing to hand
+   when a scope will not load and you want "some visibility for managers", and
+   it discloses every row in the tenant. Depth for managers is
+   `unit_and_below`. Narrower than intended is visible and fixable;
+   `org` is neither.
 8. **English is the source language.** Every authored label gets an `en` entry;
    `zh-CN` is hand-translated. Do not hard-code display text in a hook or flow.
 9. **Metadata first — a handler is the last resort, not the first.** This is an

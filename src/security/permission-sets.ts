@@ -37,14 +37,22 @@ import type { ObjectPermission } from '@objectstack/spec/security';
  * this file is on the READ axis. The write axis never leaves `own` on
  * `duly_task` and `duly_duty` — see the invariant note on ADMIN_OBJECTS.
  *
- * ⛔ ── The manager's DEPTH is not authorable on this platform version ─────
- * The card specifies `readScope: 'unit_and_below'` for the manager grants on
- * `duly_task` and `duly_duty`, on the understanding that an open-edition
- * runtime resolves it silently to owner-only. It does not: `defineStack`
- * REFUSES TO LOAD. See {@link HIERARCHY_SCOPES_DEFERRED} below for the
- * measurement and the tracking issue. The three affected grants are authored
- * `'own'` — fail-closed — and the intended value is recorded there so it is
- * one edit away, and one failing test away from being forgotten.
+ * ── The manager's DEPTH, and what makes it authorable ────────────────────
+ * `readScope: 'unit_and_below'` on the manager grants for `duly_task` and
+ * `duly_duty` is declared, not deferred. It loads because
+ * `objectstack.config.ts` declares `requires: ['hierarchy-security']`;
+ * `defineStack`'s `validateHierarchyScopeCapability` refuses any grant using
+ * `own_and_reports` / `unit` / `unit_and_below` without it, as an
+ * AUTHORING-TIME error deliberately put in place of a silent fail-closed to
+ * owner-only (ADR-0049 — the metadata would otherwise lie). The declaration
+ * installs nothing: on an open-edition checkout the scopes resolve to
+ * owner-only and `validate` prints one warning naming
+ * `@objectstack/security-enterprise`. That warning is the expected state.
+ *
+ * ⛔ `org` is NOT a hierarchy scope, so it passes that check with no
+ * declaration at all. It is the wrong answer here and the reason this note
+ * exists: `org` on `duly_task` would hand every manager every task in the
+ * tenant. Depth for managers is `unit_and_below`.
  *
  * ── Depth on `duly_catalog_item` ─────────────────────────────────────────
  * `duly_catalog_item` is `public_read`, so `readScope` there would be inert:
@@ -86,62 +94,6 @@ import type { ObjectPermission } from '@objectstack/spec/security';
 export const DULY_TASK_UPDATE_STATUS = 'duly.task.update_status';
 export const DULY_CATALOG_APPLY = 'duly.catalog.apply';
 export const DULY_CATALOG_SYNC = 'duly.catalog.sync';
-
-/**
- * ⛔ STOPGAP — the ADR-0057 hierarchy depths this package MEANS to grant and
- * may not declare today. Written to be deleted, not maintained. Tracked as
- * **#46**, which is where the decision lives; this constant is only the
- * machine-readable record of what the compromise costs.
- *
- * ── The measurement ──────────────────────────────────────────────────────
- * `defineStack`'s `validateHierarchyScopeCapability` (@objectstack/spec
- * 17.2.0) is a HARD ERROR on any permission-set grant whose `readScope` or
- * `writeScope` is `unit`, `unit_and_below` or `own_and_reports`, unless the
- * stack declares `requires: ['hierarchy-security']`:
- *
- *   ✗ permission set 'duly_manager' grant on 'duly_task' uses
- *     readScope='unit_and_below', a HIERARCHY scope. Declare
- *     `requires: ['hierarchy-security']` (provided by
- *     @objectstack/security-enterprise) — the open edition cannot enforce it
- *     and would fail closed to owner-only.
- *
- * It runs inside `defineStack()`, so it takes `validate`, `build` AND the
- * three tests that import the config. This is NOT the "silent fallback to
- * owner-only" AGENTS.md rule 7 describes — nothing silent happens; the config
- * will not load.
- *
- * The prescribed fix is one line in `objectstack.config.ts`, which this card
- * may not touch and which rule 7 forbids on the grounds that it "would fail an
- * open-edition boot". Measured on this checkout, with the capability declared
- * and no `@objectstack/security-enterprise` installed, that is not what
- * happens: `validate`, `test` (278 passing, kernel logged
- * `✅ Bootstrap complete`) and `build` all exit 0, with one warning naming the
- * missing provider. The full measurement is in #46. Correcting a rule written
- * in four places, in the config every parallel task shares, is not a rider on
- * a security PR — hence the issue rather than the edit.
- *
- * ── Why `own` and not `org` ──────────────────────────────────────────────
- * `org` IS authorable (it is not a hierarchy scope), and it is the wrong
- * answer: it would hand every manager every task and duty in the tenant.
- * Under-granting is visible and fixable; over-granting is neither. The three
- * entries below are authored `own` — which is also exactly what an
- * open-edition runtime would have RESOLVED `unit_and_below` to, so nothing
- * about the running behaviour changes here. What changes is that the
- * declaration is now honest, and an enterprise deployment inherits an
- * under-grant it can see rather than a grant that quietly never worked.
- *
- * ── How this gets undone ─────────────────────────────────────────────────
- * `test/security.test.ts` pins every row: the authored value must equal
- * `authored`, and `intended` must be a hierarchy scope the validator would
- * reject today. Widen a grant without deleting its row and the test fails;
- * delete a row without widening the grant and the test fails. The compromise
- * cannot outlive its reason, and it cannot be half-undone.
- */
-export const HIERARCHY_SCOPES_DEFERRED = {
-  'duly_manager.duly_task.readScope': { authored: 'own', intended: 'unit_and_below' },
-  'duly_manager.duly_duty.readScope': { authored: 'own', intended: 'unit_and_below' },
-  'duly_admin.duly_task.readScope': { authored: 'own', intended: 'unit_and_below' },
-} as const;
 
 /**
  * ⛔ `duly_log_entry` — the entry that must never be widened.
@@ -214,19 +166,33 @@ const MEMBER_OBJECTS = {
 } satisfies Record<string, ObjectPermission>;
 
 /**
- * Manager = member, plus the one write a manager makes.
+ * Manager = member, plus depth on the read axis and the one write a manager
+ * makes.
  *
- * ⛔ `duly_task` and `duly_duty` are INHERITED UNCHANGED, which is not what
- * the card asked for: both should widen to `readScope: 'unit_and_below'` on
- * the read axis. That value will not load — see
- * {@link HIERARCHY_SCOPES_DEFERRED}. What survives is the half that
- * was never in doubt: `writeScope` stays `'own'` on both, inherited rather
- * than restated, so the "a manager writes nothing below them" invariant is
- * held by the absence of an override rather than by remembering to retype the
- * same value.
+ * ⛔ Both depth overrides below change `readScope` ONLY. Each spreads the
+ * member entry, so `writeScope: 'own'` is inherited rather than retyped — the
+ * "a manager writes nothing below them" invariant is held by the absence of
+ * an override, not by remembering to repeat a value. Widening either of these
+ * to a write depth is the one edit `test/security.test.ts` will not let
+ * through.
  */
 const MANAGER_OBJECTS = {
   ...MEMBER_OBJECTS,
+
+  // Reads down the unit and everything under it (ADR-0057). This is the
+  // manager's whole job: answer "what is late across my unit" having entered
+  // no data. Write depth is inherited `own` — untouched, deliberately.
+  duly_task: {
+    ...MEMBER_OBJECTS.duly_task,
+    readScope: 'unit_and_below',
+  },
+
+  // Same depth on the obligations behind those tasks: a manager who can see a
+  // late task and not the duty that produced it cannot act on it.
+  duly_duty: {
+    ...MEMBER_OBJECTS.duly_duty,
+    readScope: 'unit_and_below',
+  },
 
   // Assigning is a manager's only write. Create and edit their own
   // assignments; the fan-out then produces one independently-owned task per
@@ -256,6 +222,11 @@ const MANAGER_OBJECTS = {
  * cadence fields, is gated by a capability only this set grants, and reports
  * what it touched. A correction that goes through it is auditable; a
  * correction typed into somebody's duty record is not.
+ *
+ * `duly_task` is inherited untouched and therefore reads `unit_and_below` —
+ * the administrator's depth on tasks arrives through the manager set rather
+ * than being restated here, which is why widening it is a one-line edit in
+ * one place.
  *
  * `duly_log_entry` is inherited untouched. There is no admin override, and
  * that is the whole point of the invariant.

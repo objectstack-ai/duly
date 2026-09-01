@@ -1,9 +1,9 @@
 # Security — what ships, and what a real rollout still has to do
 
 Duly declares three positions, three permission sets and no sharing rules. This
-page is the other half: the bindings a package is not allowed to make, the
-enterprise dependency a real deployment needs, and the two grants that are
-currently narrower than the product intends.
+page is the other half: the bindings a package is not allowed to make, and the
+enterprise dependency a real deployment needs to resolve the manager depth this
+package authors.
 
 Nothing here is advice about writing security code. There is no security code:
 `definePosition`, `definePermissionSet` and `defineSharingRule` are the whole
@@ -18,8 +18,8 @@ apply over MCP, and never appears in an audit.
 | | `duly_member` | `duly_manager` | `duly_admin` |
 |:---|:---|:---|:---|
 | Who | everyone who owns duties | anyone with reports or a unit | catalog owners, rollout admins |
-| `duly_task` | create / read / edit · read **own** · write **own** | inherited | inherited |
-| `duly_duty` | create / read · read **own** · write **own** | inherited | **+ edit** · read **org** · write **own** |
+| `duly_task` | create / read / edit · read **own** · write **own** | read **unit_and_below** · write **own** | inherited |
+| `duly_duty` | create / read · read **own** · write **own** | read **unit_and_below** · write **own** | **+ edit** · read **org** · write **own** |
 | `duly_log_entry` | full control · read **own** · write **own** | inherited | inherited |
 | `duly_catalog_item` | read | inherited | **+ create / edit / delete** · write **org** |
 | `duly_assignment` | read · read **own** | **+ create / edit** · write **own** | inherited |
@@ -85,10 +85,14 @@ Assignees still see their own fanned-out `duly_task`, which is the row they work
 
 ## An enterprise runtime is a product dependency
 
-The manager model is built on the ADR-0057 depth scopes
-(`own_and_reports`, `unit`, `unit_and_below`, `org`). Those are resolved by
-**`@objectstack/security-enterprise`**. Without it the platform has no manager
-chain and no business-unit tree resolver, so depth collapses to owner-only.
+The manager model is built on the ADR-0057 hierarchy scopes
+(`own_and_reports`, `unit`, `unit_and_below`) and this package authors them
+directly: `duly_manager` reads `unit_and_below` on `duly_task` and `duly_duty`,
+and `duly_admin` inherits the task depth.
+
+Those scopes are **resolved** by **`@objectstack/security-enterprise`**. Without
+it the platform has no manager chain and no business-unit tree resolver, so
+depth resolves to owner-only.
 
 For a real rollout that means:
 
@@ -100,31 +104,41 @@ and adding it to `plugins[]`. Manager visibility is not a feature you can verify
 on an open-edition checkout; a manager view there shows you your own rows, and
 that is the edition, not a bug.
 
-### ⛔ Two manager grants are currently narrower than this table implies
+### The declaration, and the warning that is supposed to be there
 
-`duly_manager` on `duly_task` and `duly_duty`, and `duly_admin` on `duly_task`,
-should read `unit_and_below`. They are authored `own`.
+`objectstack.config.ts` declares `requires: ['hierarchy-security']`. That is
+not optional and it is not a rollout step — **it is what makes the depth scopes
+authorable at all**. `defineStack`'s `validateHierarchyScopeCapability` refuses
+to load a stack that grants `own_and_reports`, `unit` or `unit_and_below`
+without it. That refusal is deliberate: it replaces a silent fail-closed to
+owner-only with an authoring-time error, so the metadata cannot claim a depth
+the runtime will not enforce (ADR-0049).
 
-The reason is not caution. `defineStack` **refuses to load** a permission set
-carrying `unit`, `unit_and_below` or `own_and_reports` unless the stack declares
-`requires: ['hierarchy-security']` — it is a hard error, not the silent fallback
-this repo's own notes describe, and it takes `validate`, `build` and every test
-that imports the config. This package may not add that declaration
-(`objectstack.config.ts` is off-limits to feature work, and a repo rule forbids
-it), so the only authorable depths here are `own` and `org` — and `org` would
-hand every manager every task in the tenant.
+**Declaring it installs nothing.** On this open-edition checkout, with
+`@objectstack/security-enterprise` absent, `validate`, `typecheck`, `test` and
+`build` all exit 0 and the kernel boots. What you get is one warning on every
+validate and build:
 
-`own` is also exactly what an open-edition runtime would have *resolved*
-`unit_and_below` to, so nothing about today's behaviour differs. What differs is
-that the declaration is now honest, and an enterprise deployment inherits an
-under-grant it can see rather than a grant that quietly never worked.
+> ⚠ Capability "hierarchy-security" is provided by
+> @objectstack/security-enterprise (ADR-0057 hierarchy scopes ship in the
+> enterprise edition). Run `pnpm add @objectstack/security-enterprise` and add
+> it to `plugins[]`, or remove "hierarchy-security" from `requires`.
 
-The three affected grants are recorded machine-readably in
-`HIERARCHY_SCOPES_DEFERRED` (`src/security/permission-sets.ts`) and pinned in
-both directions by `test/security.test.ts`: widen a grant without deleting its
-row and the test fails; delete a row without widening the grant and the test
-fails. Tracked as **#46**, which also carries the measurement showing the
-"declaring it fails an open-edition boot" belief to be false.
+⛔ **That warning is the expected state of this repo — do not silence it.** It
+is the honest signal that the depth this package declares is not being enforced
+in this checkout. The only two ways to remove it are installing the enterprise
+package (deliberately not done here) and deleting the declaration, which puts
+the hard load error back and forces every manager grant down to `own`.
+
+⛔ **`org` is not a hierarchy scope**, so it loads with no declaration at all.
+It is the wrong answer for manager visibility and the reason this section is
+long: `org` on `duly_task` hands every manager every task in the tenant.
+`duly_admin`'s `org` read on `duly_duty` is a deliberate, separate decision
+about obligations, not people's work rows.
+
+`test/security.test.ts` pins both halves — the three depth grants, and the
+declaration they require — so neither can be removed without the other going
+red.
 
 ---
 
@@ -194,6 +208,11 @@ passes the row check and must fail the capability gate. That is why both exist.
 pnpm validate    # reports "Security: 3 Positions  3 Permissions"
 pnpm test        # test/security.test.ts asserts every declared scope
 ```
+
+`validate` also prints the `hierarchy-security` capability warning on an
+open-edition checkout. It is expected — see above. A clean run here means the
+enterprise package is installed, not that the warning was a problem someone
+fixed.
 
 `test/security.test.ts` asserts the **authored** metadata, never resolved rows —
 on an open-edition checkout a row count measures the edition, not the
