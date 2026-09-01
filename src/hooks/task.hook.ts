@@ -136,11 +136,30 @@ import type { Hook, HookContext } from '@objectstack/spec/data';
  *
  * A batch is therefore either wholly on time and stamped correctly, or refused
  * — decided from each row alone, in any dispatch order, with no accumulator.
- * The cost is stated rather than hidden: a selection that includes late work
- * cannot be completed in one gesture, and the caller is told which row and why.
  * Bulk SKIP is untouched (`skipped` is not a completion), and so is the
  * clearing direction: `completed_late = null` alongside `completed_at = null`
  * is correct for every row leaving `done`.
+ *
+ * ── What this costs the console: nothing. Measured, not assumed ──────────
+ * The obvious fear is that ticking a week of work in one gesture now fails
+ * whenever one row is late. It does not, because the console's bulk action is
+ * NOT a predicate write. Measured against a live `pnpm demo` on
+ * `@objectstack/rest` 17.2.0 by recording the requests the toolbar issues:
+ *
+ *     POST /api/v1/data/duly_task/updateMany
+ *     { "records": [ { "id": …, "data": { "status": "done" } },
+ *                    { "id": …, "data": { "status": "done" } } ], … }
+ *
+ * One payload PER RECORD, so each row is dispatched with its own — and a
+ * two-row selection of one late and one on-time task was completed in a single
+ * gesture with `completed_late: true` and `false` landing correctly on the two
+ * rows. The row-conditional stamp is sound there for the same reason it is
+ * sound on `mode: 'record'`.
+ *
+ * The shared payload this guard is about is the OTHER shape — `multi: true`
+ * with a `where`, which is what an import, a backfill, an MCP caller or a
+ * filtered REST update assembles. That is precisely where no view predicate can
+ * reach and why the authority has to live at the write.
  *
  * Not extended to the view's `visible` predicate the way the already-done
  * guard is. That predicate is a client-side hide, and this condition depends on
@@ -238,6 +257,15 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
     // hand-creating their own task has none either. Zero grace is what "no
     // duty governs this row" already means to the overdue escalation, so the
     // two surfaces agree rather than one of them silently never firing.
+    //
+    // ⚠ The one row this is WRONG for is a task created by hand ON A DUTY
+    // that grants grace — today, any `one_off` duty (#61 keeps `grace_days`
+    // on that form deliberately). The escalation reads the duty and waits;
+    // this fallback does not and stamps the due date. Filed as #100 with the
+    // options, because the fix is a producer this handler cannot be: a
+    // lowered `body` ships without its module scope and has no engine to read
+    // `duly_duty` with. It is not a regression — before the stamps existed the
+    // `late` view was grace-free for every task alike.
     //
     // A task with no `due_date` keeps a blank stamp: there is no deadline to
     // derive, and a task with no due date genuinely cannot be late.

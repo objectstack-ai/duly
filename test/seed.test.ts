@@ -199,12 +199,53 @@ describe('view populations — what an evaluator actually opens', () => {
   });
 
   it('Late has 3-4 rows, as the card asks', async () => {
-    // `late`: due_date < {today} AND status in (open, in_progress).
+    // `late`: late_after < {today} AND status in (open, in_progress). Since #52
+    // the lens reads the stamped deadline, not the raw due date — a task inside
+    // the grace its own duty granted is not late yet.
     const late = (await all('duly_task')).filter(
-      (task) => task.due_date && String(task.due_date) < TODAY && ['open', 'in_progress'].includes(task.status),
+      (task) => task.late_after && String(task.late_after) < TODAY && ['open', 'in_progress'].includes(task.status),
     );
     expect(late.length).toBeGreaterThanOrEqual(3);
     expect(late.length).toBeLessThanOrEqual(4);
+  });
+
+  it('every seeded task carries the deadline it was dispatched with, and grace is really in it', async () => {
+    // Item 6 of #52: the demo has to carry the stamps, and they have to come
+    // from the DUTY's grace rather than from the due date. Drop `grace_days`
+    // out of `DISPATCH_DUTIES` and every value here collapses onto `due_date`
+    // — the whole fixture silently reverts to the grace-free reading, with
+    // nothing erroring and the counts above unchanged.
+    const tasks = (await all('duly_task')).filter((task) => task.due_date);
+    expect(tasks.length).toBeGreaterThan(100);
+    for (const task of tasks) {
+      expect(task.late_after, `${task.subject} has a due date and no deadline`).toBeTruthy();
+      expect(
+        String(task.late_after) >= String(task.due_date),
+        `${task.subject}: a deadline before its own due date`,
+      ).toBe(true);
+    }
+    const withGrace = tasks.filter((task) => String(task.late_after) > String(task.due_date));
+    expect(
+      withGrace.length,
+      'no seeded task has any grace at all — the duty projection is not reading grace_days',
+    ).toBeGreaterThan(20);
+  });
+
+  it('the on-time rate the dashboard reads is a real number, not 100%', async () => {
+    // `duly_duty_health` counts `completed_late` on the governed population.
+    // Every done row must carry a definite verdict or the two counts stop
+    // adding up to `tasks_done`, and the split has to be non-trivial or the
+    // tile reads as fabricated.
+    const done = (await all('duly_task')).filter((task) => task.status === 'done');
+    expect(done.length).toBeGreaterThan(50);
+    for (const task of done) {
+      expect(typeof task.completed_late, `${task.subject} completed with no verdict`).toBe('boolean');
+    }
+    const late = done.filter((task) => task.completed_late === true);
+    expect(late.length, 'a history with no late completion makes the measure decorative')
+      .toBeGreaterThan(0);
+    expect(late.length / done.length, 'and a mostly-late history is not a plausible demo either')
+      .toBeLessThan(0.5);
   });
 
   it('Not moving has 2-3 rows — and the second seed pass is what puts them there', async () => {
@@ -225,7 +266,7 @@ describe('view populations — what an evaluator actually opens', () => {
     expect(stalled.length).toBeLessThanOrEqual(3);
   });
 
-  it('stagnation is NOT lateness — at least one stalled row is not yet due', async () => {
+  it('stagnation is NOT lateness — at least one stalled row is not yet late', async () => {
     // The product's central claim: stagnation fires while intervening is still
     // cheap, weeks before a due date makes the failure obvious. If every
     // stalled row were also late, the two views would be one view with a
@@ -236,7 +277,8 @@ describe('view populations — what an evaluator actually opens', () => {
         ['open', 'in_progress'].includes(task.status) &&
         task.last_update_at &&
         new Date(task.last_update_at as string).getTime() < threshold &&
-        String(task.due_date) >= TODAY,
+        // Against the stamped deadline, which is what the Late lens reads.
+        String(task.late_after) >= TODAY,
     );
     expect(stalledNotLate.length).toBeGreaterThanOrEqual(1);
   });

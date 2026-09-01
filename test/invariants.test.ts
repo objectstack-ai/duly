@@ -46,9 +46,22 @@ describe('product invariants', () => {
     expect(Task.fields.note.required).not.toBe(true);
   });
 
-  it('lateness is derived from stored columns, never stored', () => {
+  it('no MAINTAINED lateness flag exists on the task', () => {
+    // The banned shape is a flag whose truth changes with the clock: it needs a
+    // writer every midnight and lies the night it does not run. `late_after`
+    // and `completed_late` (#52) are deliberately not in this list — each is
+    // written once, at the instant it becomes knowable, and never recomputed,
+    // which is the same category as `completed_at` beside them. `AGENTS.md`
+    // rule 5 carries the boundary; the difference is not the name but whether a
+    // second write ever has to happen.
     for (const flag of ['is_late', 'is_overdue', 'is_open', 'is_completed']) {
       expect(Object.keys(Task.fields)).not.toContain(flag);
+    }
+    for (const stamp of ['late_after', 'completed_late']) {
+      expect(
+        (Task.fields as Record<string, { readonly?: boolean }>)[stamp]?.readonly,
+        `${stamp} must be readonly — a write-once column a caller can set is a column that drifts`,
+      ).toBe(true);
     }
   });
 

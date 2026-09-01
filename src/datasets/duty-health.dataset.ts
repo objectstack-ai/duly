@@ -159,6 +159,33 @@ export const DutyHealth = defineDataset({
       name: 'on_time_rate',
       label: 'On-time rate',
       derived: { op: 'ratio', of: ['tasks_done_on_time', 'tasks_done'] },
+      /**
+       * A fraction rendered to two decimals, and NOT a percent — measured
+       * against the console, not chosen by taste.
+       *
+       * `format` here is a numeral PATTERN, not a keyword: the renderer takes
+       * the decimals from the digits after the point (`format.split('.')[1]`)
+       * and switches to percent only on a literal `%`. Measured against this
+       * demo's own 0.94, in the browser:
+       *
+       *   (none)    `0.94`
+       *   'percent' `1` — no `%` in the pattern, so this is not a percent at
+       *             all, just zero decimals. Silently wrong on the one tile
+       *             the product is judged by, which is why the obvious
+       *             spelling is written down here as refuted.
+       *   '0.00'    `0.94`. What ships.
+       *
+       * `'0.0%'` is the spelling that would print `94.0%`, and it is
+       * deliberately NOT used. Read off the renderer rather than measured,
+       * because the demo cannot currently produce the value it goes wrong on:
+       * a percent is scaled by a HEURISTIC — `value > -1 && value < 1 ? value
+       * * 100 : value` — because a measure, unlike a field, cannot declare its
+       * scale. A rate of exactly 1 (100% on time, the number a customer most
+       * wants to see) falls outside that window and renders as `1.0%`. A tile
+       * that reports a perfect month as one percent is worse than one that
+       * says `1.00`. Filed as #101.
+       */
+      format: '0.00',
     },
   ],
 });

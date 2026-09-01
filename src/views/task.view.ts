@@ -49,15 +49,24 @@ const columns = [
  * off the row's own `late_after` — so one batch cannot carry two answers. The
  * hook refuses a bulk completion whose row would be stamped late
  * (`DULY_TASK_BULK_LATE_COMPLETION`, 409) and stamps `false` otherwise, which
- * every row that survived its own guard would have written. Bulk complete keeps
- * working for on-time work; a selection containing late work is refused, by
- * name, and those rows are ticked individually.
+ * every row that survived its own guard would have written.
  *
- * That refusal deliberately has NO predicate half here. This one turns on the
- * completion instant against a stored date — a boundary that moves at midnight,
- * between the render and the write — so a client-side copy would sooner or
- * later hide an action the server would have accepted. A missing bulk action
- * with no explanation is worse than a refusal that names its cause.
+ * **The action below is unaffected, and that is measured rather than hoped
+ * for.** The toolbar does not issue a predicate write at all: recorded against
+ * a live `pnpm demo`, selecting two rows and pressing Complete sends
+ * `POST /api/v1/data/duly_task/updateMany` with `records: [{ id, data }, …]` —
+ * one payload PER RECORD. A selection of one late and one on-time task
+ * completed in one gesture, with `completed_late` landing `true` and `false` on
+ * the right rows. The shared payload the hook guards is the `multi: true` +
+ * `where` shape an import, a backfill or an MCP caller assembles, which is
+ * exactly the caller that never reads this file.
+ *
+ * So that refusal deliberately has NO predicate half here — and it would be
+ * the wrong place for one anyway. It turns on the completion instant against a
+ * stored date, a boundary that moves at midnight between the render and the
+ * write, so a client-side copy would sooner or later hide an action the server
+ * would have accepted. A missing bulk action with no explanation is worse than
+ * a refusal that names its cause.
  *
  * This predicate is kept because it is still the right UX: it stops the
  * console from assembling a batch the server would refuse, so a user gets an
