@@ -76,7 +76,7 @@ let data: any;
 let email: any;
 let job: any;
 
-const waitFor = async <T>(probe: () => Promise<T | undefined>, label: string, ms = 15_000): Promise<T> => {
+const waitFor = async <T>(probe: () => Promise<T | undefined>, label: string, ms = 8_000): Promise<T> => {
   const deadline = Date.now() + ms;
   for (;;) {
     const hit = await probe();
@@ -231,7 +231,9 @@ describe('the lead-time sweep delivers a RESOLVED body', () => {
     expect(row.body_md).toBe(`This is now on your list. Due ${utcDay(7)}.`);
     expect(row.severity).toBe('info');
     expect(String(row.body_md)).not.toContain('{{');
-  });
+    // Budget above `waitFor`'s, so a missing delivery fails with the labelled
+    // message rather than vitest's generic 5s timeout. Measured green in ~1s.
+  }, 20_000);
 
   it('renders the SAME bundle in zh-CN — which is what this card bought', async () => {
     const rendered = await email.renderTemplate({
