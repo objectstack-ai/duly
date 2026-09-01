@@ -10,7 +10,6 @@ import {
   DULY_CATALOG_APPLY,
   DULY_CATALOG_SYNC,
   DULY_TASK_UPDATE_STATUS,
-  HIERARCHY_SCOPES_DEFERRED,
   ManagerPermissionSet,
   ManagerPosition,
   MemberPermissionSet,
@@ -20,6 +19,7 @@ import {
   dulySharingRules,
 } from '../src/security/index.js';
 import { dulyActions } from '../src/actions/index.js';
+import stack from '../objectstack.config.js';
 import { CatalogItem, Duty, LogEntry, Task, Assignment } from '../src/objects/index.js';
 
 /**
@@ -103,17 +103,18 @@ describe('permission sets — declared scopes, object by object', () => {
       duly_assignment: { read: 'own', write: 'own' },
     },
     duly_manager: {
-      // ⛔ `duly_task` / `duly_duty` read SHOULD be 'unit_and_below'. It is not
-      // authorable on protocol 17.2.0 — see HIERARCHY_SCOPES_DEFERRED and the
-      // dedicated block below, which pins the deferral itself.
-      duly_task: { read: 'own', write: 'own' },
-      duly_duty: { read: 'own', write: 'own' },
+      // The two ADR-0057 depth grants. Authorable because the stack declares
+      // `requires: ['hierarchy-security']`; the dedicated block below pins
+      // that dependency in both directions.
+      duly_task: { read: 'unit_and_below', write: 'own' },
+      duly_duty: { read: 'unit_and_below', write: 'own' },
       duly_log_entry: { read: 'own', write: 'own' },
       duly_catalog_item: { read: 'own', write: 'own' },
       duly_assignment: { read: 'own', write: 'own' },
     },
     duly_admin: {
-      duly_task: { read: 'own', write: 'own' },
+      // Inherited from the manager set, not restated.
+      duly_task: { read: 'unit_and_below', write: 'own' },
       // Org-wide READ of duties; the write axis stays at the baseline.
       duly_duty: { read: 'org', write: 'own' },
       duly_log_entry: { read: 'own', write: 'own' },
@@ -249,7 +250,7 @@ describe('no write scope on duly_task / duly_duty is wider than own', () => {
  * maps were built by spreading it.
  */
 describe('manager and admin inherit rather than restate', () => {
-  const MANAGER_OVERRIDES = ['duly_assignment'];
+  const MANAGER_OVERRIDES = ['duly_task', 'duly_duty', 'duly_assignment'];
   const ADMIN_OVERRIDES = ['duly_catalog_item', 'duly_duty'];
 
   it('every non-overridden manager entry is the member entry itself', () => {
@@ -267,6 +268,24 @@ describe('manager and admin inherit rather than restate', () => {
       expect(grant, `${name} was restated instead of inherited`).toEqual(
         ManagerPermissionSet.objects[name],
       );
+    }
+  });
+
+  it('the manager depth overrides keep every member key they do not change', () => {
+    // The failure this catches is the one this card could most easily have
+    // caused: retyping the entry to add `readScope` and dropping
+    // `writeScope: 'own'` on the way, which widens the write axis by omission.
+    for (const objectName of ['duly_task', 'duly_duty']) {
+      const base = MemberPermissionSet.objects[objectName];
+      const override = ManagerPermissionSet.objects[objectName];
+      for (const key of Object.keys(base) as Array<keyof typeof base>) {
+        if (key === 'readScope') continue; // the one deliberate widening
+        expect(override[key], `manager.${objectName} dropped ${String(key)}`).toEqual(base[key]);
+      }
+      expect(override.readScope, `manager.${objectName} reads its unit and below`).toBe(
+        'unit_and_below',
+      );
+      expect(override.writeScope, `manager.${objectName} write depth must stay own`).toBe('own');
     }
   });
 
@@ -377,42 +396,122 @@ describe('action capability gates', () => {
 });
 
 /**
- * ⛔ STOPGAP — delete this block together with `HIERARCHY_SCOPES_DEFERRED`.
+ * ⛔ The declaration the depth grants stand on, pinned in both directions.
  *
- * It pins the compromise in both directions so it cannot rot: widen a grant
- * without deleting its row and the "authored" assertion fails; delete a row
- * without widening the grant and the coverage assertion fails. See duly#46.
+ * `readScope: 'unit_and_below'` is authorable here only because
+ * `objectstack.config.ts` declares `requires: ['hierarchy-security']`.
+ * `defineStack`'s `validateHierarchyScopeCapability` refuses to load a stack
+ * that grants `own_and_reports` / `unit` / `unit_and_below` without it — an
+ * AUTHORING-TIME hard error, deliberately in place of a silent fail-closed to
+ * owner-only (ADR-0049: the metadata would otherwise lie). Declaring it
+ * installs nothing and fails nothing: on this open-edition checkout every gate
+ * stays green and `validate` prints one warning naming the provider package.
+ * The measurement is in duly#46.
+ *
+ * Neither half can be deleted alone:
+ *   · change a depth grant and the per-grant assertion fails;
+ *   · author a hierarchy scope anywhere without the declaration and the
+ *     implication below fails HERE — a named test rather than an opaque
+ *     config-load failure taking out every suite that imports the config.
  */
-describe('deferred hierarchy scopes (stopgap — see #46)', () => {
+describe('hierarchy depth grants and the capability they require', () => {
+  const HIERARCHY_SCOPES: readonly string[] = ['own_and_reports', 'unit', 'unit_and_below'];
+
+  /** Every (set, object, axis) in this package whose declared scope needs the resolver. */
+  const authoredHierarchyScopes = ALL_SETS.flatMap((set) =>
+    Object.entries(set.objects).flatMap(([objectName, grant]) =>
+      (['readScope', 'writeScope'] as const)
+        .filter((axis) => HIERARCHY_SCOPES.includes(scopeOf(grant[axis])))
+        .map((axis) => `${set.name}.${objectName}.${axis}`),
+    ),
+  );
+
+  /** The manager model, machine-readably: what depth exists, and nothing else. */
+  const DEPTH_GRANTS = [
+    'duly_admin.duly_task.readScope',
+    'duly_manager.duly_duty.readScope',
+    'duly_manager.duly_task.readScope',
+  ];
+
   const setsByName = new Map(dulyPermissionSets.map((s) => [s.name, s]));
 
-  for (const [key, record] of Object.entries(HIERARCHY_SCOPES_DEFERRED)) {
+  for (const key of DEPTH_GRANTS) {
     const [setName, objectName, axis] = key.split('.');
 
-    it(`${key} is authored '${record.authored}', not the intended '${record.intended}'`, () => {
+    it(`${key} is 'unit_and_below'`, () => {
       const grant = setsByName.get(setName)?.objects[objectName];
       expect(grant, `${setName} must grant ${objectName}`).toBeDefined();
-      expect(scopeOf(grant?.[axis as 'readScope' | 'writeScope'])).toBe(record.authored);
-
-      // The intent must still be a scope `validateHierarchyScopeCapability`
-      // rejects. If it stops being one, the deferral has no reason to exist.
-      expect(['own_and_reports', 'unit', 'unit_and_below']).toContain(record.intended);
-      // And it must be a WIDENING — a deferral that narrows is a mistake.
-      expect(SCOPE_WIDTH[record.intended]).toBeGreaterThan(SCOPE_WIDTH[record.authored]);
+      expect(scopeOf(grant?.[axis as 'readScope' | 'writeScope'])).toBe('unit_and_below');
     });
   }
 
-  it('records every grant the card asked to widen, and no others', () => {
-    expect(Object.keys(HIERARCHY_SCOPES_DEFERRED).sort()).toEqual([
-      'duly_admin.duly_task.readScope',
-      'duly_manager.duly_duty.readScope',
-      'duly_manager.duly_task.readScope',
-    ]);
+  it('those three are the only hierarchy scopes authored anywhere', () => {
+    // Also what keeps the implication below from going vacuous.
+    expect([...authoredHierarchyScopes].sort()).toEqual(DEPTH_GRANTS);
   });
 
-  it('never defers a WRITE axis — that one is an invariant, not a compromise', () => {
-    for (const key of Object.keys(HIERARCHY_SCOPES_DEFERRED)) {
-      expect(key.endsWith('.readScope'), `${key} must not defer a write scope`).toBe(true);
+  it('the stack declares hierarchy-security, as every scope above requires', () => {
+    expect(authoredHierarchyScopes.length).toBeGreaterThan(0);
+    expect(stack.requires ?? []).toContain('hierarchy-security');
+  });
+
+  it('no set reaches for `org` on duly_task — the trapdoor next to this one', () => {
+    // `org` is NOT a hierarchy scope, so it loads with no declaration at all.
+    // That makes it the nearest wrong answer for anyone who wants "some
+    // visibility for managers": it discloses every task in the tenant.
+    for (const set of ALL_SETS) {
+      expect(scopeOf(set.objects.duly_task?.readScope), `${set.name} reads all tasks`).not.toBe(
+        'org',
+      );
+    }
+  });
+});
+
+/**
+ * The write axis, across every set and every object.
+ *
+ * "A manager reads down and writes nothing but their own" is the product, and
+ * this is where it stops being an intention. Two assertions, because they fail
+ * for different reasons: the first catches any widening at all, the second
+ * catches the specific one this card could have introduced — depth leaking
+ * from the read axis onto the write axis.
+ */
+describe('no write scope is wider than own', () => {
+  /**
+   * The one exception, declared rather than tolerated. `duly_catalog_item` is
+   * `public_read` — read-open but WRITE-OWNED — so without an org write depth
+   * an administrator could only edit catalog items they personally created.
+   * The catalog describes positions, not people: there is no personal record
+   * behind this entry. Anything else appearing here is a regression, and the
+   * equality below is what makes adding a second one a deliberate act.
+   */
+  const DECLARED_EXCEPTIONS: Record<string, ObjectAccessScope> = {
+    'duly_admin.duly_catalog_item': 'org',
+  };
+
+  it('every write scope in the package is own, bar the one declared exception', () => {
+    const wider: Record<string, ObjectAccessScope> = {};
+    for (const set of ALL_SETS) {
+      for (const [objectName, grant] of Object.entries(set.objects)) {
+        const scope = scopeOf(grant.writeScope);
+        if (SCOPE_WIDTH[scope] > SCOPE_WIDTH.own) wider[`${set.name}.${objectName}`] = scope;
+      }
+    }
+    expect(wider).toEqual(DECLARED_EXCEPTIONS);
+  });
+
+  it('no write scope anywhere is a HIERARCHY scope — depth never reaches the write axis', () => {
+    // Unconditional, exception included: `org` is a flat grant on one
+    // reference table, whereas a write depth would mean one person writing
+    // another person's rows by virtue of where they sit in the tree. That is
+    // the thing the product does not do, on any object.
+    for (const set of ALL_SETS) {
+      for (const [objectName, grant] of Object.entries(set.objects)) {
+        expect(
+          ['own_and_reports', 'unit', 'unit_and_below'],
+          `${set.name}.${objectName} writes by hierarchy depth`,
+        ).not.toContain(scopeOf(grant.writeScope));
+      }
     }
   });
 });
