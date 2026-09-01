@@ -286,9 +286,9 @@ export const TaskViews = defineView({
     },
 
     /**
-     * The same rows a manager already reads, bucketed by team. `business_unit`
-     * is denormalised onto the task at dispatch precisely so a rollup like
-     * this survives a later transfer.
+     * Outstanding work, bucketed by team. `business_unit` is denormalised onto
+     * the task at dispatch precisely so a rollup like this survives a later
+     * transfer.
      *
      * Groups sort by LABEL — measured in the grid's grouping hook, which sorts
      * group keys with a locale compare on the label and never on the bucket
@@ -298,6 +298,41 @@ export const TaskViews = defineView({
       label: 'By business unit',
       type: 'grid',
       data,
+      /**
+       * The residual, stated for the reader of the SCREEN and not only for the
+       * reader of this file, because the filter below does NOT make the
+       * mechanism correct — it makes this deployment fit inside it. The
+       * grouping and its per-group counts are computed over the FETCHED PAGE,
+       * so the numbers in the group headers are true only while the filtered
+       * set fits in one. The dashboard's by-unit figures come from the
+       * `duly_stagnation` dataset and are aggregated server-side over the
+       * whole store; those are the authoritative ones, and this lens is for
+       * browsing.
+       *
+       * ⚠ It does NOT reach the screen today, and that is measured rather
+       * than assumed. The value survives every layer — it is in
+       * `dist/objectstack.json` and in `GET /api/v1/meta/view/duly_task` —
+       * but the console's `ObjectView` relay builds its ListView schema by
+       * spreading the OBJECT's list view and relaying `label`, `sort`,
+       * `filter` and friends off the active view, and `description` is not
+       * one of the keys it relays. `ListView` has the branch that would
+       * render it (`data-testid="view-description"`); the value never
+       * arrives, so nothing is displayed and nothing errors. Filed as
+       * objectstack-ai/objectui#7199.
+       *
+       * It stays authored anyway, and that is deliberate: this is the key the
+       * spec defines for exactly this sentence, it IS served to API and MCP
+       * callers reading the view today, and it starts rendering the moment
+       * the relay is fixed. What must not happen is someone reading this file
+       * and believing the caveat is currently in front of users. Written as a
+       * PLAIN STRING on purpose: the renderer takes
+       * `typeof description === 'string' ? description : ''`, so an inline
+       * `{ en, 'zh-CN' }` locale map would render empty even after the relay
+       * is fixed (second half of #7199).
+       */
+      description:
+        'Open and in-progress work only. Group counts are computed over the loaded page — the '
+        + 'dashboard is the authoritative by-unit surface; this lens is for browsing.',
       /**
        * `business_unit` is in the columns because the grid's query
        * projection is built from `columns` ALONE — `grouping` contributes
@@ -317,6 +352,63 @@ export const TaskViews = defineView({
        */
       columns: [...columns, { field: 'business_unit' }],
       grouping: { fields: [{ field: 'business_unit' }] },
+      /**
+       * ⚠ LOAD-BEARING FOR THE GROUPING — not a scope preference, and not a
+       * default worth inheriting. Widen it and the lens silently goes wrong
+       * again, in the way described below. `test/metadata-bindings.test.ts`
+       * fails if it is dropped or widened.
+       *
+       * ── What it is holding up, measured on the #75 seed ──────────────────
+       * The grid groups CLIENT-SIDE over the rows already fetched, and its
+       * per-group counts are `computeAggregations` over that same array
+       * (objectui's `useGroupedData`). There is no server-side grouping path
+       * for a grid at all, so a grouped grid can only be a complete roll-up
+       * while its whole result set fits in one page.
+       *
+       * Unfiltered, this lens did not. The store holds 186 tasks — 151 of them
+       * `done`, most from months ago — across FIVE business units, and the
+       * request is `top=100`:
+       *
+       *   Northgate Operations  33     store: 61
+       *   Northgate Plant        3     store:  7
+       *   Northgate Quality     46     store: 86
+       *   Riverside Plant       18     store: 31
+       *   (Central Office)       —     store:  1   ← no group at all
+       *                        ───
+       *                        100     "Showing first 100 records."
+       *
+       * Two failures, and the second is the sharper one. Every count in the
+       * header was a page slice reading as a total. And one unit had NO GROUP
+       * ON THE SCREEN, with nothing saying a unit was missing — a wrong number
+       * invites a second look, an absent row does not.
+       *
+       * Scoped to open work the lens fits: 27 `open` + 6 `in_progress` = 33
+       * rows, one page, all five units present, every count true. That is also
+       * the better lens on its own merits — "what is outstanding, by unit" is
+       * the question a manager opens this for, and nobody wants a by-unit
+       * breakdown of work that finished six months ago. It survives the
+       * platform being fixed: even with server-side grouping we would not want
+       * this lens spending its first page on completed tasks.
+       *
+       * ── Why not simply raise the page size ──────────────────────────────
+       * It moves the cliff instead of removing it, and hides the next
+       * occurrence. With a filter that fits, the page size is not what is
+       * holding the lens together.
+       *
+       * ── What stays broken ───────────────────────────────────────────────
+       * This remains STRUCTURALLY page-scoped. A deployment with more open
+       * tasks than a page hits exactly this again, with the same silent
+       * missing group. The filter buys a correct lens at this product's
+       * realistic scale, not a correct mechanism. The durable fix is upstream:
+       * objectstack-ai/objectui#7189 asks for server-side grouping and true
+       * per-group counts on a grid — the platform already does this for the
+       * dashboard through a dataset, just not on this surface. The `description`
+       * above is where that is said to users — subject to objectui#7199,
+       * which currently keeps a per-view description off the screen entirely,
+       * so today this comment and the counts' own arithmetic are the whole
+       * disclosure.
+       */
+      filter: [{ field: 'status', operator: 'in', value: ['open', 'in_progress'] }],
       bulkActionDefs: bulkActions,
       sort: [{ field: 'due_date', order: 'asc' }],
     },
