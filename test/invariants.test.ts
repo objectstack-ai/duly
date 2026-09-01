@@ -59,6 +59,26 @@ describe('product invariants', () => {
     }
   });
 
+  it('a hand-created duty is self-declared, not born governed (#50)', () => {
+    // The safe default for an ambiguous duty is the UNscoreable one. A duty
+    // created with no `source` supplied must land as 'self' — never
+    // 'catalog', which would additionally expose it to duly_catalog_sync's
+    // cadence rewrite for a catalog item it never came from.
+    const options = Duty.fields.source.options ?? [];
+    const defaults = options.filter((o) => o.default);
+    expect(defaults, 'exactly one option may claim the default').toHaveLength(1);
+    expect(defaults[0]?.value).toBe('self');
+
+    // The two governed calibers are reachable only when the producer that
+    // knows states them explicitly — duly_catalog_apply writes 'catalog'
+    // (#34), the assignment fan-out writes 'assigned' (#33). Neither may ride
+    // in on the field default.
+    for (const governed of ['catalog', 'assigned'] as const) {
+      const option = options.find((o) => o.value === governed);
+      expect(option?.default, `${governed} must not be the default`).not.toBe(true);
+    }
+  });
+
   it('every object states its sharing model explicitly', () => {
     for (const schema of [Duty, Task, LogEntry, CatalogItem]) {
       expect(schema.sharingModel, `${schema.name} must state an OWD`).toBeTruthy();
