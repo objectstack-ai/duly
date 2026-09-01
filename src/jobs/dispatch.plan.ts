@@ -341,9 +341,19 @@ function planForDuty(duty: DispatchDuty, now: Date, window: BackfillWindow | nul
     }
 
     const currentKey = periodKeyFor(frequency, now, timezone);
+    // Both ends are the START of a local day, never `now`. `periodsBetween`
+    // returns `[]` when `to` is before `from`, and with `lead_days: 0` the
+    // horizon IS today — so passing the run's instant as `from` would put a
+    // mid-morning `now` after midnight-of-today and silently dispatch NOTHING,
+    // for every duty with no lead time, on every run. (Measured: it did.)
     const candidates =
       window === null
-        ? periodsBetween(frequency, now, startOfLocalDay(addCalendarDays(today, leadDays), timezone), timezone)
+        ? periodsBetween(
+            frequency,
+            startOfLocalDay(today, timezone),
+            startOfLocalDay(addCalendarDays(today, leadDays), timezone),
+            timezone,
+          )
         : periodsBetween(
             frequency,
             startOfLocalDay(window.from, timezone),
