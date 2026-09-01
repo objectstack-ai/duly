@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
 
 import stack from '../objectstack.config.js';
+import { CatalogItem, Duty } from '../src/objects/index.js';
 import { DEFAULT_DUE_ANCHOR, DEFAULT_DUE_OFFSET_DAYS, DEFAULT_LEAD_DAYS } from '../src/jobs/dispatch.plan.js';
 
 /**
@@ -101,7 +102,15 @@ const insertCatalogItem = async (over: AnyRow): Promise<AnyRow> => {
 const readDuty = async (id: string): Promise<AnyRow> =>
   (await data.find('duly_duty', { where: { id }, limit: 1 }))[0] as AnyRow;
 
+const readCatalogItem = async (id: string): Promise<AnyRow> =>
+  (await data.find('duly_catalog_item', { where: { id }, limit: 1 }))[0] as AnyRow;
+
 const CADENCE_MESSAGES = {
+  // Asserted against BOTH objects, which is the point of it being one
+  // constant: `duly_catalog_item`'s rules are `duly_duty`'s wording verbatim
+  // (a catalog item is a duty template), so a message that drifted on one
+  // object would fail here rather than shipping two answers for one rule.
+  recurring: 'A recurring duty needs a frequency — otherwise nothing can dispatch it.',
   frequency: 'A standing duty never dispatches — a frequency on it is meaningless. Remove it.',
   timing:
     'Due anchor, due offset and lead time compute a period due date — only a recurring duty has one. Clear them for standing and one-off.',
@@ -208,7 +217,7 @@ describe('negative control — recurring_needs_frequency must still fire (#61 mu
     const created = await insertDuty({ form: 'recurring' });
     const { code, message } = await refusal(data.update('duly_duty', { id: created.id, frequency: null }));
     expect(code).toBe('VALIDATION_FAILED');
-    expect(message).toBe('A recurring duty needs a frequency — otherwise nothing can dispatch it.');
+    expect(message).toBe(CADENCE_MESSAGES.recurring);
     // And the row itself must be untouched by the refused write.
     expect((await readDuty(String(created.id))).frequency).toBe('monthly');
   });
@@ -269,6 +278,90 @@ describe('duly_catalog_item — mirrors duly_duty field-for-field (#61)', () => 
     const { code, message } = await refusal(insertCatalogItem({ form: 'standing', grace_days: 1 }));
     expect(code).toBe('VALIDATION_FAILED');
     expect(message).toBe(CADENCE_MESSAGES.grace);
+  });
+});
+
+describe('duly_catalog_item — recurring_needs_frequency (#65)', () => {
+  // The rule `duly_duty` has carried all along and this object never had.
+  // #61 mirrored the three STANDING/non-recurring rules here and left this
+  // one — the converse direction — as a pre-existing gap; #65 closes it.
+  //
+  // Why it matters more here than on a duty: `applyCatalogHandler` copies
+  // `frequency` onto every duty it creates, so one blank catalog item is
+  // replicated onto every person who takes the role. What that replication
+  // actually does is pinned in `test/catalog-apply-cadence.test.ts`, and it
+  // is NOT "each of those duties trips the duty's own rule".
+  //
+  // The refusals below are asserted by ENVELOPE (ADR-0112). In-process the
+  // throw carries `code`, `name` and `fields` and no `status` — that is added
+  // at the HTTP boundary — so `code` plus the exact message is the whole
+  // pin available on this path, and `fields` is `_record` for every
+  // record-scoped rule, which discriminates nothing.
+
+  it('refuses an update that blanks frequency on a still-recurring catalog item', async () => {
+    // THE gap, in the one write that can reach it. `applyFieldDefaults` runs
+    // on INSERT only, so before this rule the update below landed silently:
+    // an org-wide template for a role went blank with nothing to say so.
+    const created = await insertCatalogItem({ form: 'recurring' });
+    expect(created.frequency).toBe('monthly');
+
+    const { code, message } = await refusal(
+      data.update('duly_catalog_item', { id: created.id, frequency: null }),
+    );
+    expect(code).toBe('VALIDATION_FAILED');
+    expect(message).toBe(CADENCE_MESSAGES.recurring);
+
+    // The refused write left the row alone — a rule that reported and wrote
+    // anyway would be worse than no rule.
+    expect((await readCatalogItem(String(created.id))).frequency).toBe('monthly');
+  });
+
+  it('an INSERT never reaches the rule blank — the conditional default masks it', async () => {
+    // Measured, and the reason this gap outlived #61: `applyFieldDefaults`
+    // treats an explicit `frequency: null` as ABSENT and re-stamps the CEL
+    // default, so no insert ever produced the state the rule refuses. This is
+    // an assumption the rule's scope rests on, so it is a test and not a
+    // comment: if defaults ever stopped masking null, this goes red instead
+    // of the insert path quietly starting to need the rule too.
+    const row = await insertCatalogItem({ form: 'recurring', frequency: null });
+    expect(row.frequency).toBe('monthly');
+  });
+
+  it('does not fire for the forms that legitimately carry no frequency', async () => {
+    // A standing item's blank frequency is REQUIRED by `standing_no_frequency`
+    // three rules up. A recurring-only rule that over-fired here would make
+    // the pair jointly unsatisfiable and lock standing items out of the
+    // catalog entirely — which is why this control is worth its line.
+    await expect(insertCatalogItem({ form: 'standing' })).resolves.toBeTruthy();
+
+    // A one-off is dispatched by hand and has no period, so a blank frequency
+    // on it is legal — `duly_duty`'s rule is scoped to `recurring` for the
+    // same reason (see the cadence block in duty.object.ts).
+    const oneOff = await insertCatalogItem({ form: 'one_off' });
+    await expect(
+      data.update('duly_catalog_item', { id: oneOff.id, frequency: null }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('still admits a recurring item that states its own frequency', async () => {
+    const row = await insertCatalogItem({ form: 'recurring', frequency: 'annual' });
+    expect(row.frequency).toBe('annual');
+    await expect(
+      data.update('duly_catalog_item', { id: row.id, frequency: 'weekly' }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('is declared on both objects under one name with one message', () => {
+    // Structural, deliberately: this claim is about the DECLARATIONS agreeing,
+    // and the behavioural halves are the two suites either side of it. A
+    // divergence here is how "mirrored verbatim" quietly becomes two rules.
+    const rule = (o: typeof Duty | typeof CatalogItem) =>
+      (o.validations ?? []).find((v) => v.name === 'recurring_needs_frequency');
+
+    expect(rule(Duty)?.message).toBe(CADENCE_MESSAGES.recurring);
+    expect(rule(CatalogItem)?.message).toBe(CADENCE_MESSAGES.recurring);
+    expect(rule(Duty)?.severity).toBe('error');
+    expect(rule(CatalogItem)?.severity).toBe('error');
   });
 });
 
