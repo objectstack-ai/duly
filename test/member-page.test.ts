@@ -1,11 +1,8 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
-// The member page's own SOURCE TEXT, comments included — see the grep below
-// for why the text and not the parsed object. `?raw` is Vite's text import,
-// which vitest resolves natively; `test/raw-import.d.ts` declares it for tsc.
-import PAGE_SOURCE from '../src/pages/member.page.ts?raw';
+import { describe, expect, it } from 'vitest';
 
 import { MemberPage } from '../src/pages/member.page.js';
 import { dulyPages } from '../src/pages/index.js';
@@ -32,6 +29,17 @@ import { ManagerPermissionSet, MemberPermissionSet, AdminPermissionSet } from '.
  * "+ New" button reads as a feature, a peer comparison reads as a dashboard.
  * None of them turns anything red on its own. That is what this file is for.
  */
+
+/**
+ * The member page's own SOURCE TEXT, comments included — see the grep below for
+ * why the text and not the parsed object.
+ *
+ * `node:fs` rather than Vite's `?raw`, which also works: `test/node-builtins.d.ts`
+ * already declares `readFileSync` narrowly for `test/import-samples.test.ts`, and
+ * one way to read a file in a test beats two. Its `URL` overload is what makes
+ * `node:url` unnecessary here.
+ */
+const PAGE_SOURCE = readFileSync(new URL('../src/pages/member.page.ts', import.meta.url), 'utf8');
 
 type Rec = Record<string, unknown>;
 

@@ -75,10 +75,12 @@ import { definePage } from '@objectstack/spec/ui';
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Each of these was measured against the installed 17.2.0 packages before it
- * was written down, and each is filed at `objectstack-ai/objectui` rather than
- * faked here. What the page does INSTEAD is named in each entry.
+ * was written down, and each is FILED at `objectstack-ai/objectui` rather than
+ * faked here. What the page does INSTEAD is named in each entry, and every
+ * entry carries its issue number — a gap with no number is a workaround
+ * wearing a comment (AGENTS.md rule 9).
  *
- * **§1 — No record-context token for filter values.** `element:number`
+ * **§1 — No record-context token for filter values** (objectui#7297). `element:number`
  * (`object` + `aggregate: 'count'` + `filter`) is the component that renders a
  * number, and its `filter` is a plain `FilterCondition`. `resolveContextTokens`
  * (`@object-ui/core`, `filter-tokens.ts`) re-exports the spec's `CONTEXT_TOKENS`
@@ -91,7 +93,7 @@ import { definePage } from '@objectstack/spec/ui';
  *     record-scoped, and each renders a real count: `RelatedList` draws a badge
  *     carrying the server `total` for the collection, not the loaded page.
  *
- * **§2 — `record:related_list` cannot group.** `RecordRelatedListProps` has
+ * **§2 — `record:related_list` cannot group** (objectui#7301). `RecordRelatedListProps` has
  * `sort`, `filter`, `limit` and `columns`, and no `groupBy`; `grouping` exists
  * only on a grid LIST VIEW, which a related list does not render (it draws its
  * own table). "Grouped by frequency" is therefore not authorable at this
@@ -100,7 +102,7 @@ import { definePage } from '@objectstack/spec/ui';
  *     so each rhythm reads as a contiguous block. That is weaker than grouping
  *     and it is not pretended otherwise.
  *
- * **§3 — A page cannot declare its related lists read-only.** There is no
+ * **§3 — A page cannot declare its related lists read-only** (objectui#7300). There is no
  * `readonly` on `PageComponentSchema` — deliberately, ruled 2026-08-12:
  * "editability lives on fields". That ruling does not reach a related list's
  * "+ New" / row-edit / row-delete affordances, which are not fields: they are
@@ -114,13 +116,14 @@ import { definePage } from '@objectstack/spec/ui';
  *     `actions`, no editable component types, `readonly` chips) and the residue
  *     is filed. `test/member-page.test.ts` pins the authorable half.
  *
- * **§4 — Related-list columns cannot cross a lookup.** `RelatedList` resolves
+ * **§4 — Related-list columns cannot cross a lookup** (objectui#7301). `RelatedList` resolves
  * lookup LABELS but has no dotted-path column support, so "who assigned each"
  * cannot be `assignment.assigner` on a `duly_task` list.
  *   → INSTEAD: the task list carries the `assignment` column, which names the
  *     fan-out the task came out of. One click from the assigner, not zero.
  *
- * **§6 — `record:related_list` cannot bind to a multi-value field.** The other
+ * **§6 — `record:related_list` cannot bind to a multi-value field**
+ * (objectui#7299). The other
  * route to the assigner was a list of `duly_assignment` bound on `assignees`
  * (`multiple: true`) — the field that actually names this person. It was
  * authored, run against the seeded demo, and REFUSED by the driver, because
@@ -143,7 +146,8 @@ import { definePage } from '@objectstack/spec/ui';
  *     error, and "showing who assigned each" is the one line of this card that
  *     is not fully delivered. Recorded on the issue and filed upstream.
  *
- * **§5 — Two record pages for one object resolve by declaration order.**
+ * **§5 — Two record pages for one object resolve by declaration order**
+ * (objectui#7298).
  * `@objectstack/platform-objects` ships `sys_user_detail`
  * (`type: 'record'`, `object: 'sys_user'`, `isDefault: true`), and
  * `usePageAssignment` picks among candidates by `(b.priority ?? 0) -
@@ -156,7 +160,7 @@ import { definePage } from '@objectstack/spec/ui';
  *     this checkout is recorded in the PR.
  *
  * **§7 — The auto-appended discussion panel cannot be declined by a page, and
- * it carries a comment box.** Found in the browser, not in the schema.
+ * it carries a comment box** (objectui#7298, the second instance there). Found in the browser, not in the schema.
  * `RecordDetailView` appends a `RecordChatterPanel` to every record page when
  * the object does not set `enable.feeds: false`, hard-coded with
  * `showCommentInput: true`, `enableReactions: true`, `enableThreading: true`.
