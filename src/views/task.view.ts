@@ -175,10 +175,35 @@ export const TaskViews = defineView({
 
   listViews: {
     /**
-     * The frontline screen (deck p16). Column order is the deck's, read left
-     * to right the way the work is: what state it is in, what it is, who put
-     * it there, when it is owed, what the last word on it was, and whether
-     * anything is attached.
+     * The frontline screen (deck p16). Column order reads left to right the
+     * way the work is: WHAT IT IS first, then what state it is in, who put it
+     * there, when it is owed, and what the last word on it was.
+     *
+     * ── Why `subject` leads, and why that is not taste (#118) ───────────
+     * The first column is not merely the leftmost one: two renderers read it
+     * as the row's IDENTITY, so putting `status` there made the state of a
+     * thing stand in for the thing. Both consequences were measured on the
+     * demo, not reasoned about:
+     *
+     *   desktop grid   the Console makes the FIRST column the record link, so
+     *                  the only clickable thing on the row was the `Open`
+     *                  pill, and the task name sat beside it as inert text —
+     *                  while every user goes for the name.
+     *   390px cards    the card renderer takes the first column as the card
+     *                  TITLE and renders the RAW stored value, so every card
+     *                  was headed `open` / `in_progress` with the task itself
+     *                  demoted to a field.
+     *
+     * The two lenses below (`late`, `stalled`) and `board` already lead with
+     * `subject`; this one was the exception, and now is not.
+     *
+     * ── And `attachments` is gone from THIS lens only ─────────────────
+     * It was a dash on every row of the busiest screen in the product, which
+     * is width spent on the absence of a thing. Nothing is hidden and nothing
+     * is un-uploadable: the field is untouched, the shared `columns` array
+     * above still carries it on the other grids, and the upload #108 built
+     * lives in the record page's "Progress and attachments" group — which is
+     * where a person who has a file to attach is going anyway.
      *
      * ── `inlineEdit` is what makes the phrase one tap ────────────────────
      * Without it the row is read-only and reporting progress costs a record
@@ -204,12 +229,11 @@ export const TaskViews = defineView({
       type: 'grid',
       data,
       columns: [
-        { field: 'status' },
         { field: 'subject' },
+        { field: 'status' },
         { field: 'source' },
         { field: 'due_date' },
         { field: 'progress' },
-        { field: 'attachments' },
       ],
       inlineEdit: true,
       filter: [

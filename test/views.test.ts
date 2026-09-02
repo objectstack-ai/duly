@@ -180,16 +180,47 @@ describe('the lenses say what the product means', () => {
   });
 
   /**
-   * #108 — the frontline screen the deck's p16 draws.
+   * #108 / #118 — the frontline screen the deck's p16 draws.
    *
    * The column SET and its ORDER are both the card's, so this is not a
    * restatement of the file: a reorder here is a product change and should
-   * have to be argued for. The two new columns are the ones the whole card is
-   * about — a list without them is the list we already had.
+   * have to be argued for.
+   *
+   * #118 argued for one: `subject` leads and `attachments` is gone. `status`
+   * led until then, and the FIRST column is not merely the leftmost — the
+   * desktop grid makes it the record link and the 390px card renderer makes
+   * it the card title, so the row's link was the `Open` pill and every card
+   * was headed with a raw `open` / `in_progress`.
    */
   it('my_week carries the deck\'s columns, in the deck\'s order', () => {
     const fields = ((byName('my_week').view.columns as Rec[]) ?? []).map((c) => String(c.field));
-    expect(fields).toEqual(['status', 'subject', 'source', 'due_date', 'progress', 'attachments']);
+    expect(fields).toEqual(['subject', 'status', 'source', 'due_date', 'progress']);
+  });
+
+  /**
+   * The half of #118 that outlives the exact column list above: whatever the
+   * set becomes, the first column is the row's IDENTITY on both renderers, so
+   * it must be the field a person reads the row by. Asserted across every
+   * grid lens rather than on `my_week` alone — the defect was one lens
+   * disagreeing with the other four, and a per-view pin would not have said
+   * so.
+   */
+  it('every task grid leads with the column a person reads the row by', () => {
+    // Walked rather than listed by name, so a grid lens added later is covered
+    // the day it lands — and it reaches the container default (`list`), which
+    // `byName` cannot address.
+    const grids = allViews.filter((v) => v.object === 'duly_task' && v.view.type === 'grid');
+    expect(grids.length, 'no duly_task grid was found — this check would pass vacuously')
+      .toBeGreaterThanOrEqual(5);
+    for (const grid of grids) {
+      const first = String(((grid.view.columns as Rec[]) ?? [])[0]?.field);
+      expect(
+        first,
+        `${grid.where} leads with \`${first}\` — the first column is the record link on `
+        + 'desktop and the card TITLE at 390px, so a status or a date there makes the row '
+        + 'link a pill and titles every card with a raw stored value (#118)',
+      ).toBe('subject');
+    }
   });
 
   /**

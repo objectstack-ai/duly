@@ -109,6 +109,15 @@ describe('duly_member — wiring', () => {
     expect(people!.type).toBe('object');
     expect(people!.objectName).toBe('sys_user');
     expect(people!.requiresObject).toBe('sys_user');
+    // #118 — and it must name a view. With no `viewName` the Console lands on
+    // the object's DEFAULT view, which for `sys_user` is `me` ("My Profile"),
+    // filtered `id == {current_user_id}`: the manager who came here to look at
+    // other people got exactly one row, themselves. `all_users` is the
+    // platform's own unfiltered lens.
+    expect(
+      people!.viewName,
+      'People with no viewName lands on sys_user\'s default view — `me`, one row (#118)',
+    ).toBe('all_users');
   });
 
   it('every component carries a stable id', () => {
