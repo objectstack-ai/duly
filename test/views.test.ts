@@ -179,6 +179,99 @@ describe('the lenses say what the product means', () => {
     expect(byName('schedule').view.gantt as Rec).not.toHaveProperty('colorField');
   });
 
+  /**
+   * #108 — the frontline screen the deck's p16 draws.
+   *
+   * The column SET and its ORDER are both the card's, so this is not a
+   * restatement of the file: a reorder here is a product change and should
+   * have to be argued for. The two new columns are the ones the whole card is
+   * about — a list without them is the list we already had.
+   */
+  it('my_week carries the deck\'s columns, in the deck\'s order', () => {
+    const fields = ((byName('my_week').view.columns as Rec[]) ?? []).map((c) => String(c.field));
+    expect(fields).toEqual(['status', 'subject', 'source', 'due_date', 'progress', 'attachments']);
+  });
+
+  /**
+   * Inline edit is what makes reporting progress ONE TAP rather than a record
+   * page — and it is deliberately not on the manager lenses, because
+   * "Managers do not enter status; assigning is their only write" is a product
+   * invariant and an editable status cell on a team lens breaks it one row at
+   * a time.
+   */
+  it('the owner\'s lenses edit in place; the manager\'s lenses do not', () => {
+    for (const name of ['my_week', 'board']) {
+      expect(byName(name).view.inlineEdit, `${name} is an owner screen — the phrase is one tap`).toBe(true);
+    }
+    for (const name of ['late', 'stalled', 'by_unit']) {
+      expect(
+        byName(name).view.inlineEdit,
+        `${name} is a manager lens — inline status entry is the invariant being broken quietly`,
+      ).not.toBe(true);
+    }
+  });
+
+  /**
+   * #108 / deck p17 — the card face carries where it came from, when it is
+   * owed, and the last word on it. Every card field must also be in the view's
+   * own `columns`: the projection is built from those alone, so a face field
+   * missing from them arrives `undefined` and renders blank with nothing in
+   * error (the same defect `business_unit` had on `by_unit`).
+   */
+  it('the board card shows source, due and progress — and projects them', () => {
+    const board = byName('board').view;
+    const face = ((board.kanban as Rec).columns as string[]) ?? [];
+    for (const field of ['source', 'due_date', 'progress']) {
+      expect(face, `the deck asks for ${field} on the card`).toContain(field);
+    }
+    const projected = new Set(((board.columns as Rec[]) ?? []).map((c) => String(c.field)));
+    for (const field of face) {
+      expect(
+        projected,
+        `\`${field}\` is on the card face but not in \`columns\` — it will arrive undefined`,
+      ).toContain(field);
+    }
+  });
+
+  /**
+   * Swimlanes are OFF on purpose, and this pin is the decision rather than a
+   * restatement of the file.
+   *
+   * They are authorable — `grouping: { fields: [{ field: 'source' }] }` on
+   * this view turns them on, confirmed in a browser. Turning them on also
+   * renders the status column-header row at height 0 on console 17.2.0, so the
+   * board loses `OPEN / IN PROGRESS / DONE / SKIPPED` entirely — filed as
+   * objectstack-ai/objectui#7303. The view file carries the measurement; what
+   * must not happen is
+   * somebody adding the key back because the deck asks for lanes, without
+   * knowing it takes the column titles with it.
+   *
+   * ⛔ `kanban.swimlaneField` is a different mistake and fails `pnpm validate`
+   * — the schema is strict. Pinned so the failure has an explanation attached.
+   */
+  it('the board carries no swimlane key while the header row is broken upstream', () => {
+    const board = byName('board').view;
+    expect(board.kanban, 'the strict kanban schema has no swimlaneField — the key is `grouping`')
+      .not.toHaveProperty('swimlaneField');
+    expect(
+      board.grouping,
+      'swimlanes render the status column headers at height 0 — see the view file before re-adding',
+    ).toBeUndefined();
+  });
+
+  /**
+   * The board writes `status` on every card drag, so its rows must be the
+   * viewer's own — "Managers do not enter status" is a product invariant, and
+   * a board of other people's tasks is a one-gesture way past it. It is also
+   * what keeps the lens inside one fetched page; the view file carries the
+   * measurement.
+   */
+  it('the board shows only the viewer\'s own tasks', () => {
+    expect(byName('board').view.filter).toEqual([
+      { field: 'owner', operator: 'equals', value: '{current_user_id}' },
+    ]);
+  });
+
   /** Item counts are never ranked or compared — not as a sort, not as a total. */
   it('no view orders or totals anything by a count', () => {
     for (const { where, view } of allViews) {
