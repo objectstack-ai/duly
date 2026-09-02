@@ -230,6 +230,38 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
     const value = str(c.parent.value);
     return id(c) && value ? ['objects', id(c)!, 'fields', c.path[1]!, 'options', value] : undefined;
   }),
+  'object.fields{}.group': machine('field-group key — matches an `object.fieldGroups[].key`'),
+  /**
+   * A record page's section headings (#108).
+   *
+   * ── Which bundle slot, and why it is `_sections` ─────────────────────
+   * Measured on 17.2.0 rather than inferred, because the two halves of the
+   * platform disagree and only one of them is what a user sees:
+   *
+   *   `translateObject(obj, bundle, { locale })` does NOT rewrite
+   *   `fieldGroups[].label`. Fed a bundle carrying `_sections.basics.label`
+   *   it returns the group's authored English untouched (the object's own
+   *   `label` and every field `label` beside it do translate).
+   *
+   *   The CONSOLE does translate it, and that is the surface with a reader.
+   *   Its form runs the spec's `deriveFieldGroupLayout` and emits one section
+   *   per group with `name` set to the group's `key`, then resolves the
+   *   heading through `sectionLabel(object, name, fallback)` — which reads
+   *   `objects.<object>._sections.<name>.label`, the slot
+   *   `ObjectTranslationDataSchema` declares for exactly this shape.
+   *
+   * So the key below is real and the heading is Chinese in a zh-CN console.
+   * It is NOT `untranslatable`: a verdict of that kind would be wrong (a key
+   * exists and works) and would put an entry in the exemption list that the
+   * gate then has to be told to ignore.
+   */
+  'object.fieldGroups[].label': translate((c) => {
+    const group = str(c.parent.key);
+    return id(c) && group ? ['objects', id(c)!, '_sections', group, 'label'] : undefined;
+  }),
+  'object.fieldGroups[].key': machine('field-group key — the section name the layout is derived on'),
+  'object.fieldGroups[].icon': machine('icon name'),
+  'object.fieldGroups[].collapse': machine('section collapse behaviour'),
   'object.fields{}.options[].value': machine('the stored option value — the option key itself'),
   'object.fields{}.options[].color': machine('option colour'),
   'object.fields{}.type': machine('field type'),
