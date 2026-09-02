@@ -9,6 +9,7 @@ import { ADMIN, PEOPLE, UNITS } from '../src/data/demo-org.js';
 import { CATALOG_ITEMS, DUTIES } from '../src/data/demo-catalog.js';
 import { AD_HOC_TASKS, ASSIGNMENTS } from '../src/data/demo-assignments.js';
 import { SEEDED_TASKS, SKIPS, TODAY } from '../src/data/demo-history.js';
+import { planDispatch } from '../src/jobs/dispatch.plan.js';
 
 /**
  * The demo seed, asserted against a REAL BOOTED KERNEL with the declarative
@@ -357,6 +358,86 @@ describe('view populations — what an evaluator actually opens', () => {
     // here can enter a measure. Assert the rows carry nothing scoreable
     // either — no link into the governed population at all.
     expect(entries.every((entry) => !entry.related_task)).toBe(true);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('the review pipeline has something to show (#107)', () => {
+  it('seeds a mix, not thirty approved rows', async () => {
+    // A fixture where every duty is approved makes three screens untestable
+    // and two of them unshowable: "To confirm" and "To review" are empty, and
+    // "an unapproved duty dispatches nothing" is a claim with no instance
+    // behind it.
+    const duties = await all('duly_duty');
+    const byState = new Map<string, number>();
+    for (const duty of duties) {
+      const state = String(duty.review_status);
+      byState.set(state, (byState.get(state) ?? 0) + 1);
+    }
+    expect(byState.get('to_confirm') ?? 0, 'duties waiting on their owner').toBeGreaterThanOrEqual(2);
+    expect(byState.get('to_review') ?? 0, 'duties waiting on a reviewer').toBeGreaterThanOrEqual(1);
+    expect(byState.get('returned') ?? 0, 'returned duties').toBe(1);
+    // …and the overwhelming majority still work, or the demo opens on an app
+    // that dispatches nothing.
+    expect(byState.get('approved') ?? 0).toBeGreaterThan(duties.length / 2);
+    // Every row is in one of the four declared states — a blank would not
+    // dispatch and would render as an empty pipeline stage.
+    const declared = new Set(['to_confirm', 'to_review', 'approved', 'returned']);
+    expect([...byState.keys()].filter((state) => !declared.has(state))).toEqual([]);
+  });
+
+  it('the returned duty carries the reason the rule requires', async () => {
+    const returned = (await all('duly_duty')).filter((duty) => duty.review_status === 'returned');
+    expect(returned).toHaveLength(1);
+    // `returned_needs_note` is an ordinary script rule and is NOT skipped on
+    // the seed path (only `state_machine` is), so a returned row without a
+    // note would have been refused outright and this row would be missing —
+    // which is worth stating, because "the row is here" is the evidence.
+    expect(String(returned[0]?.review_note ?? '').length).toBeGreaterThan(20);
+  });
+
+  it('leaves the evaluator their own duty in each state they can advance alone', async () => {
+    // The demo walk: the record page's pipeline is clickable on the first
+    // login, without a second account. `to_confirm → to_review` and
+    // `returned → to_review` are the owner's own steps; the two verdicts are
+    // deliberately NOT self-issuable (see `duty.object.ts`), so those are
+    // walked on somebody else's row from "To review".
+    const me = await userId(ADMIN);
+    const mine = (await all('duly_duty')).filter((duty) => String(duty.owner) === me);
+    const states = new Set(mine.map((duty) => String(duty.review_status)));
+    expect(states.has('to_confirm'), 'no unconfirmed duty on the demo account').toBe(true);
+    expect(states.has('returned'), 'no returned duty on the demo account').toBe(true);
+  });
+
+  it('an unapproved duty stops the NEXT dispatch and keeps the history it has', async () => {
+    // The fixture's own statement of the product rule. History is planned as
+    // `approved` (see `demo-history.ts`), so these rows DO carry tasks — and
+    // the planner would refuse them today, which is what makes "returning a
+    // duty stops tomorrow's work, not yesterday's" visible in the demo rather
+    // than only in a unit test.
+    const unapproved = (await all('duly_duty')).filter((duty) => duty.review_status !== 'approved');
+    expect(unapproved.length).toBeGreaterThanOrEqual(4);
+    const plan = planDispatch({
+      duties: unapproved.map((duty) => ({
+        id: String(duty.id),
+        name: String(duty.name),
+        form: String(duty.form),
+        status: String(duty.status),
+        owner: String(duty.owner),
+        source: String(duty.source),
+        review_status: String(duty.review_status),
+        frequency: duty.frequency as string | null,
+        due_anchor: duty.due_anchor as string | null,
+        due_offset_days: duty.due_offset_days as number | null,
+        lead_days: duty.lead_days as number | null,
+        timezone: String(duty.timezone),
+      })),
+      now: new Date(),
+    });
+    expect(plan.drafts, 'an unapproved duty drafted a task').toEqual([]);
+    // And for the right reason on every one of them — `not_approved`, not
+    // `standing` or `not_active` happening to cover for it.
+    expect(new Set(plan.skipped.map((skip) => skip.reason))).toEqual(new Set(['not_approved']));
   });
 });
 

@@ -292,6 +292,83 @@ export const Duty = ObjectSchema.create({
       ],
     }),
 
+
+    // ── Review — confirmed by the owner, approved by somebody else ────────
+    //
+    // A duty that nobody has approved does not dispatch (`dispatch.plan.ts`
+    // refuses it with `not_approved`). That is the whole point of the column:
+    // an imported or self-created list is VISIBLE immediately and PRODUCTIVE
+    // only once a second person has said so.
+    //
+    // `trackHistory: true` is already set on this object, and that is what
+    // renders the clickable status pipeline on the record page — measured:
+    // app-declared actions render nowhere in the Console today
+    // (objectui#7234), while a tracked `select` gets the platform's own
+    // pipeline for free. So the whole workflow rides this field rather than a
+    // pair of custom buttons that would not appear.
+    review_status: Field.select({
+      label: 'Review status',
+      required: true,
+      options: [
+        { label: 'To confirm', value: 'to_confirm', color: '#8C6512' },
+        { label: 'To review', value: 'to_review', color: '#2E7C8E' },
+        // ── The two verdicts, and why they carry a predicate ──────────────
+        // `visibleWhen` is the ONE authoring surface on this platform whose
+        // predicate scope binds the caller (`current_user`) as well as the
+        // record — measured on `@objectstack/formula` 17.2.0, and enforced
+        // server-side, not just in the picker: ObjectQL's rule validator
+        // evaluates the PICKED option's `visibleWhen` on every insert and
+        // update and rejects the write with `invalid_option` when it is
+        // false. `SelectOptionSchema` says so in as many words ("Client-side
+        // hiding is UX, not authorization … the server MUST also reject
+        // writes of its value"), which is why authorization lives here and
+        // NOT in a hand-written hook.
+        //
+        // The predicate is the RECORD RELATIONSHIP, not a position, and that
+        // is a decision worth stating because the card asked for a position:
+        //
+        //  - `'duly_manager' in current_user.positions` evaluates and
+        //    enforces correctly (measured both ways). But `current_user
+        //    .positions` is populated from `sys_user_position` rows, which a
+        //    PACKAGE may not declare (`src/security/positions.ts`) — they are
+        //    a manual rollout step. In every deployment that has not done it
+        //    yet, including `pnpm demo`, the list is empty, so a position
+        //    predicate fails CLOSED and nobody can approve anything. A gate
+        //    that is inert-or-fatal depending on a manual step is not a gate.
+        //  - `record.owner != current_user.id` needs nothing installed and
+        //    says the thing the product actually means: a review you issue on
+        //    your own list is not a review. WHO ELSE may write the record at
+        //    all is already decided one layer up, by the permission set's
+        //    write scope — the platform's own axis for that question.
+        //
+        // Fail-open case, stated because it is real: a write with no acting
+        // user (the declarative seed, an in-process job) cannot bind
+        // `current_user`, the predicate fails to evaluate, and the platform
+        // logs `option visibleWhen … failed to evaluate — allowed through`
+        // and admits the write. That is what lets the demo seed carry
+        // `approved` rows, and it means this predicate is a rule about
+        // PEOPLE, not a containment boundary for server code.
+        { label: 'Approved', value: 'approved', color: '#35674D', visibleWhen: P`record.owner != current_user.id` },
+        { label: 'Returned', value: 'returned', color: '#A33A2B', visibleWhen: P`record.owner != current_user.id` },
+      ],
+      // Where a new duty enters the pipeline, decided by WHO PUT IT THERE.
+      // The organisation's lists (`catalog`, `assigned`) need the owner to
+      // confirm they are theirs before anyone approves them; a self-declared
+      // duty is already confirmed by the act of writing it down, so it goes
+      // straight to review. Same conditional-default idiom as the cadence
+      // fields above, and it works for the same reason: `source` is declared
+      // higher up this map, so `record.source` is already resolved — from the
+      // payload, or from `source`'s own option default — by the time this
+      // runs.
+      defaultValue: F`record.source == "self" ? "to_review" : "to_confirm"`,
+      description: 'Where this duty stands in confirmation and approval. Only an approved duty dispatches tasks — a returned one stops the same day, which is the point of returning it.',
+    }),
+
+    review_note: Field.textarea({
+      label: 'Return reason',
+      description: 'Why the duty was sent back, in words the owner can act on. Required to return one (`returned_needs_note`), and deliberately not cleared afterwards — the last return is worth reading while the correction is being made.',
+    }),
+
     effective_from: Field.date({ label: 'Effective from' }),
     effective_to: Field.date({ label: 'Effective to' }),
 
@@ -319,10 +396,14 @@ export const Duty = ObjectSchema.create({
     { fields: ['status'] },
     { fields: ['form'] },
     { fields: ['source'] },
+    // The dispatcher's selection filter is `status + form + review_status`
+    // (`dispatch.job.ts#readDispatchableDuties`), and it is the one query in
+    // this app that runs over every duty in the tenant, every night.
+    { fields: ['review_status'] },
   ],
 
   nameField: 'name',
-  highlightFields: ['name', 'form', 'frequency', 'owner', 'status'],
+  highlightFields: ['name', 'form', 'frequency', 'owner', 'status', 'review_status'],
 
   validations: [
     {
@@ -364,6 +445,76 @@ export const Duty = ObjectSchema.create({
       severity: 'error',
       message: 'Grace days measures lateness against a task\'s due date — a standing duty never has a task, so it never has one.',
       condition: P`record.form == "standing" && !isBlank(record.grace_days)`,
+    },
+    {
+      // ── The pipeline, as a table the engine enforces ────────────────────
+      // `to_confirm → to_review → approved | returned → to_review`, and
+      // nothing else. Declared as the platform's `state_machine` rule rather
+      // than as three script predicates over `previous.review_status`,
+      // because this is the shape the platform reads: ADR-0020 retired the
+      // standalone `workflow` type and made a record's legal transitions a
+      // validation rule with a flat `{ from: [to] }` table, and the rule
+      // validator enforces it on the UPDATE path with the prior row in hand.
+      //
+      // Two details in here are load-bearing, both measured on
+      // `@objectstack/objectql` 17.2.0:
+      //
+      //  - An empty array is how a state is made TERMINAL, and omitting a
+      //    key is the opposite: the validator does `const allowed =
+      //    transitions[from]; if (!Array.isArray(allowed)) return null;`, so a
+      //    state with no row accepts ANY transition out of it. Every state
+      //    this pipeline has is therefore written down, including the ones
+      //    with one way out.
+      //  - `initialStates` closes the INSERT door, which `transitions` does
+      //    not cover at all: a `select` accepts any declared option on
+      //    create, so without this a duty could be born `approved` and
+      //    dispatch immediately — which is the defect this whole card exists
+      //    to close, arriving through the other door.
+      //
+      // The seed and the historical-import path are exempt by design, not by
+      // accident: the platform skips `state_machine` rules whenever the write
+      // context carries `seedReplay` (the seed loader always does) or
+      // `skipStateMachine` (what the REST import endpoint sets for
+      // `treatAsHistorical`). So a customer importing an existing list that is
+      // already approved lands it mid-pipeline through the platform's own
+      // door, and nobody needs a back door here.
+      name: 'review_status_transitions',
+      type: 'state_machine',
+      field: 'review_status',
+      severity: 'error',
+      message: 'That is not a step this review can take. A duty goes to confirm → to review → approved or returned, and a returned one goes back to review once it has been corrected.',
+      transitions: {
+        to_confirm: ['to_review'],
+        to_review: ['approved', 'returned'],
+        returned: ['to_review'],
+        // ── `approved → returned`, which the card's table does not draw ───
+        // Deliberate, and worth the deviation. Measured: with `approved: []`
+        // an approved duty can never be corrected by anyone — no owner, no
+        // manager, no administrator; the only doors left are a historical
+        // import and a re-seed. A cadence that turns out wrong, a duty
+        // approved on the wrong person, a catalog sync that replays a change
+        // nobody re-read — each is a live duty dispatching work every night
+        // with no way back into the pipeline that governs it.
+        //
+        // Returning is the one way out, and it is the auditable one:
+        // `returned_needs_note` makes the reason mandatory, and the tasks
+        // already dispatched are untouched — returning stops the NEXT run,
+        // it does not retract work already owed. Approval is still not
+        // self-issuable (see the option predicates above), so this is not a
+        // loophole around review; it is the correction path review needs.
+        approved: ['returned'],
+      },
+      initialStates: ['to_confirm', 'to_review'],
+    },
+    {
+      // Returning a duty without saying why makes the return unactionable:
+      // the owner sees `returned` and has nothing to correct. Same shape and
+      // the same reasoning as `duly_task`'s `skip_needs_reason`.
+      name: 'returned_needs_note',
+      type: 'script',
+      severity: 'error',
+      message: 'Say why the duty is being returned — the owner needs something to act on.',
+      condition: P`record.review_status == "returned" && isBlank(record.review_note)`,
     },
     {
       name: 'effective_window_ordered',

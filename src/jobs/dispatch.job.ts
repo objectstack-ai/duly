@@ -5,6 +5,7 @@ import { defineJob } from '@objectstack/spec';
 import {
   DISPATCH_DUTY_FIELDS,
   DISPATCHABLE_FORM,
+  DISPATCHABLE_REVIEW_STATUS,
   DISPATCHABLE_STATUS,
   FAULT_SKIP_REASONS,
   nextDispatchedPeriod,
@@ -300,14 +301,22 @@ export async function runDispatch(engine: DispatchEngine, options: DispatchOptio
 }
 
 /**
- * Every active recurring duty, paged.
+ * Every active, approved, recurring duty, paged.
  *
- * The filter is deliberately only the two zone-independent facts. The
+ * The filter is deliberately only the three zone-independent facts. The
  * effective-window test is NOT pushed into the query: `effective_from` and
  * `effective_to` are calendar days in the DUTY's own zone, and "today" is a
  * different day in Auckland and in Los Angeles at the same instant, so a single
  * SQL predicate cannot be right for every row it matches. The window test
  * belongs where the zone is known, which is the planner.
+ *
+ * `review_status` is pushed down here AND checked again in the planner, and
+ * that is not a redundant belt: this query is one of two callers. A backfill
+ * driven straight through `planDispatch` — and every planner test — never
+ * passes this filter at all, so the planner's own `not_approved` check is what
+ * makes the rule true for both. What the filter adds is that the nightly sweep
+ * does not read, page and walk every unapproved duty in the tenant to discard
+ * them one at a time.
  */
 async function readDispatchableDuties(engine: DispatchEngine): Promise<DispatchDuty[]> {
   const duties: DispatchDuty[] = [];
@@ -315,7 +324,7 @@ async function readDispatchableDuties(engine: DispatchEngine): Promise<DispatchD
     const page = (await engine.find(
       'duly_duty',
       {
-        where: { status: DISPATCHABLE_STATUS, form: DISPATCHABLE_FORM },
+        where: { status: DISPATCHABLE_STATUS, form: DISPATCHABLE_FORM, review_status: DISPATCHABLE_REVIEW_STATUS },
         fields: [...DISPATCH_DUTY_FIELDS],
         // A stable total order, or paging re-reads and skips rows.
         orderBy: [{ field: 'id', order: 'asc' }],

@@ -170,6 +170,10 @@ const id = (ctx: KeyContext): string | undefined => str(ctx.ids.name);
  */
 const OPAQUE: Readonly<Record<string, string>> = {
   'object.indexes': 'index definitions — field names and uniqueness scopes',
+  // `{ fromState: [toState] }` — state VALUES on both sides, never a label.
+  // Opaque rather than one verdict per state, so adding a state to a pipeline
+  // does not also mean adding a row to this table.
+  'object.validations[].transitions': 'state-machine transition table — stored state values',
   'object.fields{}.summaryOperations': 'rollup wiring — object, field and function names',
   'object.enable': 'capability flags',
   'view.data': 'the view\'s data binding — provider and object name',
@@ -232,6 +236,11 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   }),
   'object.fields{}.options[].value': machine('the stored option value — the option key itself'),
   'object.fields{}.options[].color': machine('option colour'),
+  // Per-option `visibleWhen` (#107) — a CEL predicate over `record` and
+  // `current_user`, evaluated by the form AND by the write path. Machine, like
+  // every other expression envelope in this table.
+  'object.fields{}.options[].visibleWhen.dialect': machine('expression dialect'),
+  'object.fields{}.options[].visibleWhen.source': machine('CEL source'),
   'object.fields{}.type': machine('field type'),
   'object.fields{}.reference': machine('lookup target object'),
   'object.fields{}.deleteBehavior': machine('referential action'),
@@ -253,6 +262,11 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'object.validations[].events[]': machine('lifecycle events'),
   'object.validations[].condition.dialect': machine('expression dialect'),
   'object.validations[].condition.source': machine('CEL source'),
+  // The `state_machine` variant's own keys (#107). `field` and
+  // `initialStates` name a field and stored values; the transition table
+  // itself is opaque above.
+  'object.validations[].field': machine('the state field a state_machine rule governs'),
+  'object.validations[].initialStates[]': machine('stored states a record may be created in'),
 
   // ── view (walked per expanded view item, so `list` and `listViews.*`
   //    normalise to the same paths) ────────────────────────────────────────
