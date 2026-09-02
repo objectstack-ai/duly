@@ -499,7 +499,6 @@ export const dulyChinese = defineTranslationBundle({
           standing_duties: { title: '长期持有' },
           recent_activity: { title: '最近触碰' },
           assigned_tasks: { title: '被指派的工作' },
-          assigned_by_whom: { title: '由谁指派' },
         },
       },
     },

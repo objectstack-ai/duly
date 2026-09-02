@@ -134,7 +134,7 @@ describe('duly_member — `duly_log_entry` is absent', () => {
       .filter((name): name is string => typeof name === 'string');
     expect(objects).not.toContain('duly_log_entry');
     // And positively: the page reads these three and nothing else.
-    expect([...new Set(objects)].sort()).toEqual(['duly_assignment', 'duly_duty', 'duly_task', 'sys_user_position']);
+    expect([...new Set(objects)].sort()).toEqual(['duly_duty', 'duly_task', 'sys_user_position']);
   });
 });
 
@@ -153,8 +153,6 @@ describe('duly_member — read-only', () => {
     'element:button',
     'element:text_input',
     'element:record_picker',
-    'record:chatter',
-    'record:discussion',
   ];
 
   it('declares no component type that writes', () => {
@@ -162,6 +160,26 @@ describe('duly_member — read-only', () => {
       .map((component) => String(component.type))
       .filter((type) => WRITING_TYPES.includes(type));
     expect(offenders).toEqual([]);
+  });
+
+  it('shuts the discussion panel rather than letting the host append one', () => {
+    // `record:chatter` / `record:discussion` is NOT on the list above, and that
+    // is the whole subtlety of gap §7. `RecordDetailView` appends a chatter
+    // panel — comment box, reactions, threaded replies, all hard-coded on — to
+    // every record page whose object does not set `enable.feeds: false`.
+    // `sys_user` is a locked platform object so that switch is not ours, and
+    // the renderer's own `disableDiscussion` opt-out is not a `PageSchema` key.
+    // Declaring the component is the ONLY way to own its configuration, so the
+    // page declares exactly one, with every write off. Removing this node does
+    // not remove the panel — it hands it back to the host with the writes ON,
+    // which is why this is pinned as a positive assertion and not an absence.
+    const discussions = components.filter((component) =>
+      component.type === 'record:discussion' || component.type === 'record:chatter');
+    expect(discussions.length, 'exactly one, or the host appends its own').toBe(1);
+    const feed = (props(discussions[0]!).feed ?? {}) as Rec;
+    expect(feed.showCommentInput, 'a comment box on a person\'s record').toBe(false);
+    expect(feed.enableReactions, 'a reaction is a write').toBe(false);
+    expect(feed.enableThreading, 'a reply is a write').toBe(false);
   });
 
   it('offers no add-existing picker and no row actions', () => {
@@ -266,7 +284,8 @@ describe('duly_member — content', () => {
       // 6. Assigned to them
       'heading_assigned',
       'assigned_tasks',
-      'assigned_by_whom',
+      // Not a section — the shut discussion panel (gap §7).
+      'member_history',
     ]);
   });
 
@@ -385,19 +404,22 @@ describe('duly_member — content', () => {
     const sources = (Task.fields.source as unknown as { options: Array<{ value: string }> }).options;
     expect(sources.map((option) => option.value)).toContain('assigned');
 
-    // The assigner is one lookup hop from the task
-    // (`duly_task.assignment → duly_assignment.assigner`) and a related-list
-    // column cannot cross a lookup (gap §4) — so the answer to "showing who
-    // assigned each" is the sibling list, where `assigner` is an ordinary
-    // column on the object being listed.
-    const who = byId('assigned_by_whom');
-    expect(props(who).objectName).toBe('duly_assignment');
-    expect(props(who).relationshipField).toBe('assignees');
-    expect(props(who).columns).toContain('assigner');
+    // …and the `assignment` column, which is as close to "who assigned each"
+    // as this page can get. Both routes to `duly_assignment.assigner` are
+    // closed: a related-list column cannot cross a lookup (gap §4), and a
+    // related list bound on `assignees` is refused by the driver, because
+    // `RelatedList` builds its parent filter as bare equality and `assignees`
+    // is `multiple: true` (gap §6 — measured, 400 INVALID_FILTER).
+    expect(props(tasks).columns).toContain('assignment');
     expect(Object.keys(Assignment.fields)).toContain('assigner');
-    // `assignees` is the multi-user field one assignment fans out across; the
-    // relationship only holds because it is the field naming the people.
     expect((Assignment.fields.assignees as unknown as { multiple?: boolean }).multiple).toBe(true);
+    // The pin on the gap: no list on this page binds a multi-value field, and
+    // the page says why. Delete this when a membership binding lands.
+    for (const list of relatedLists) {
+      expect(props(list).relationshipField, 'a related list bound to a multi-value field')
+        .not.toBe('assignees');
+    }
+    expect(PAGE_SOURCE).toContain('§6 — `record:related_list` cannot bind to a multi-value field');
   });
 });
 

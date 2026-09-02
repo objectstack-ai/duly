@@ -385,6 +385,7 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'page.regions[].components[].properties.objectName': machine('bound object'),
   'page.regions[].components[].properties.relationshipField': machine('field on the child object holding this record'),
   'page.regions[].components[].properties.layout': machine('highlight strip orientation'),
+  'page.regions[].components[].properties.position': machine('panel dock position'),
   'page.regions[].components[].properties.variant': machine('text style variant'),
   // `element:text`'s `content` is the ONE string that component renders, and
   // `PageTranslation.components` has no key for it — measured on

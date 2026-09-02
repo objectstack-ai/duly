@@ -117,9 +117,31 @@ import { definePage } from '@objectstack/spec/ui';
  * **§4 — Related-list columns cannot cross a lookup.** `RelatedList` resolves
  * lookup LABELS but has no dotted-path column support, so "who assigned each"
  * cannot be `assignment.assigner` on a `duly_task` list.
- *   → INSTEAD: "Assigned to them" is two lists — the tasks themselves (carrying
- *     the `assignment` they came from), and the assignments the person is named
- *     on, which carry `assigner` as an ordinary column.
+ *   → INSTEAD: the task list carries the `assignment` column, which names the
+ *     fan-out the task came out of. One click from the assigner, not zero.
+ *
+ * **§6 — `record:related_list` cannot bind to a multi-value field.** The other
+ * route to the assigner was a list of `duly_assignment` bound on `assignees`
+ * (`multiple: true`) — the field that actually names this person. It was
+ * authored, run against the seeded demo, and REFUSED by the driver, because
+ * `RelatedList` builds its parent filter as bare equality
+ * (`{[relationshipField]: parentId}`) with no membership spelling available to
+ * the author:
+ *
+ *     GET /api/v1/data/duly_assignment?filter=["assignees","=","<id>"]
+ *     400 INVALID_FILTER — The bare equality spelling { "assignees": value }
+ *     WAS NOT APPLIED: "assignees" is a multi-value (or otherwise JSON-valued)
+ *     field, stored by this driver as a JSON TEXT column … Use "$contains" for
+ *     membership …
+ *
+ * Credit where it is due: the driver refuses LOUDLY and names the working
+ * spelling, so this is a gap rather than a silent wrong answer. But
+ * `$contains` is not reachable from `RecordRelatedListProps` — the parent
+ * filter is the component's, not the author's — so the list cannot be written
+ * correctly at all.
+ *   → INSTEAD: nothing. The list was removed rather than left rendering an
+ *     error, and "showing who assigned each" is the one line of this card that
+ *     is not fully delivered. Recorded on the issue and filed upstream.
  *
  * **§5 — Two record pages for one object resolve by declaration order.**
  * `@objectstack/platform-objects` ships `sys_user_detail`
@@ -132,6 +154,28 @@ import { definePage } from '@objectstack/spec/ui';
  *     left `false` here so this page never claims to be the default while the
  *     platform's page claims the same thing, and the observed resolution on
  *     this checkout is recorded in the PR.
+ *
+ * **§7 — The auto-appended discussion panel cannot be declined by a page, and
+ * it carries a comment box.** Found in the browser, not in the schema.
+ * `RecordDetailView` appends a `RecordChatterPanel` to every record page when
+ * the object does not set `enable.feeds: false`, hard-coded with
+ * `showCommentInput: true`, `enableReactions: true`, `enableThreading: true`.
+ * `sys_user` is a platform object under `protection: { lock: 'full' }`, so the
+ * object-side switch is not ours; the renderer's own opt-out —
+ * `assignedPage.disableDiscussion === true`, named in its comment — is NOT a
+ * key `PageSchema` declares, and `PageSchema` is a `strictObject`, so writing
+ * it is a hard parse error. Same shape as §5: the renderer reads a key the
+ * author cannot write.
+ *   → INSTEAD, and this one IS closed: placing an EXPLICIT
+ *     `record:discussion` suppresses the auto-append
+ *     (`hasExplicitDiscussion`), and the explicit node's config is the
+ *     author's. `feed.showCommentInput: false` is honoured — the composer is
+ *     gated on `config?.showCommentInput !== false` in
+ *     `RecordActivityTimeline`, with objectui's own test pinning
+ *     "hides it even when the host CAN persist a comment". So the page ships
+ *     the record's history with every write affordance off, which is what
+ *     "read-only" has to mean here. Filed anyway: closing a write surface
+ *     should not require declaring the component that opens it.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * WHAT AN EMPTY PAGE MEANS HERE
@@ -452,29 +496,45 @@ export const MemberPage = definePage({
             relationshipField: 'owner',
             title: 'Assigned work',
             filter: [{ field: 'source', operator: 'equals', value: 'assigned' }],
-            // `assignment` is the fan-out this task came out of. The person who
-            // raised it lives one hop further on (`duly_assignment.assigner`),
-            // which a related-list column cannot reach — see gap §4 and the
-            // sibling list below, which can.
+            // `assignment` is the fan-out this task came out of, and it is as
+            // close to "who assigned each" as this page can get: the assigner
+            // lives one hop further on (`duly_assignment.assigner`) and BOTH
+            // routes to it are closed — see gaps §4 and §6. The assignment's
+            // own name is one click from the answer, which is the honest
+            // remainder rather than a fake.
             columns: ['subject', 'assignment', 'status', 'due_date'],
             sort: [{ field: 'due_date', order: 'asc' }],
             limit: 20,
           },
         },
+
+        // ── Not a seventh section — a write surface being shut ────────────
+        // This node exists to REPLACE the panel the host would otherwise
+        // append, not to add one. See gap §7: `RecordDetailView` appends a
+        // chatter panel with a comment box, reactions and threaded replies to
+        // every record page whose object does not opt out, `sys_user` cannot
+        // opt out (platform object, locked), and the renderer's own
+        // `disableDiscussion` escape is unauthorable. Declaring the component
+        // is what takes its configuration back.
+        //
+        // All three writes off. What remains is the record's own change
+        // history, which is read-only, is not the work log, and is not a
+        // comparison to anybody. A comment box on a person's record is worse
+        // than merely editable here — it is where a performance note would go,
+        // on a page whose entire premise is that the manager enters nothing.
         {
-          id: 'assigned_by_whom',
-          type: 'record:related_list',
+          id: 'member_history',
+          type: 'record:discussion',
           properties: {
-            objectName: 'duly_assignment',
-            // `assignees` is `multiple: true` — one assignment names N people
-            // and fans out into N independently-owned tasks. This is the
-            // authorable answer to "showing who assigned each": `assigner` is
-            // an ordinary column here, where on the task list it is a hop away.
-            relationshipField: 'assignees',
-            title: 'Who assigned these',
-            columns: ['subject', 'assigner', 'due_date', 'status'],
-            sort: [{ field: 'due_date', order: 'asc' }],
-            limit: 20,
+            position: 'bottom',
+            collapsible: false,
+            feed: {
+              showCommentInput: false,
+              enableReactions: false,
+              enableThreading: false,
+              showFilterToggle: false,
+              showSubscriptionToggle: false,
+            },
           },
         },
       ],
