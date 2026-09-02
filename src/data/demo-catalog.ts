@@ -2,7 +2,8 @@
 
 import type { Frequency } from '../functions/period.js';
 
-import { ADMIN, POSITIONS } from './demo-org.js';
+import { t } from './demo-locale.js';
+import { ADMIN, POSITIONS, personOf } from './demo-org.js';
 
 /**
  * The role catalog, and the duties instantiated from it.
@@ -59,7 +60,7 @@ const { compliance, supervisor, technician } = POSITIONS;
  * is filled on all but one — it is what makes the catalog read as an audit
  * answer rather than a to-do list.
  */
-export const CATALOG_ITEMS: readonly DemoCatalogItem[] = [
+const CATALOG_ITEMS_EN: readonly DemoCatalogItem[] = [
   // ── Plant compliance officer ──────────────────────────────────────────
   {
     name: 'Emissions return',
@@ -314,6 +315,28 @@ export const CATALOG_ITEMS: readonly DemoCatalogItem[] = [
   },
 ];
 
+/**
+ * The catalog in this compile's language.
+ *
+ * `name`, `description` and `reference` are prose; `position` is already
+ * localised by {@link POSITIONS}. Everything else — form, frequency, anchors,
+ * offsets, lead and grace days, `active` — is machine data and is copied
+ * through untouched, which is what makes the two locales the same catalog
+ * rather than two catalogs that happen to be the same length.
+ *
+ * `reference` is spread in only when the item has one, rather than being set
+ * to `undefined`, so the one item that deliberately cites no clause (the drift
+ * check) still cites none. Same rule as {@link cadenceOf} below and for the
+ * same reason: an explicit `undefined` is still an own property — the loader's
+ * no-op-replay check compares it, churning the row on every boot.
+ */
+export const CATALOG_ITEMS: readonly DemoCatalogItem[] = CATALOG_ITEMS_EN.map((item) => ({
+  ...item,
+  name: t(item.name),
+  description: t(item.description),
+  ...(item.reference === undefined ? {} : { reference: t(item.reference) }),
+}));
+
 const ITEM_BY_NAME = new Map(CATALOG_ITEMS.map((i) => [i.name, i]));
 
 export const catalogItem = (name: string): DemoCatalogItem => {
@@ -407,7 +430,7 @@ export interface DemoDuty {
  * would land unscored, and every dashboard measure would read zero — with no
  * error anywhere, because an unscored duty is a perfectly legal thing to be.
  */
-export const DUTIES: readonly DemoDuty[] = [
+const DUTIES_EN: readonly DemoDuty[] = [
   // ── The account `objectstack dev` logs you in as ──────────────────────
   // Deliberately given a real week: a monthly pair that keeps My week
   // populated, a quarter that has already run three times, the semi-annual
@@ -506,3 +529,34 @@ export const DUTIES: readonly DemoDuty[] = [
   // `task.seed.ts` alongside the assignment fan-out.
   { name: 'Commissioning file handover — Riverside upgrade', item: 'Commissioning file handover', owner: 'Owen Pryce', source: 'catalog' },
 ];
+
+/**
+ * The duties in this compile's language.
+ *
+ * Four of the five strings on a row are natural keys pointing somewhere else —
+ * `item` at a catalog item, `owner` at a `sys_user`, and `name` at the duty
+ * every seeded task references back — so they are translated by the same map
+ * that produced the rows they point at. `owner` goes through `personOf` rather
+ * than `t` because six of these rows are owned by `ADMIN`, whose name is
+ * already in this compile's language and is not a dictionary entry. `reviewNote` and the self-declared
+ * `own.description` are prose the record page shows.
+ *
+ * `status`, `review` and `source` are select values, not prose: the zh-CN
+ * translations bundle renders them, and translating the stored value here
+ * would break every filter and dataset that names one.
+ */
+export const DUTIES: readonly DemoDuty[] = DUTIES_EN.map((duty) => ({
+  ...duty,
+  name: t(duty.name),
+  item: duty.item === null ? null : t(duty.item),
+  owner: personOf(duty.owner),
+  ...(duty.reviewNote === undefined ? {} : { reviewNote: t(duty.reviewNote) }),
+  ...(duty.own === undefined
+    ? {}
+    : {
+        own: {
+          ...duty.own,
+          ...(duty.own.description === undefined ? {} : { description: t(duty.own.description) }),
+        },
+      }),
+}));

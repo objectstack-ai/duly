@@ -54,10 +54,20 @@ idea* are different things, so they are different commands:
 |:---|:---|
 | `pnpm dev` | An **empty Duly**. The objects, views and automations are all there; the records are yours to add — define your first duty against a role and watch it dispatch. This is also what a real deployment starts from. |
 | `pnpm demo` | The same app **preloaded with a worked example**: Ardenline Group, a fictional manufacturer — three sites, twelve people over a three-level org chart, a catalog of duties, and six months of history behind them, so every view has something in it on the first screen. |
+| `pnpm demo:zh` | The same worked example **in Chinese** — 安岭集团, its people, its duty catalog and its history, all in zh-CN, for a demo where the records read the same language as the interface. Identical in every other respect: same objects, same row counts, same history. The account you sign in with is renamed 演示管理员 to match. |
 
 `pnpm demo` prepares the database and then starts the server; it is one
 command and it works on a clean checkout. Everything it writes is ordinary
 data, so you can edit or delete any of it.
+
+The two demos are the **same fixture in two languages**, not two datasets:
+one org chart, one duty catalog, one history planner, with the display strings
+resolved through `src/data/demo-zh.ts`. Machine values — unit codes, period
+keys, statuses, timezones — are identical in both, which is what keeps a
+Chinese demo from being a second demo that quietly drifts. The language is
+chosen at compile time by `DULY_DEMO_LOCALE`, so switch between them on a
+database you have already seeded and you will get **both** organisations in
+it; `rm -rf .objectstack/data` first.
 
 To go back to an empty app, delete the local database and start again:
 
@@ -68,7 +78,9 @@ pnpm dev
 
 Nothing about the fictional organisation is real: every address is on an
 RFC 2606 reserved domain, and no real company, person, site or regulation is
-named anywhere in it.
+named anywhere in it. The rule holds in Chinese — 安岭集团 is not a company,
+and every reference the catalog cites is an invented internal document
+(《集团环境标准 GE-09》第1条), never a national or industry standard.
 
 Every metadata directory is pre-wired into `objectstack.config.ts`, empty ones
 included: add your entry to the named array in your own `src/<type>/index.ts` and

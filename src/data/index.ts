@@ -160,6 +160,27 @@ export const demoSeeds: Seed[] = [
 /** The environment variable that asks for the demo dataset. */
 export const DEMO_SEED_ENV_VAR = 'DULY_DEMO_SEED';
 
+// ─── …and a second variable decides what LANGUAGE it is written in ─────────
+//
+// `DULY_DEMO_LOCALE` (`en` by default, `zh-CN` for a Chinese demo) is read at
+// compile time exactly as the gate above is, and for exactly the same reason:
+// the fixture is baked into `dist/objectstack.json`, so both are decided when
+// the artifact is built rather than when the server starts. `pnpm demo:zh`
+// sets it; `pnpm demo` and `pnpm dev` do not.
+//
+// The two are independent. This one does not turn the demo ON — a locale with
+// no `DULY_DEMO_SEED` still seeds nothing — and the gate does not decide a
+// language. Keeping them separate is what lets the Chinese demo be the same
+// demo rather than a second one: one fixture, one history planner, one set of
+// invariants, with the display strings resolved through `demo-zh.ts`.
+//
+// ⚠️ The READ lives in `demo-locale.ts`, not here, and that is a module-graph
+// fact rather than a preference: every fixture file needs the locale, and this
+// barrel imports all of them. A constant declared here would be a cycle. It is
+// re-exported below so both variables are still discoverable in one place —
+// which is the only reason the gate above is in this file either.
+export { DEMO_LOCALE, DEMO_LOCALE_ENV_VAR, type DemoLocale } from './demo-locale.js';
+
 // The one Node global this app reads. `@types/node` is deliberately not a
 // dependency of a metadata package, so the single property the gate needs is
 // declared narrowly and locally rather than pulling the whole Node type

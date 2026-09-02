@@ -29,6 +29,15 @@
 // Filed upstream as objectstack-ai/objectstack#14157. When that lands, the
 // priming boot below is deleted and this file becomes one spawn.
 //
+// ── The language the demo is written in ────────────────────────────────────
+//
+// `DULY_DEMO_LOCALE` (unset = English, `zh-CN` = Chinese) chooses the fixture's
+// language, and `pnpm demo:zh` is `pnpm demo` with it set. It reaches BOTH
+// boots below — the priming one because it decides the admin account's name
+// (see `renameAdminAccount`) and because an unspellable value should be
+// refused before anything is written, and the demo one because the fixture is
+// baked into the artifact that boot compiles.
+//
 // ── Why both boots pass `--compile` ────────────────────────────────────────
 //
 // The seed is baked into `dist/objectstack.json` at compile time, and `os dev`
@@ -42,6 +51,39 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 
 const DEMO_SEED_ENV_VAR = 'DULY_DEMO_SEED';
+const DEMO_LOCALE_ENV_VAR = 'DULY_DEMO_LOCALE';
+
+/**
+ * `sys_user.name` the account you log in as carries, per locale.
+ *
+ * ⚠️ This MIRRORS `ADMIN` in `src/data/demo-org.ts`, which is what the seed
+ * matches on. They have to agree, and they cannot be one constant: this file
+ * is plain `.mjs` that runs before anything is compiled, and that one is
+ * TypeScript baked into the artifact. `test/demo-script.test.ts` reads this
+ * file and holds the two together, because the failure when they drift is
+ * silent — see `renameAdminAccount` below for what it looks like.
+ *
+ * The spellings are the ones `src/data/demo-locale.ts` accepts, normalised the
+ * same way (trimmed, lowercased).
+ */
+const ADMIN_NAME_BY_LOCALE = new Map([
+  ['', 'Dev Admin'],
+  ['en', 'Dev Admin'],
+  ['en-us', 'Dev Admin'],
+  ['en-gb', 'Dev Admin'],
+  ['zh', '演示管理员'],
+  ['zh-cn', '演示管理员'],
+]);
+
+/**
+ * What this run's fixture will call the admin.
+ *
+ * An unrecognised spelling falls back to the English name here and is REFUSED
+ * a moment later by `src/data/demo-locale.ts`, which is the right division of
+ * labour: this script does not get a second opinion about what a locale is.
+ */
+const ADMIN_NAME =
+  ADMIN_NAME_BY_LOCALE.get((process.env[DEMO_LOCALE_ENV_VAR] ?? '').trim().toLowerCase()) ?? 'Dev Admin';
 
 // The same credentials and the same env overrides `@objectstack/plugin-auth`
 // itself reads, so an operator who has changed them is not silently probing
@@ -84,8 +126,12 @@ const freePort = () =>
  * asserted. `localhost` (not `127.0.0.1`) with a matching `Origin`: dev trusts
  * `http://localhost:*`, and better-auth rejects anything else with 403
  * INVALID_ORIGIN.
+ *
+ * Returns the signed-in session — id, display name and session cookie — or
+ * `null` if the account is not loginable yet. The extra detail is what the
+ * rename below needs; the probe itself is unchanged.
  */
-const canSignIn = async (port) => {
+const signIn = async (port) => {
   const origin = `http://localhost:${port}`;
   try {
     const response = await fetch(`${origin}/api/v1/auth/sign-in/email`, {
@@ -94,11 +140,110 @@ const canSignIn = async (port) => {
       body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
       signal: AbortSignal.timeout(5_000),
     });
-    return response.status === 200;
+    if (response.status !== 200) return null;
+    const raw = response.headers.getSetCookie?.()?.[0] ?? response.headers.get('set-cookie') ?? '';
+    const body = await response.json().catch(() => ({}));
+    const user = body?.user ?? {};
+    return {
+      port,
+      origin,
+      // Just the `name=value` pair; the attributes are the browser's business.
+      cookie: String(raw).split(';')[0],
+      id: typeof user.id === 'string' ? user.id : null,
+      name: typeof user.name === 'string' ? user.name : null,
+    };
   } catch {
     // Not up yet, or up and not answering. Either way: not ready.
-    return false;
+    return null;
   }
+};
+
+/**
+ * Give the account you log in as a name in the demo's own language.
+ *
+ * ── Why this is here and not in the seed ─────────────────────────────────
+ * `@objectstack/plugin-auth` mints the dev admin and its `sys_user.name` is
+ * not configurable — only `OS_SEED_ADMIN_EMAIL` / `OS_SEED_ADMIN_PASSWORD`
+ * exist. The seed cannot write it either: the `sys_user` row for the admin
+ * carries its natural key and NOTHING else on purpose, because anything more
+ * would turn the loader's no-op skip into an UPDATE against a live
+ * credential-bearing account (see `src/data/demo-org.ts`). So the only place
+ * the rename can happen is here — in the priming step, against a database
+ * that holds exactly one user, BEFORE the seed runs and has to match it.
+ *
+ * ── What goes wrong if it silently does not happen ───────────────────────
+ * The seed's `sys_user` dataset is keyed on `name`. With the fixture in
+ * Chinese it declares `演示管理员`; if the live account is still `Dev Admin`,
+ * the loader matches nothing, INSERTS a fourteenth user, and hands every one
+ * of the demo account's duties, tasks, assignment and log entries to a person
+ * nobody can log in as. The app comes up, the seed reports success, and My
+ * week, My duties, Sent by me and Work log are all empty on the screen the
+ * evaluator lands on. That is why this fails loudly rather than warning.
+ *
+ * Measured on `@objectstack/*` 17.2.0 (2026-09-02): the PATCH returns 200,
+ * signing in with the same credentials afterwards returns 200 and reports the
+ * new name, and the seed then replays as a no-op against the renamed row.
+ * Idempotent — a second `pnpm demo:zh` on the same database finds the name
+ * already right and does nothing.
+ */
+const renameAdminAccount = async (session) => {
+  if (session.name === ADMIN_NAME) return { ok: true };
+  if (!session.id) {
+    return {
+      ok: false,
+      headline: 'the admin account could not be identified, so it was not renamed.',
+      detail: ['Signing in succeeded but returned no user id, so nothing was seeded.'],
+    };
+  }
+
+  const response = await fetch(`${session.origin}/api/v1/data/sys_user/${session.id}`, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      origin: session.origin,
+      cookie: session.cookie,
+    },
+    body: JSON.stringify({ name: ADMIN_NAME }),
+    signal: AbortSignal.timeout(15_000),
+  }).catch((error) => ({ ok: false, status: 0, error }));
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      headline: `the admin account could not be renamed to ${JSON.stringify(ADMIN_NAME)}, so the demo was NOT loaded.`,
+      detail: [
+        `PATCH /api/v1/data/sys_user/${session.id} answered ${response.status || 'no response'}.`,
+        '',
+        `The ${DEMO_LOCALE_ENV_VAR} fixture expects the account you log in as to be`,
+        `named ${JSON.stringify(ADMIN_NAME)}. Seeding it against an account still named`,
+        `${JSON.stringify(session.name)} would create a second user and leave every`,
+        '"my own work" screen empty, so nothing was seeded — the database is as it was.',
+        '',
+        'Run `pnpm demo` for the English demo instead.',
+      ],
+    };
+  }
+
+  // The same discipline as the probe above: assert the handover rather than
+  // assume it. A rename that broke the login would be the worst outcome
+  // available here — a seeded database nobody can get into — and it is
+  // exactly the kind of thing that is fine until an auth provider starts
+  // treating `name` as part of the credential.
+  const after = await signIn(session.port);
+  if (!after || after.name !== ADMIN_NAME) {
+    return {
+      ok: false,
+      headline: 'the admin account could not sign in after being renamed, so the demo was NOT loaded.',
+      detail: [
+        after
+          ? `Signed in, but the account is named ${JSON.stringify(after.name)} rather than ${JSON.stringify(ADMIN_NAME)}.`
+          : `\`${ADMIN_EMAIL}\` no longer signs in after the rename.`,
+        '',
+        'Nothing was seeded by this run — the database is exactly as it was.',
+      ],
+    };
+  }
+  return { ok: true, renamed: true };
 };
 
 const fail = (headline, detail, log) => {
@@ -121,12 +266,24 @@ const fail = (headline, detail, log) => {
  *
  * Idempotent: on a database that already has an account this boot mints
  * nothing, the first probe succeeds, and it costs one short boot.
+ *
+ * Returns whether it had to rename the account for this run's locale, which is
+ * the one thing worth saying out loud in the output.
  */
 const primeAdminAccount = async () => {
   const port = await freePort();
 
   // Deleted rather than set to a falsy string: this must be off regardless of
   // how the gate spells "off", and regardless of what the operator exported.
+  //
+  // ⚠️ ONLY the seed gate is deleted. `DULY_DEMO_LOCALE` is passed straight
+  // through, and both halves of that matter. It reaches the compile, so an
+  // unspellable locale is refused HERE — in the quiet boot, before anything
+  // has been written — rather than after the priming step has reported
+  // success. And it must not be deleted "for symmetry": this boot is what
+  // decides the admin account's name for the run, so a priming step that could
+  // not see the locale would rename the account for a language it did not know
+  // it was preparing.
   const env = { ...process.env };
   delete env[DEMO_SEED_ENV_VAR];
 
@@ -189,9 +346,17 @@ const primeAdminAccount = async () => {
         log,
       );
     }
-    if (await canSignIn(port)) {
+    const session = await signIn(port);
+    if (session) {
+      // Still inside the priming boot, and deliberately so: the rename has to
+      // land BEFORE the seed's `sys_user` dataset tries to match on the name.
+      const rename = await renameAdminAccount(session);
+      // Stop the priming server FIRST either way: it is detached and holding
+      // the database, so exiting around it would orphan a server nobody can
+      // see and leave the port and the database locked.
       await stop();
-      return;
+      if (!rename.ok) fail(rename.headline, rename.detail, log);
+      return rename.renamed === true;
     }
     await sleep(1_000);
   }
@@ -218,7 +383,18 @@ const startDemo = () => {
   // Extra arguments are forwarded, so `pnpm demo -- --port 4000` works.
   const passthrough = process.argv.slice(2);
   const child = spawn('objectstack', ['dev', '--compile', ...passthrough], {
-    env: { ...process.env, [DEMO_SEED_ENV_VAR]: '1' },
+    // The seed gate is turned ON for this boot; the locale is inherited and
+    // stated explicitly beside it, so the two variables the compiled artifact
+    // depends on are both visible at the one place that decides them. Both
+    // boots pass `--compile`, so this artifact is built for this locale — see
+    // the header for why reusing the previous one is the bug that costs.
+    env: {
+      ...process.env,
+      [DEMO_SEED_ENV_VAR]: '1',
+      ...(process.env[DEMO_LOCALE_ENV_VAR] === undefined
+        ? {}
+        : { [DEMO_LOCALE_ENV_VAR]: process.env[DEMO_LOCALE_ENV_VAR] }),
+    },
     // Inherited, and NOT detached: the demo server shares this terminal's
     // process group so Ctrl+C reaches it the way it would `pnpm dev`.
     stdio: 'inherit',
@@ -235,8 +411,12 @@ console.log('');
 console.log('  Duly demo — two steps, then the server is yours.');
 console.log('');
 console.log('  1/2  preparing an admin account (quiet, a few seconds)…');
-await primeAdminAccount();
-console.log('  1/2  done — admin account ready.');
+const renamed = await primeAdminAccount();
+console.log(
+  renamed
+    ? `  1/2  done — admin account ready, renamed to ${ADMIN_NAME} for this locale.`
+    : '  1/2  done — admin account ready.',
+);
 console.log('  2/2  starting Duly with the demo organisation loaded…');
 console.log('');
 startDemo();

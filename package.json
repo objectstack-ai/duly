@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "objectstack dev --compile",
     "demo": "node scripts/demo.mjs",
+    "demo:zh": "DULY_DEMO_LOCALE=zh-CN node scripts/demo.mjs",
     "start": "objectstack start",
     "build": "objectstack build",
     "validate": "objectstack validate",

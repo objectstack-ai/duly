@@ -2,6 +2,7 @@
 
 import { visibleFromFor } from '../functions/period.js';
 
+import { t } from './demo-locale.js';
 import { ADMIN } from './demo-org.js';
 import { NOW, TODAY } from './demo-history.js';
 
@@ -54,24 +55,26 @@ export interface DemoAssignment {
 
 export const ASSIGNMENTS: readonly DemoAssignment[] = [
   {
-    subject: 'Winter shutdown readiness check',
-    description:
+    subject: t('Winter shutdown readiness check'),
+    description: t(
       'Before the shutdown window opens, confirm your area is ready: isolations listed, spares on site, contractors booked. One line per point — no report.',
+    ),
     // Assigned BY the account an evaluator is logged in as, so "Sent by me" is
-    // not an empty screen on first boot.
+    // not an empty screen on first boot. `ADMIN` already follows the locale.
     assigner: ADMIN,
-    assignees: ['Marek Dvorak', 'Sami Okonkwo', 'Yuki Tanabe', 'Rosa Delgado'],
+    assignees: ['Marek Dvorak', 'Sami Okonkwo', 'Yuki Tanabe', 'Rosa Delgado'].map(t),
     dueDate: inDays(21),
     // The assigner gets NO task of their own. That is the product rule: a
     // manager who hands out work does not inherit a to-do list from it.
     needsCollection: false,
   },
   {
-    subject: 'Q3 supplier certificate sweep',
-    description:
+    subject: t('Q3 supplier certificate sweep'),
+    description: t(
       'Pull the current certificate for every approved supplier you buy from and flag any that expired during the quarter.',
-    assigner: 'Priya Raman',
-    assignees: ['Rosa Delgado', 'Ibrahim Chaudhry'],
+    ),
+    assigner: t('Priya Raman'),
+    assignees: ['Rosa Delgado', 'Ibrahim Chaudhry'].map(t),
     dueDate: inDays(10),
     // The other half of the rule: ticking this — and only ticking this — is
     // what gives the assigner a follow-up task once everyone is in.
@@ -110,7 +113,7 @@ export const AD_HOC_TASKS: readonly DemoAdHocTask[] = [
   // ── Winter shutdown readiness check — four people, mixed ───────────────
   {
     subject: readiness.subject,
-    owner: 'Marek Dvorak',
+    owner: t('Marek Dvorak'),
     assignment: readiness.subject,
     duty: null,
     source: 'assigned',
@@ -119,11 +122,11 @@ export const AD_HOC_TASKS: readonly DemoAdHocTask[] = [
     visibleFrom: readiness.dueDate,
     completedAt: daysAgo(4),
     lastUpdateAt: daysAgo(4),
-    note: 'Isolations listed and countersigned. Spares are on site bar the two long-lead seals.',
+    note: t('Isolations listed and countersigned. Spares are on site bar the two long-lead seals.'),
   },
   {
     subject: readiness.subject,
-    owner: 'Sami Okonkwo',
+    owner: t('Sami Okonkwo'),
     assignment: readiness.subject,
     duty: null,
     source: 'assigned',
@@ -135,7 +138,7 @@ export const AD_HOC_TASKS: readonly DemoAdHocTask[] = [
   },
   {
     subject: readiness.subject,
-    owner: 'Yuki Tanabe',
+    owner: t('Yuki Tanabe'),
     assignment: readiness.subject,
     duty: null,
     source: 'assigned',
@@ -143,11 +146,11 @@ export const AD_HOC_TASKS: readonly DemoAdHocTask[] = [
     dueDate: readiness.dueDate,
     visibleFrom: readiness.dueDate,
     lastUpdateAt: daysAgo(1),
-    note: 'Contractor slot still to be confirmed for the Line C isolation.',
+    note: t('Contractor slot still to be confirmed for the Line C isolation.'),
   },
   {
     subject: readiness.subject,
-    owner: 'Rosa Delgado',
+    owner: t('Rosa Delgado'),
     assignment: readiness.subject,
     duty: null,
     source: 'assigned',
@@ -160,7 +163,7 @@ export const AD_HOC_TASKS: readonly DemoAdHocTask[] = [
   // ── Q3 supplier certificate sweep — two people, plus the assigner ──────
   {
     subject: sweep.subject,
-    owner: 'Rosa Delgado',
+    owner: t('Rosa Delgado'),
     assignment: sweep.subject,
     duty: null,
     source: 'assigned',
@@ -171,7 +174,7 @@ export const AD_HOC_TASKS: readonly DemoAdHocTask[] = [
   },
   {
     subject: sweep.subject,
-    owner: 'Ibrahim Chaudhry',
+    owner: t('Ibrahim Chaudhry'),
     assignment: sweep.subject,
     duty: null,
     source: 'assigned',
@@ -198,10 +201,10 @@ export const AD_HOC_TASKS: readonly DemoAdHocTask[] = [
   {
     // `subject` is copied from the duty at dispatch, exactly as
     // `dispatch.plan.ts` does it, so renaming the duty never rewrites history.
-    subject: 'Commissioning file handover — Riverside upgrade',
-    owner: 'Owen Pryce',
+    subject: t('Commissioning file handover — Riverside upgrade'),
+    owner: t('Owen Pryce'),
     assignment: null,
-    duty: 'Commissioning file handover — Riverside upgrade',
+    duty: t('Commissioning file handover — Riverside upgrade'),
     source: 'catalog',
     status: 'in_progress',
     // A one-off carries a due date set directly rather than derived from a
@@ -210,6 +213,6 @@ export const AD_HOC_TASKS: readonly DemoAdHocTask[] = [
     dueDate: inDays(12),
     visibleFrom: inDays(-5),
     lastUpdateAt: daysAgo(2),
-    note: 'As-builts and test records in; waiting on the spares list from the supplier.',
+    note: t('As-builts and test records in; waiting on the spares list from the supplier.'),
   },
 ];
