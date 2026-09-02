@@ -89,12 +89,12 @@ function csvHeader(file: string): string[] {
 }
 
 /** `[fieldName, definition]` for every field the schema declares. */
-function fieldEntries(schema: unknown): Array<[string, { readonly?: boolean; required?: boolean }]> {
+function fieldEntries(schema: unknown): Array<[string, { readonly?: boolean; required?: boolean; defaultValue?: unknown }]> {
   const fields = (schema as { fields?: Record<string, Record<string, unknown>> }).fields;
   if (!fields || typeof fields !== 'object') throw new Error('schema declares no fields');
   return Object.entries(fields).map(([key, def]) => [
     typeof def?.name === 'string' ? (def.name as string) : key,
-    def as { readonly?: boolean; required?: boolean },
+    def as { readonly?: boolean; required?: boolean; defaultValue?: unknown },
   ]);
 }
 
@@ -104,11 +104,43 @@ const declaredFields = (schema: unknown): string[] => fieldEntries(schema).map((
 const writableFields = (schema: unknown): string[] =>
   fieldEntries(schema).filter(([, def]) => def?.readonly !== true).map(([name]) => name);
 
-/** Fields a row cannot omit AND a caller may set. Both halves matter: a
- *  `required` field that is also `readonly` is the platform's to write. */
+/** A default the ROW supplies for itself — a CEL expression over `record.*`,
+ *  as opposed to a scalar or a caller token like `'current_user'`.
+ *
+ *  The distinction decides whether an omitted column is a defect (#107). Both
+ *  kinds stop the import refusing the row, so neither is caught by "required";
+ *  what separates them is what lands instead:
+ *
+ *   - **Record-derived** (`F`record.source == "self" ? … : …``): the value is
+ *     computed from other columns of the SAME row, so an omitted column yields
+ *     exactly what the sample would have had to type. Nothing is substituted
+ *     and nothing is lost.
+ *   - **Caller-derived** (`'current_user'` on `duly_duty.owner`): an omitted
+ *     column yields the IMPORTER, silently, on every row — nineteen duties
+ *     owned by whoever ran the import. That is the worse half of the failure
+ *     this test exists for, so it stays in the required set even though it too
+ *     would not be refused.
+ */
+const isRecordDerivedDefault = (value: unknown): boolean =>
+  typeof value === 'object' && value !== null && 'dialect' in (value as Record<string, unknown>);
+
+/** Fields a row cannot omit AND a caller may set AND the row cannot supply for
+ *  itself. Each exclusion drops a field for its own reason:
+ *
+ *   - `readonly` — the platform's to write, never the CSV's.
+ *   - a record-derived default — see above. `duly_duty.review_status` is the
+ *     first field to be required, writable and defaulted this way (#107):
+ *     `record.source == "self" ? "to_review" : "to_confirm"`, so an imported
+ *     catalog row lands `to_confirm`, which is precisely what the product
+ *     wants an imported list to be. A column for it would restate the default
+ *     the walkthrough already documents ("A blank cell means leave this field
+ *     unset … the object's `defaultValue` then decides") and would invite an
+ *     author to type `approved` there, which `initialStates` refuses row by
+ *     row. */
 const requiredWritableFields = (schema: unknown): string[] =>
   fieldEntries(schema)
-    .filter(([, def]) => def?.required === true && def?.readonly !== true)
+    .filter(([, def]) =>
+      def?.required === true && def?.readonly !== true && !isRecordDerivedDefault(def?.defaultValue))
     .map(([name]) => name);
 
 describe('samples/ — the duty list an evaluator imports (#19)', () => {

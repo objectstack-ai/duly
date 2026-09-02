@@ -89,6 +89,20 @@ export const DISPATCH_DUTIES: readonly DispatchDuty[] = DUTIES.map((duty) => {
     owner: duty.owner,
     business_unit: unit,
     source: duty.source,
+    // ── Always `approved`, whatever the duty's review state is TODAY ──────
+    // The planner refuses an unapproved duty (`not_approved`), so passing
+    // each row's real review state would delete the history of every duty
+    // this fixture leaves mid-pipeline — including the two the "Late" and
+    // "Not moving" stories are told with.
+    //
+    // That would also be the wrong history. `review_status` is a fact about
+    // now, not about the six months behind it: those tasks WERE dispatched,
+    // which is precisely why returning a duty stops the next run rather than
+    // retracting the work already owed (pinned in `test/dispatch.test.ts`).
+    // A duty sitting in `to_confirm` with tasks behind it is the import case
+    // this card exists for — the work was always being done; the list is only
+    // now being formalised.
+    review_status: 'approved',
     frequency: cadence.frequency ?? null,
     due_anchor: cadence.due_anchor ?? null,
     due_offset_days: cadence.due_offset_days ?? null,

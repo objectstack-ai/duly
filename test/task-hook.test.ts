@@ -844,6 +844,12 @@ describe('WRITE-ONCE — editing a duty\'s grace never rewrites history', () => 
         owner: 'user_alice',
         business_unit: null,
         source: 'catalog',
+        // Only an approved duty dispatches (#107). This fixture is asking
+        // "what deadline would the dispatcher have stamped", so the duty it
+        // asks about has to be one the dispatcher would actually have picked
+        // up — otherwise there is no draft and the assertion below reads as a
+        // `late_after` bug rather than an unapproved duty.
+        review_status: 'approved',
         frequency: 'monthly',
         due_anchor: 'period_start',
         due_offset_days: 4,

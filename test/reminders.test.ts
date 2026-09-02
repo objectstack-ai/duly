@@ -335,6 +335,11 @@ describe('reminder sweeps — volume discipline', () => {
         form: 'recurring',
         owner: 'u1',
         status: 'active',
+        // The control leg has to be a duty that really does dispatch, and
+        // since #107 that means approved as well as active and recurring —
+        // otherwise this leg proves the fixture inert for a second reason and
+        // the standing assertion above stops meaning anything.
+        review_status: 'approved',
         frequency: 'monthly',
         due_anchor: 'period_end',
         due_offset_days: 0,

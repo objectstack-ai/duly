@@ -67,6 +67,21 @@ import { defineTranslationBundle } from '@objectstack/spec';
  *   below uses it — recorded so the next translator does not invent a second
  *   word for it.
  *
+ * **confirm / review / return → 确认 / 审定 / 打回**  (`review_status`, #107)
+ *   The three moves in the review pipeline, and all three words come from the
+ *   card that specified it — product wording, not a translator's choice, so
+ *   they are transcribed rather than re-derived.
+ *   **确认** is the OWNER's move: "yes, this list is mine". **审定** is the
+ *   reviewer's: an organisational sign-off, which is why the field is
+ *   `审定状态` even though the owner's step is inside it — 审定 names the whole
+ *   flow, 确认 names one step of it. **打回** is the return, the ordinary
+ *   Chinese office word for sending a submission back with a reason.
+ *   ⛔ NOT 审批 for 审定 — 审批 is approval of a REQUEST somebody raised
+ *   (leave, expense), and this is adjudication of a standing list; the frame
+ *   is different and the demo audience hears the difference.
+ *   ⛔ NOT 驳回 for 打回 — 驳回 is a rejection that ends the matter (a court
+ *   dismisses a claim). A returned duty is expected back, corrected.
+ *
  * Supporting choices, same reasoning, less contested:
  *   business unit → 部门 · role catalog → 岗位职责库 · assignment → 指派 ·
  *   dispatch → 派发 · not moving / stagnation → 停滞 · grace → 宽限期 ·
@@ -169,6 +184,24 @@ export const dulyChinese = defineTranslationBundle({
               retired: '停用',
             },
           },
+          // 审定流水线（#107）。四个选项的中文取自卡片本身的用词——它同时是
+          // 产品方的措辞裁决，不需要再译一遍。「状态」这个词此处不与上面的
+          // `status`（启用／暂停／停用）冲突：那是职责本身还在不在，这是它有没有
+          // 被认领与批准，两个都要读得出来，所以一个是「状态」一个是「审定状态」。
+          review_status: {
+            label: '审定状态',
+            help: '这条职责在「确认—审定」流程中的位置。只有「已审定」才会派发任务——被打回的职责当天就不再生成新任务，这正是打回的意义。',
+            options: {
+              to_confirm: '待确认',
+              to_review: '待审定',
+              approved: '已审定',
+              returned: '已打回',
+            },
+          },
+          review_note: {
+            label: '打回原因',
+            help: '为什么把这条职责退回去，要写成负责人拿得起、改得动的话。打回时必填（`returned_needs_note`）；重新提交后不会被清空——正在照着修改的人还要再读一遍。',
+          },
           effective_from: { label: '生效日期' },
           effective_to: { label: '失效日期' },
           last_dispatched_period: {
@@ -178,6 +211,8 @@ export const dulyChinese = defineTranslationBundle({
         },
         _views: {
           mine: { label: '我的职责' },
+          to_confirm: { label: '待我确认' },
+          to_review: { label: '待我审定' },
           standing: { label: '常设职责' },
           catalog_tree: { label: '各团队应尽的职责' },
           default: { label: '全部职责' },
@@ -483,12 +518,14 @@ export const dulyChinese = defineTranslationBundle({
           group_me: { label: '我的工作' },
           nav_my_week: { label: '我的本周' },
           nav_my_duties: { label: '我的职责' },
+          nav_to_confirm: { label: '待我确认' },
           nav_standing: { label: '常设职责' },
           nav_log: { label: '工作日志' },
           nav_board: { label: '看板' },
           group_team: { label: '团队' },
           nav_duty_health: { label: '职责健康度' },
           nav_people: { label: '成员' },
+          nav_to_review: { label: '待我审定' },
           nav_late: { label: '逾期' },
           nav_stalled: { label: '停滞' },
           nav_assignments: { label: '指派' },

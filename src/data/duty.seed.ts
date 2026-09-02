@@ -35,6 +35,12 @@ import { HISTORY_FROM } from './demo-history.js';
  *    obligation, and the duty stays on screen.
  *  - **One one-off**, dispatched by hand rather than by the scheduler. Its
  *    single task is seeded directly in `task.seed.ts`.
+ *  - **Five duties off `approved`** (#107) — two waiting on their owner to
+ *    confirm, two waiting on a reviewer, one returned with a reason. They hold
+ *    zero NEW tasks for a third reason (`not_approved`) while keeping the
+ *    history they were dispatched with, which is the import case the review
+ *    pipeline exists for. Two of the five are the demo account's own, so the
+ *    pipeline can be walked on a record page without a second login.
  */
 
 /** A self-declared duty has no catalog row behind it, so it carries its own cadence. */
@@ -65,6 +71,22 @@ export const dutySeed = defineSeed(Duty, {
       // exercises the zone handling rather than leaving every row on UTC.
       timezone: timezoneOf(unit),
       status: duty.status ?? 'active',
+      // ── Review state: the seed states it, and states it on every row ──────
+      // Not left to the field default, for the same reason `source` is not
+      // (see the ⚠️ above): the default keys on `source`, so leaving it out
+      // would silently put every self-declared duty in `to_review` and every
+      // catalog duty in `to_confirm` — a demo where nothing dispatches and
+      // the dashboard reads zero, with nothing erroring anywhere.
+      //
+      // The seed loader writes with `seedReplay: true`, which is what lets it
+      // land `approved` and `returned` rows directly: the platform skips
+      // `state_machine` rules on that context, so the fixture does not have
+      // to walk 30 duties through the pipeline one legal transition at a
+      // time. `returned_needs_note` is an ordinary script rule and is NOT
+      // skipped — a returned row without a reason would be refused, which is
+      // why `reviewNote` is required on that shape in `demo-catalog.ts`.
+      review_status: duty.review ?? 'approved',
+      ...(duty.reviewNote ? { review_note: duty.reviewNote } : {}),
       // The history this seed backfills starts here, so the duties say so.
       // Without it the effective window is open-ended and a later backfill
       // would happily invent obligations that predate the demo.

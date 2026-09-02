@@ -23,6 +23,7 @@ import {
   DEFAULT_GRACE_DAYS,
   DEFAULT_TIMEZONE,
   DISPATCH_DUTY_FIELDS,
+  FAULT_SKIP_REASONS,
   nextDispatchedPeriod,
   planDispatch,
   type DispatchDuty,
@@ -149,6 +150,10 @@ describe('the duty projection covers every field the planner reads', () => {
       'owner',
       'business_unit',
       'source',
+      // The dispatch gate. Omitted from the projection it comes back
+      // `undefined`, which the planner reads as "not approved" — every duty
+      // in the tenant would stop dispatching, quietly, on the next deploy.
+      'review_status',
       'frequency',
       'due_anchor',
       'due_offset_days',
@@ -180,6 +185,11 @@ const duty = (over: Partial<DispatchDuty> = {}): DispatchDuty => ({
   owner: 'user_alice',
   business_unit: 'bu_plant',
   source: 'catalog',
+  // The steady state of a duty that is actually being worked. Stated on the
+  // fixture rather than defaulted inside the planner, so the gate below has
+  // something to turn OFF — a planner that silently treated a missing review
+  // state as approved would pass every test in this file.
+  review_status: 'approved',
   frequency: 'monthly',
   due_anchor: 'period_start',
   due_offset_days: 4,
@@ -215,6 +225,49 @@ describe('what is never dispatched', () => {
       expect(keysOf([duty({ status })], now), status).toEqual([]);
       expect(planDispatch({ duties: [duty({ status })], now }).skipped[0]?.reason).toBe('not_active');
     }
+  });
+
+  it('an unapproved duty produces nothing, whatever the review state is', () => {
+    // The four states the pipeline can be in, and the one that dispatches.
+    // Written as a sweep rather than one case, because the failure this
+    // guards against is a gate written as "not returned" — which would let
+    // `to_confirm` and `to_review` through and make the confirmation step
+    // decorative.
+    for (const review_status of ['to_confirm', 'to_review', 'returned']) {
+      expect(keysOf([duty({ review_status })], now), review_status).toEqual([]);
+      expect(
+        planDispatch({ duties: [duty({ review_status })], now }).skipped[0]?.reason,
+        review_status,
+      ).toBe('not_approved');
+    }
+    expect(keysOf([duty({ review_status: 'approved' })], now)).toEqual(['2026-08']);
+  });
+
+  it('a duty carrying NO review state produces nothing either', () => {
+    // Fail-closed, and this is the case that decides the direction. A row
+    // that predates the column, or arrived through a path that skipped the
+    // default, is not "grandfathered in" — it stops until somebody approves
+    // it. The recoverable failure is the one that is visible.
+    expect(keysOf([duty({ review_status: null })], now)).toEqual([]);
+    expect(keysOf([duty({ review_status: undefined })], now)).toEqual([]);
+    expect(planDispatch({ duties: [duty({ review_status: null })], now }).skipped[0]?.reason)
+      .toBe('not_approved');
+  });
+
+  it('an unapproved duty is an ordinary skip, not a degraded run', () => {
+    // `not_approved` must stay OUT of `FAULT_SKIP_REASONS`. A tenant part-way
+    // through a rollout has hundreds of them, and a nightly job that reports
+    // `degraded` every night is a job whose alerts get muted — after which the
+    // one real fault it exists to report goes unread too.
+    expect(FAULT_SKIP_REASONS as readonly string[]).not.toContain('not_approved');
+  });
+
+  it('backfilling does not smuggle an unapproved duty past the gate', () => {
+    // A backfill skips the duty-level effective window on purpose, so it is
+    // worth pinning that it does NOT skip this. Returning a duty and then
+    // asking for last month must not re-create the work it stopped.
+    expect(keysOf([duty({ review_status: 'returned' })], now, { from: '2026-01-01', to: '2026-08-31' }))
+      .toEqual([]);
   });
 
   it('un-pausing produces only the current period, never the gap', () => {
@@ -605,8 +658,24 @@ const seedDuty = async (over: AnyRow = {}, options?: AnyRow): Promise<string> =>
     due_offset_days: 4,
     lead_days: 0,
     timezone: 'UTC',
+    review_status: 'approved',
     ...over,
-  }, options);
+  }, {
+    ...options,
+    context: {
+      // A duty may not be CREATED `approved` — `review_status_transitions`
+      // declares `initialStates: ['to_confirm', 'to_review']`, and that is the
+      // rule, not an obstacle to route around. This fixture is writing
+      // established history (a duty that was approved some time ago), so it
+      // takes the platform's own door for exactly that: `skipStateMachine` is
+      // the context key the REST import endpoint sets for a `treatAsHistorical`
+      // import, and the seed loader's `seedReplay` reaches the same branch.
+      // The pipeline itself is exercised through ordinary writes in
+      // `test/duty-review.test.ts`, which is where it must not be bypassed.
+      skipStateMachine: true,
+      ...((options?.context as AnyRow | undefined) ?? {}),
+    },
+  });
   const row = (Array.isArray(created) ? created[0] : created) as AnyRow;
   seeded.push(String(row.id));
   return String(row.id);
@@ -630,6 +699,51 @@ describe('the index is real on this engine', () => {
     await data.insert('duly_task', row);
     await expect(data.insert('duly_task', { ...row })).rejects.toThrow();
     expect(await data.find('duly_task', { where: { period_key: '2099-01' } })).toHaveLength(1);
+  });
+});
+
+describe('the review gate, against the real engine', () => {
+  it('a returned duty generates nothing; walking it back to approved generates its tasks', async () => {
+    // The demo beat, end to end: change one field, tomorrow's work changes.
+    const dutyId = await seedDuty({
+      lead_days: 0,
+      review_status: 'returned',
+      review_note: 'Monthly is wrong for this — the permit says quarterly.',
+    });
+
+    const blocked = await runDispatch(data, { now: NOW });
+    expect(await tasksFor(dutyId), 'a returned duty owes nobody anything').toHaveLength(0);
+    // It is not even READ: the sweep's own query filters on `review_status`,
+    // so an unapproved duty costs the nightly run nothing at all.
+    expect(blocked.skipped.some((skip) => skip.duty === dutyId)).toBe(false);
+
+    // The owner corrects it and sends it back up; the manager approves. Two
+    // writes, because `returned → approved` is not a step the machine has.
+    await data.update('duly_duty', { id: dutyId, review_status: 'to_review' });
+    await data.update('duly_duty', { id: dutyId, review_status: 'approved' });
+
+    await runDispatch(data, { now: NOW });
+    expect((await tasksFor(dutyId)).map((task) => task.period_key)).toEqual(['2026-08']);
+  });
+
+  it('returning an approved duty stops the NEXT run, and leaves the tasks already dispatched alone', async () => {
+    // The other half, and the one a "just filter the view" implementation
+    // would get wrong: returning a duty is not a retraction of work already
+    // owed. August's task stays; September's is never created.
+    const dutyId = await seedDuty({ lead_days: 0, frequency: 'monthly' });
+    await runDispatch(data, { now: NOW });
+    expect((await tasksFor(dutyId)).map((task) => task.period_key)).toEqual(['2026-08']);
+
+    await data.update('duly_duty', {
+      id: dutyId,
+      review_status: 'returned',
+      review_note: 'Superseded by the group standard — rewrite the acceptance bar.',
+    });
+
+    const september = new Date('2026-09-15T09:00:00Z');
+    const after = await runDispatch(data, { now: september });
+    expect(after.created, 'a returned duty creates nothing on the next night').toBe(0);
+    expect((await tasksFor(dutyId)).map((task) => task.period_key)).toEqual(['2026-08']);
   });
 });
 

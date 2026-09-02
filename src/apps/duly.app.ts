@@ -26,6 +26,11 @@ export const DulyApp = App.create({
       children: [
         { id: 'nav_my_week', type: 'object', objectName: 'duly_task', viewName: 'my_week', label: 'My week', icon: 'calendar-check' },
         { id: 'nav_my_duties', type: 'object', objectName: 'duly_duty', viewName: 'mine', label: 'My duties', icon: 'clipboard-list' },
+        // Directly under "My duties", because it is the same list filtered to
+        // the rows that are waiting on this person — to confirm, or to correct
+        // and send back up. An unconfirmed duty dispatches nothing, so this is
+        // the one entry in the group whose emptiness is the goal.
+        { id: 'nav_to_confirm', type: 'object', objectName: 'duly_duty', viewName: 'to_confirm', label: 'To confirm', icon: 'clipboard-check' },
         { id: 'nav_standing', type: 'object', objectName: 'duly_duty', viewName: 'standing', label: 'Standing duties', icon: 'anchor' },
         { id: 'nav_log', type: 'object', objectName: 'duly_log_entry', label: 'Work log', icon: 'notebook-pen' },
         // The board lives HERE, not under Team, and that placement is a
@@ -72,6 +77,11 @@ export const DulyApp = App.create({
           label: 'People',
           icon: 'users-round',
         },
+        // A reviewer's queue, and the only entry in this group that is a
+        // WRITE surface. It sits with the manager's screens rather than under
+        // "My work" for the same reason the board does not: the rows in it
+        // belong to other people.
+        { id: 'nav_to_review', type: 'object', objectName: 'duly_duty', viewName: 'to_review', label: 'To review', icon: 'clipboard-pen' },
         { id: 'nav_late', type: 'object', objectName: 'duly_task', viewName: 'late', label: 'Late', icon: 'alert-circle' },
         { id: 'nav_stalled', type: 'object', objectName: 'duly_task', viewName: 'stalled', label: 'Not moving', icon: 'pause-circle' },
         { id: 'nav_assignments', type: 'object', objectName: 'duly_assignment', viewName: 'sent_by_me', label: 'Assignments', icon: 'send' },
