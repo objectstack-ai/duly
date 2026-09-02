@@ -403,6 +403,30 @@ export const Duty = ObjectSchema.create({
   ],
 
   nameField: 'name',
+
+  /**
+   * ── The record page's clickable pipeline renders THIS field ─────────────
+   * [ADR-0085] `stageField` names the record's LINEAR lifecycle, and the
+   * record-detail stepper is its consumer. Measured on the running console
+   * (`@objectstack/console` 17.2.0): with the key absent the renderer falls
+   * back to a heuristic that takes the first field named `status` / `stage` /
+   * `state` / `phase` — so this object's stepper was `status`
+   * (Active · Paused · Retired), which is not a progression at all. ADR-0085
+   * calls that exact shape "an unordered state set" and says a consumer's
+   * stage heuristics should be suppressed for it.
+   *
+   * `review_status` IS linear — to confirm → to review → approved — so it is
+   * the honest answer to the question the key asks, and naming it is what
+   * makes the confirmation workflow clickable on the record page. That
+   * matters more than it sounds: an app-declared action renders NOWHERE in
+   * the Console today (objectui#7234), so this stepper is the only surface
+   * this workflow has.
+   *
+   * `status` loses its stepper and stays an ordinary select on the form,
+   * which is what it always should have been.
+   */
+  stageField: 'review_status',
+
   highlightFields: ['name', 'form', 'frequency', 'owner', 'status', 'review_status'],
 
   validations: [

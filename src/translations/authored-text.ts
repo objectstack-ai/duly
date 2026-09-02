@@ -223,6 +223,7 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'object.sharingModel': machine('security posture'),
   'object.datasource': machine('datasource name'),
   'object.nameField': machine('field name'),
+  'object.stageField': machine('field name — the record\'s lifecycle field (ADR-0085)'),
   'object.highlightFields[]': machine('field names'),
   'object.fields{}.label': translate((c) =>
     id(c) ? ['objects', id(c)!, 'fields', c.path[1]!, 'label'] : undefined),
