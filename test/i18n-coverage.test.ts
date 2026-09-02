@@ -267,6 +267,8 @@ describe('untranslatable display text is declared rather than dropped', () => {
       'job.description',
       'job.label',
       'object.validations[].message',
+      'page.regions[].components[].properties.content.en',
+      'page.regions[].components[].properties.content.zh-CN',
       'permissionSet.description',
       'permissionSet.label',
       'position.description',
@@ -312,6 +314,12 @@ describe('untranslatable display text is declared rather than dropped', () => {
     // checked below — so this is a gap that CLOSED, pinned at zero so it
     // cannot silently reopen as inline copy.
     expect(count('flow.nodes[].config.'), 'inline notification copy — closed by #69').toBe(0);
+    // `element:text` copy on `duly_member`, which IS end-user-facing and IS
+    // localized — inline, because `PageTranslation.components` has no
+    // `content` key (see the verdict's own note). Eight nodes × two locales.
+    // The number is the size of the filed spec gap; when the key lands these
+    // strings move into the bundles and this drops to 0.
+    expect(count('page.regions'), '`element:text` copy localized inline').toBe(16);
   });
 });
 

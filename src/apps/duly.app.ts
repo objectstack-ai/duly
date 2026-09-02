@@ -53,6 +53,30 @@ export const DulyApp = App.create({
         // nav item carries `dashboardName` (resolved against the dashboards
         // barrel), never an `objectName` — nothing on it is entered.
         { id: 'nav_duty_health', type: 'dashboard', dashboardName: 'duly_duty_health', label: 'Duty health', icon: 'activity' },
+        // The way into `duly_member` (`src/pages/member.page.ts`) — "点开任何
+        // 一个人看全貌". A record page is reached by opening a RECORD, so the
+        // nav entry is the people list, not the page: a `type: 'page'` item
+        // routes through objectui's `PageView`, which mounts no
+        // `RecordContextProvider`, and every `record:related_list` on that page
+        // would then have a null parent and render nothing. Placed directly
+        // under the dashboard because the dashboard names who to look at and
+        // this is where you go to look at them.
+        //
+        // `requiresObject` is load-bearing twice over. It is the platform's own
+        // idiom for pointing nav at a RUNTIME-provided object, and without it
+        // `defineStack` refuses the stack outright: the cross-reference check
+        // resolves `objectName` against `config.objects` only, and exempts an
+        // entry that declares the dependency. It is also the right runtime
+        // behaviour — the entry hides instead of 404-ing where `sys_user` is
+        // not registered.
+        {
+          id: 'nav_people',
+          type: 'object',
+          objectName: 'sys_user',
+          requiresObject: 'sys_user',
+          label: 'People',
+          icon: 'users-round',
+        },
         // A reviewer's queue, and the only entry in this group that is a
         // WRITE surface. It sits with the manager's screens rather than under
         // "My work" for the same reason the board does not: the rows in it
