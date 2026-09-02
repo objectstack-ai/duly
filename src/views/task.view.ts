@@ -368,9 +368,9 @@ export const TaskViews = defineView({
      *     A kanban whose columns are unlabelled is not a board, and this screen
      *     is a p0 pre-sales demo. So: lanes off, `source` on the card face
      *     instead (every card says which caliber it is), and the defect filed
-     *     at objectstack-ai/objectui — see the PR body. Re-enabling is the one
-     *     line in item 1 the day that lands; `test/views.test.ts` records the
-     *     decision so it cannot be flipped by accident.
+     *     as objectstack-ai/objectui#7303. Re-enabling is the one line in item
+     *     1 the day that lands; `test/views.test.ts` records the decision so it
+     *     cannot be flipped by accident.
      */
     board: {
       label: 'Board',

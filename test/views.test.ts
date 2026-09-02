@@ -240,8 +240,9 @@ describe('the lenses say what the product means', () => {
    * They are authorable — `grouping: { fields: [{ field: 'source' }] }` on
    * this view turns them on, confirmed in a browser. Turning them on also
    * renders the status column-header row at height 0 on console 17.2.0, so the
-   * board loses `OPEN / IN PROGRESS / DONE / SKIPPED` entirely. The view file
-   * carries the measurement and the upstream filing; what must not happen is
+   * board loses `OPEN / IN PROGRESS / DONE / SKIPPED` entirely — filed as
+   * objectstack-ai/objectui#7303. The view file carries the measurement; what
+   * must not happen is
    * somebody adding the key back because the deck asks for lanes, without
    * knowing it takes the column titles with it.
    *
