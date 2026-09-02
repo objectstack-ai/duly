@@ -234,20 +234,41 @@ describe('the lenses say what the product means', () => {
   });
 
   /**
-   * ⛔ Swimlanes are not authorable on this build, and an invented key is how
-   * that would be "fixed". `KanbanConfigSchema` is strict — `swimlaneField`
-   * fails `pnpm validate` — but a view-level `grouping` on a kanban view does
-   * NOT: it parses, ships, and is read by nothing on the relay these views go
-   * through. That is the gantt `taskListWidth` trap in a different block, so
-   * it is pinned rather than left to a comment. Filed at objectstack-ai/objectui.
+   * Swimlanes are OFF on purpose, and this pin is the decision rather than a
+   * restatement of the file.
+   *
+   * They are authorable — `grouping: { fields: [{ field: 'source' }] }` on
+   * this view turns them on, confirmed in a browser. Turning them on also
+   * renders the status column-header row at height 0 on console 17.2.0, so the
+   * board loses `OPEN / IN PROGRESS / DONE / SKIPPED` entirely. The view file
+   * carries the measurement and the upstream filing; what must not happen is
+   * somebody adding the key back because the deck asks for lanes, without
+   * knowing it takes the column titles with it.
+   *
+   * ⛔ `kanban.swimlaneField` is a different mistake and fails `pnpm validate`
+   * — the schema is strict. Pinned so the failure has an explanation attached.
    */
-  it('the board declares no swimlane key that nothing reads', () => {
+  it('the board carries no swimlane key while the header row is broken upstream', () => {
     const board = byName('board').view;
-    expect(board.kanban).not.toHaveProperty('swimlaneField');
+    expect(board.kanban, 'the strict kanban schema has no swimlaneField — the key is `grouping`')
+      .not.toHaveProperty('swimlaneField');
     expect(
       board.grouping,
-      'a `grouping` block on the kanban view is inert here — see the view file',
+      'swimlanes render the status column headers at height 0 — see the view file before re-adding',
     ).toBeUndefined();
+  });
+
+  /**
+   * The board writes `status` on every card drag, so its rows must be the
+   * viewer's own — "Managers do not enter status" is a product invariant, and
+   * a board of other people's tasks is a one-gesture way past it. It is also
+   * what keeps the lens inside one fetched page; the view file carries the
+   * measurement.
+   */
+  it('the board shows only the viewer\'s own tasks', () => {
+    expect(byName('board').view.filter).toEqual([
+      { field: 'owner', operator: 'equals', value: '{current_user_id}' },
+    ]);
   });
 
   /** Item counts are never ranked or compared — not as a sort, not as a total. */

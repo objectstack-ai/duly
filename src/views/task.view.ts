@@ -336,15 +336,41 @@ export const TaskViews = defineView({
      * `cardFields: kanban.cardFields || kanban.columns || …`, so the authorable
      * spelling IS `columns` and it lands on the card. Nothing to file.
      *
-     * ⛔ SWIMLANES ARE NOT AUTHORABLE — do not add a `swimlaneField` here.
-     * The renderer supports them (`ObjectKanban` takes `swimlaneField` and
-     * derives one from a relayed `grouping.fields[0].field`), but no authoring
-     * route reaches it on this build: the strict schema above has no such key,
-     * and the `ObjectView` relay this app's views go through does not forward a
-     * view-level `grouping` to the kanban branch. Filed at
-     * objectstack-ai/objectui — see the PR body. Grouping by source is
-     * therefore expressed as what IS authorable and true today: `source` on the
-     * card face, and the `by_unit` lens for a grouped read.
+     * ── Swimlanes: AUTHORABLE, and deliberately left off. Measured. ─────────
+     * The deck's p17 asks for "泳道或分组按来源". Both halves of the answer are
+     * measurements against a live `pnpm demo`, not readings of the source:
+     *
+     *  1. **The key is the view-level `grouping`, not `kanban.swimlaneField`.**
+     *     The strict schema above rejects `swimlaneField` outright (a failed
+     *     `pnpm validate`, which is the good failure). The console's relay
+     *     derives the kanban swimlane from
+     *     `swimlaneField || grouping.fields[0].field`, so
+     *     `grouping: { fields: [{ field: 'source' }] }` on THIS view turns them
+     *     on. Authored once, confirmed in a browser: lanes rendered, headed
+     *     `▼ CATALOG (19)`.
+     *
+     *     ⚠ Reading the console's OTHER relay (`ObjectView`, whose kanban
+     *     branch forwards no `grouping` at all) says the opposite. A comment
+     *     written off that reading — and the upstream bug it would have filed —
+     *     was already drafted here and was wrong. These views go through the
+     *     other path. Measure this one in a browser before changing it.
+     *
+     *  2. **Turning them on costs the column headers**, which is why the key is
+     *     not authored. In swimlane mode the status header row renders at
+     *     HEIGHT 0: the titles are in the DOM (`Open`, `In progress`, `Done`,
+     *     `Skipped`, `Cancelled`, at y=233) inside a
+     *     `flex … pl-36 overflow-x-auto` container whose measured height is
+     *     `0`, and a hit test at a title's own coordinates returns the lane's
+     *     collapse BUTTON behind it. Nothing paints. With the key absent the
+     *     same board renders them as real `<h3>`s — `OPEN 5 · IN PROGRESS 1 ·
+     *     DONE 20 · SKIPPED 0`.
+     *
+     *     A kanban whose columns are unlabelled is not a board, and this screen
+     *     is a p0 pre-sales demo. So: lanes off, `source` on the card face
+     *     instead (every card says which caliber it is), and the defect filed
+     *     at objectstack-ai/objectui — see the PR body. Re-enabling is the one
+     *     line in item 1 the day that lands; `test/views.test.ts` records the
+     *     decision so it cannot be flipped by accident.
      */
     board: {
       label: 'Board',
@@ -373,6 +399,33 @@ export const TaskViews = defineView({
         columns: ['subject', 'due_date', 'owner', 'source', 'progress'],
       },
       inlineEdit: true,
+      /**
+       * ⚠ LOAD-BEARING, for two independent reasons — do not widen it.
+       * `test/views.test.ts` fails if it is dropped.
+       *
+       * 1. **The product invariant.** Dragging a card writes `status` on the
+       *    task under it. "Managers do not enter status; assigning is their
+       *    only write" — so a board that shows other people's rows hands every
+       *    viewer a one-gesture way to break that, with no confirmation and no
+       *    trace beyond the field history. The board already sits under "My
+       *    work" for this reason (pinned in `test/views.test.ts`); this makes
+       *    its DATA agree with its placement instead of relying on where the
+       *    nav happens to put the link.
+       *
+       * 2. **The page cliff, measured on the #75 seed.** The kanban fetches
+       *    one page and the footer says so — "100 records · Showing first 100
+       *    records." Sorted by `due_date asc` over 186 tasks, those first 100
+       *    are ALL `done`: the Open and In-progress columns rendered "No
+       *    cards / 0" on a board whose whole job is live work, and the
+       *    swimlane showed one lane because the page held one caliber. Scoped
+       *    to the viewer it is a handful of rows — every status, every lane,
+       *    every count true. Same shape, and the same reasoning, as the scope
+       *    on `by_unit` and `schedule` below.
+       *
+       * ⛔ Not a page-size raise: that moves the cliff instead of removing it.
+       * The durable fix for the mechanism is objectstack-ai/objectui#7189.
+       */
+      filter: [{ field: 'owner', operator: 'equals', value: '{current_user_id}' }],
       sort: [{ field: 'due_date', order: 'asc' }],
     },
 
