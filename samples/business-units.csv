@@ -1,0 +1,7 @@
+name,code,kind,parent_business_unit_id,active
+Ardenline Group,ARD,company,,true
+Northgate Plant,NGP,division,Ardenline Group,true
+Riverside Plant,RVP,division,Ardenline Group,true
+Central Office,CEN,division,Ardenline Group,true
+Northgate Operations,NGP-OPS,department,Northgate Plant,true
+Northgate Quality,NGP-QA,department,Northgate Plant,true

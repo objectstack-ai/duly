@@ -74,6 +74,69 @@ Every metadata directory is pre-wired into `objectstack.config.ts`, empty ones
 included: add your entry to the named array in your own `src/<type>/index.ts` and
 leave the config alone. It is the one file parallel branches collide on.
 
+## Import your existing list
+
+Every customer already has the list — a spreadsheet per role, usually. Getting
+it in is the platform's **Import** button on each object list, not anything
+Duly wrote: upload, confirm the mapping, import. The CSVs in
+[`samples/`](samples) are shaped to go straight through it, and they describe
+the same fictional manufacturer as `pnpm demo`.
+
+| Sample | Import it on | Rows |
+|:---|:---|:---|
+| [`samples/business-units.csv`](samples/business-units.csv) | Setup → People & Organization → Business Units | 6 |
+| [`samples/people.csv`](samples/people.csv) | Setup → People & Organization → Users | 12 |
+| [`samples/catalog-items.csv`](samples/catalog-items.csv) | Duly → Setup → Role catalog | 21 |
+| [`samples/duties.csv`](samples/duties.csv) | Duly → Setup → All duties | 19 |
+
+### Three steps
+
+1. **Put your people and units in first.** A duty's owner and business unit are
+   looked up **by name**, so the rows have to exist before the duty file can
+   land. In a real deployment they arrive from your directory; on a fresh
+   `pnpm dev` database, import `business-units.csv` and then `people.csv`
+   through the same Import button.
+2. **Import the role catalog** — `catalog-items.csv` on Role catalog. This is
+   the list itself: what each position owes, how often, with how much grace.
+   No lookups, so it goes into an empty app as-is.
+3. **Import the duties** — `duties.csv` on All duties. This is the catalog
+   instantiated onto named people, and it is where the natural keys resolve.
+
+Each step is the same three screens — Upload → Mapping → Preview → import —
+and the count of created rows is reported at the end, with any refused row
+named and downloadable.
+
+### What the columns have to say
+
+- **Headers are field API names** (`position_code`, `due_offset_days`). The
+  wizard auto-matches every one of them at high confidence. The **Download
+  template** link on the Upload step gives you the same columns as labels
+  instead; both are accepted.
+- **Lookups are written as names, not ids.** `owner` takes a person's name
+  (`Priya Raman`) or their email; `business_unit` takes the unit's **name**
+  (`Northgate Quality` — its code will not resolve); `catalog_item` takes the
+  catalog item's name. This is the same natural-key rule the seed loader uses.
+- **A name that matches nothing skips that row and says so**, with a
+  *Download failed rows* file to fix and re-import. Nothing is linked to a
+  best guess.
+- **Blank means "leave unset"**, so the object's defaults apply. That is what
+  lets one file carry all three duty forms: a `standing` row leaves the five
+  cadence columns empty and lands with them all null, which is exactly what
+  `standing_no_frequency` requires.
+- **Read-only columns are never written.** They are visible in the mapping
+  step as `— Skip —` or `(match only)`, so a column that will not land says so
+  before you import.
+- **Re-importing needs the match option.** *When a row matches an existing
+  record* defaults to *Always create new*; running the same file twice
+  otherwise gives you two copies.
+
+`test/import-samples.test.ts` holds every sample header to the object's own
+schema, so renaming a field fails the build instead of quietly importing a
+blank column.
+
+**[The full walk, screen by screen, with what each step was measured to
+do →](docs/import/walkthrough.md)**
+
 ## Verify before you ship
 
 ```bash
@@ -101,7 +164,9 @@ src/security/            positions, permission sets, sharing rules
 src/mappings/  src/data/ catalog import and seed fixtures
 src/translations/        en (source) · zh-CN
 scripts/                 pnpm demo — prepare the database, then start with the example loaded
+samples/                 CSVs for the platform's standard Import (see above)
 docs/product/            positioning, data model, design principles
+docs/import/             the recorded import walk, screen by screen
 ```
 
 ## Documentation
@@ -109,6 +174,7 @@ docs/product/            positioning, data model, design principles
 - [Positioning](docs/product/positioning.md) — who this is for and what it is not
 - [Data model](docs/product/data-model.md) — the five objects and why each exists
 - [Design principles](docs/product/design-principles.md) — the constraints above, argued
+- [Importing an existing list](docs/import/walkthrough.md) — the standard Import, walked and measured
 - [Roadmap](docs/roadmap.md) — milestones M0–M4
 
 ## License
