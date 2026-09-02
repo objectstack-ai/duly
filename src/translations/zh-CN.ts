@@ -67,6 +67,21 @@ import { defineTranslationBundle } from '@objectstack/spec';
  *   below uses it — recorded so the next translator does not invent a second
  *   word for it.
  *
+ * **confirm / review / return → 确认 / 审定 / 打回**  (`review_status`, #107)
+ *   The three moves in the review pipeline, and all three words come from the
+ *   card that specified it — product wording, not a translator's choice, so
+ *   they are transcribed rather than re-derived.
+ *   **确认** is the OWNER's move: "yes, this list is mine". **审定** is the
+ *   reviewer's: an organisational sign-off, which is why the field is
+ *   `审定状态` even though the owner's step is inside it — 审定 names the whole
+ *   flow, 确认 names one step of it. **打回** is the return, the ordinary
+ *   Chinese office word for sending a submission back with a reason.
+ *   ⛔ NOT 审批 for 审定 — 审批 is approval of a REQUEST somebody raised
+ *   (leave, expense), and this is adjudication of a standing list; the frame
+ *   is different and the demo audience hears the difference.
+ *   ⛔ NOT 驳回 for 打回 — 驳回 is a rejection that ends the matter (a court
+ *   dismisses a claim). A returned duty is expected back, corrected.
+ *
  * Supporting choices, same reasoning, less contested:
  *   business unit → 部门 · role catalog → 岗位职责库 · assignment → 指派 ·
  *   dispatch → 派发 · not moving / stagnation → 停滞 · grace → 宽限期 ·
@@ -169,6 +184,24 @@ export const dulyChinese = defineTranslationBundle({
               retired: '停用',
             },
           },
+          // 审定流水线（#107）。四个选项的中文取自卡片本身的用词——它同时是
+          // 产品方的措辞裁决，不需要再译一遍。「状态」这个词此处不与上面的
+          // `status`（启用／暂停／停用）冲突：那是职责本身还在不在，这是它有没有
+          // 被认领与批准，两个都要读得出来，所以一个是「状态」一个是「审定状态」。
+          review_status: {
+            label: '审定状态',
+            help: '这条职责在「确认—审定」流程中的位置。只有「已审定」才会派发任务——被打回的职责当天就不再生成新任务，这正是打回的意义。',
+            options: {
+              to_confirm: '待确认',
+              to_review: '待审定',
+              approved: '已审定',
+              returned: '已打回',
+            },
+          },
+          review_note: {
+            label: '打回原因',
+            help: '为什么把这条职责退回去，要写成负责人拿得起、改得动的话。打回时必填（`returned_needs_note`）；重新提交后不会被清空——正在照着修改的人还要再读一遍。',
+          },
           effective_from: { label: '生效日期' },
           effective_to: { label: '失效日期' },
           last_dispatched_period: {
@@ -178,6 +211,8 @@ export const dulyChinese = defineTranslationBundle({
         },
         _views: {
           mine: { label: '我的职责' },
+          to_confirm: { label: '待我确认' },
+          to_review: { label: '待我审定' },
           standing: { label: '常设职责' },
           catalog_tree: { label: '各团队应尽的职责' },
           default: { label: '全部职责' },
@@ -251,10 +286,34 @@ export const dulyChinese = defineTranslationBundle({
             help: '完成时间晚于「逾期起算日」时为是。此值在完成的那一刻写入一次，按当时生效的宽限期判定——之后修改职责的宽限期不会改动它。',
           },
           last_update_at: { label: '最后更新' },
+          // #108 一线界面。四条预设短语用方案 p7 的原话，不另行翻译——这四句
+          // 正是一线的人本来会打出来的字，把它们改写成更「书面」的说法，等于
+          // 把一次点击又换回一次打字。
+          progress: {
+            label: '最新进展',
+            help: '负责人自己选的一句话——不是举证，不计分，也从不强制填写。是否按期的判定在「逾期完成」，由服务端在完成的那一刻写入。',
+            options: {
+              on_time: '已按期完成',
+              distributed: '已下发各部门',
+              awaiting_feedback: '待反馈',
+              in_hand: '处理中',
+            },
+          },
           note: {
             label: '备注',
-            help: '选填。完成任务从不要求填写——一道举证关卡会把 5 秒钟的勾选变成 5 分钟的差事，然后这份清单就没人用了。',
+            help: '选填。完成任务从不要求填写——一道举证关卡会把 5 秒钟的勾选变成 5 分钟的差事，然后这份清单就没人用了。最常写的那四句话，在「最新进展」里点一下就行。',
           },
+          attachments: {
+            label: '附件',
+            help: '始终选填。可以传一张照片、一份签字表、一份申报表——也可以什么都不传。完成任务从不需要附件，也没有任何地方会检查。',
+          },
+        },
+        // 记录页的三个分区（#108）。键名就是 `fieldGroups[].key`，控制台按
+        // `objects.duly_task._sections.<key>.label` 解析这三个标题。
+        _sections: {
+          basics: { label: '基本' },
+          progress: { label: '进展与附件' },
+          history: { label: '历史' },
         },
         _views: {
           my_week: { label: '我的本周' },
@@ -459,11 +518,14 @@ export const dulyChinese = defineTranslationBundle({
           group_me: { label: '我的工作' },
           nav_my_week: { label: '我的本周' },
           nav_my_duties: { label: '我的职责' },
+          nav_to_confirm: { label: '待我确认' },
           nav_standing: { label: '常设职责' },
           nav_log: { label: '工作日志' },
           nav_board: { label: '看板' },
           group_team: { label: '团队' },
           nav_duty_health: { label: '职责健康度' },
+          nav_people: { label: '成员' },
+          nav_to_review: { label: '待我审定' },
           nav_late: { label: '逾期' },
           nav_stalled: { label: '停滞' },
           nav_assignments: { label: '指派' },
@@ -474,6 +536,30 @@ export const dulyChinese = defineTranslationBundle({
           nav_catalog: { label: '岗位职责库' },
           nav_all_duties: { label: '全部职责' },
           nav_catalog_tree: { label: '各团队应尽的职责' },
+        },
+      },
+    },
+
+    pages: {
+      duly_member: {
+        // 「看全貌」页:主管打开一个人,不必先问他任何问题。
+        label: '成员',
+        description:
+          '一个人的全貌:当下有什么未完成、本周期应尽什么、长期持有什么、最近动了什么——只读,不需要任何人录入。',
+        components: {
+          // 岗位来自 `sys_user_position` 联结表,不是 `sys_user` 上的字段。
+          member_position: { title: '岗位' },
+          right_now_open: { title: '未完成' },
+          // 逾期 = 过了派发当时该职责给出的宽限期,且仍未完成。
+          right_now_late: { title: '逾期' },
+          // 与「停滞」视图同名:同一个判断在产品里只能有一种说法。
+          right_now_stalled: { title: '停滞' },
+          // 「受治理」= 来自岗位职责库或主管指派;自行申报的不在此列。
+          this_period_duties: { title: '受治理的职责' },
+          // ⛔ 不要写成「常设任务」:常设职责永不产生任务,也永不完成。
+          standing_duties: { title: '长期持有' },
+          recent_activity: { title: '最近触碰' },
+          assigned_tasks: { title: '被指派的工作' },
         },
       },
     },

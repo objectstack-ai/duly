@@ -82,6 +82,21 @@ export const DEFAULT_GRACE_DAYS = 0;
 export const DISPATCHABLE_STATUS = 'active';
 /** The form a duty must hold to dispatch. `standing` and `one_off` never do. */
 export const DISPATCHABLE_FORM = 'recurring';
+/**
+ * The review state a duty must hold to dispatch.
+ *
+ * An unconfirmed, unreviewed or RETURNED duty produces nothing — the day a
+ * manager returns it, tomorrow's tasks stop. That is the product behaviour the
+ * review pipeline exists for, and it is the one place it has teeth.
+ *
+ * The test is `=== 'approved'`, deliberately, rather than "not returned": a
+ * row that carries no review state at all (one that predates the column, or
+ * arrived through a path that skipped the default) is NOT dispatched. Between
+ * "an obligation nobody approved goes out" and "an obligation stops until
+ * somebody looks at it", the second is the recoverable failure, and it is
+ * visible in the run's `skipped` list rather than silent.
+ */
+export const DISPATCHABLE_REVIEW_STATUS = 'approved';
 
 /**
  * The `duly_duty` projection the planner reads.
@@ -100,6 +115,12 @@ export const DISPATCH_DUTY_FIELDS = [
   'owner',
   'business_unit',
   'source',
+  // The dispatch gate (`not_approved`). Read even though the job's own query
+  // already filters on it: `planDispatch` is also driven directly — by a
+  // backfill, and by every planner test — and a projection that omitted this
+  // would hand the planner `undefined` and dispatch an unapproved duty with
+  // nothing erroring anywhere.
+  'review_status',
   'frequency',
   'due_anchor',
   'due_offset_days',
@@ -127,6 +148,7 @@ export interface DispatchDuty {
   owner?: string | null;
   business_unit?: string | null;
   source?: string | null;
+  review_status?: string | null;
   frequency?: string | null;
   due_anchor?: string | null;
   due_offset_days?: number | null;
@@ -171,6 +193,12 @@ export type DispatchSkipReason =
   | 'unknown_form'
   /** `paused` or `retired`. */
   | 'not_active'
+  /**
+   * Not `approved` — awaiting confirmation, awaiting review, returned, or
+   * carrying no review state at all. An ordinary, expected skip: the duty is
+   * fine, it just has not been signed off, so it is NOT a fault reason.
+   */
+  | 'not_approved'
   /** Recurring with no cadence. `recurring_needs_frequency` should prevent it. */
   | 'no_frequency'
   /** A `frequency` value outside `FREQUENCIES`. */
@@ -347,6 +375,9 @@ function planForDuty(duty: DispatchDuty, now: Date, window: BackfillWindow | nul
   if (duty.form === 'one_off') return { reason: 'one_off' };
   if (duty.form !== DISPATCHABLE_FORM) return { reason: 'unknown_form' };
   if (duty.status !== DISPATCHABLE_STATUS) return { reason: 'not_active' };
+  // Third invariant, and the newest: an obligation nobody has approved is not
+  // yet an obligation anybody owes.
+  if (duty.review_status !== DISPATCHABLE_REVIEW_STATUS) return { reason: 'not_approved' };
 
   if (duty.frequency == null || duty.frequency === '') return { reason: 'no_frequency' };
   if (!isFrequency(duty.frequency)) return { reason: 'unknown_frequency' };

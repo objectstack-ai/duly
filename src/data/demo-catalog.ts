@@ -381,6 +381,19 @@ export interface DemoDuty {
   owner: string;
   source: 'catalog' | 'assigned' | 'self';
   status?: 'active' | 'paused' | 'retired';
+  /**
+   * Where this duty sits in the review pipeline TODAY (#107). Omitted means
+   * `approved` — the steady state of a duty that is actually being worked,
+   * and the only state that dispatches.
+   *
+   * The fixture keeps a handful of rows off `approved` on purpose: an empty
+   * "To confirm" and an empty "To review" are two screens a demo cannot show,
+   * and "unapproved duties do not dispatch" is not a claim anybody can check
+   * against a fixture where every duty is approved.
+   */
+  review?: 'to_confirm' | 'to_review' | 'approved' | 'returned';
+  /** Mandatory on a `returned` row — `returned_needs_note` refuses one without it. */
+  reviewNote?: string;
   /** Self-declared duties carry their own cadence — there is no catalog row behind them. */
   own?: Partial<DemoCatalogItem> & { form: Form };
 }
@@ -403,7 +416,11 @@ export const DUTIES: readonly DemoDuty[] = [
   { name: 'Emissions return — Northgate', item: 'Emissions return', owner: ADMIN, source: 'catalog' },
   { name: 'Waste transfer log review — Northgate', item: 'Waste transfer log review', owner: ADMIN, source: 'catalog' },
   { name: 'Permit condition review — Northgate', item: 'Permit condition review', owner: ADMIN, source: 'catalog' },
-  { name: 'Site environmental audit — Northgate', item: 'Site environmental audit', owner: ADMIN, source: 'catalog' },
+  // Waiting on the evaluator's OWN confirmation, so the pipeline is
+  // clickable on the first record page they open. Its in-flight task stays
+  // where it is — returning or un-confirming a duty stops the NEXT run, it
+  // does not retract work already dispatched.
+  { name: 'Site environmental audit — Northgate', item: 'Site environmental audit', owner: ADMIN, source: 'catalog', review: 'to_confirm' },
   { name: 'Keep the permit register current — Northgate', item: 'Keep the permit register current', owner: ADMIN, source: 'catalog' },
   {
     name: 'Keep up with regulator bulletins',
@@ -411,6 +428,12 @@ export const DUTIES: readonly DemoDuty[] = [
     owner: ADMIN,
     source: 'self',
     own: { form: 'recurring', frequency: 'monthly', dueAnchor: 'period_start', dueOffsetDays: 7, leadDays: 7, graceDays: 0, description: 'Read the month\'s bulletins and note anything that changes what the site owes.' },
+    // The returned one. Owned by the evaluator, so `returned → to_review` —
+    // the leg only the OWNER may walk — is demonstrable without a second
+    // login. It is also the state that stops dispatch, which is the most
+    // persuasive thing this card has to show.
+    review: 'returned',
+    reviewNote: 'Reading the bulletins is not the duty — the duty is recording what changed and who has to act. Rewrite the acceptance bar and send it back.',
   },
 
   // ── Northgate Quality ─────────────────────────────────────────────────
@@ -422,12 +445,20 @@ export const DUTIES: readonly DemoDuty[] = [
     owner: 'Priya Raman',
     source: 'self',
     own: { form: 'recurring', frequency: 'monthly', dueAnchor: 'period_start', dueOffsetDays: 5, leadDays: 7, graceDays: 0, description: 'Half an hour with the month\'s nonconformances and calibration deviations, looking for the shape rather than the individual events.' },
+    // Self-declared duties are born `to_review`, not `to_confirm` — writing
+    // one down IS the confirmation. This row is what that default looks like
+    // on screen, and it gives the reviewer's queue a second entry that is not
+    // a catalog duty.
+    review: 'to_review',
   },
   { name: 'Calibration verification — Lab 1', item: 'Calibration verification', owner: 'Rosa Delgado', source: 'catalog' },
-  { name: 'Retained sample review — Lab 1', item: 'Retained sample review', owner: 'Rosa Delgado', source: 'catalog' },
+  // A second unconfirmed list, on somebody else — so a manager opening
+  // "To review" sees a queue rather than one row, and so "To confirm" is
+  // visibly a per-person list rather than a global one.
+  { name: 'Retained sample review — Lab 1', item: 'Retained sample review', owner: 'Rosa Delgado', source: 'catalog', review: 'to_confirm' },
   { name: 'Nonconformance log review — Northgate Quality', item: 'Nonconformance log review', owner: 'Rosa Delgado', source: 'catalog' },
   { name: 'Calibration verification — Lab 2', item: 'Calibration verification', owner: 'Ibrahim Chaudhry', source: 'catalog' },
-  { name: 'Instrument drift check — Lab 2', item: 'Instrument drift check', owner: 'Ibrahim Chaudhry', source: 'catalog' },
+  { name: 'Instrument drift check — Lab 2', item: 'Instrument drift check', owner: 'Ibrahim Chaudhry', source: 'catalog', review: 'to_review' },
   {
     name: 'Track my own training hours',
     item: null,

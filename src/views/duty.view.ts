@@ -15,6 +15,7 @@ export const DutyViews = defineView({
       { field: 'frequency' },
       { field: 'owner' },
       { field: 'source' },
+      { field: 'review_status' },
       { field: 'status' },
     ],
   },
@@ -29,9 +30,74 @@ export const DutyViews = defineView({
         { field: 'form' },
         { field: 'frequency' },
         { field: 'due_anchor' },
+        // Where each of my duties stands in the pipeline — including the ones
+        // that are approved and therefore NOT in "To confirm". A duty list
+        // that showed only `status` would say "Active" about a duty producing
+        // no tasks at all.
+        { field: 'review_status' },
         { field: 'status' },
       ],
       filter: [{ field: 'owner', operator: 'equals', value: '{current_user_id}' }],
+    },
+
+    /**
+     * "What is waiting on ME" — the owner's half of the review pipeline.
+     *
+     * Two states in one list, deliberately. `to_confirm` (the organisation
+     * put this on you; is it yours?) and `returned` (a reviewer sent it back)
+     * are different sentences, but they are the same ACTION — read it, fix it
+     * if it needs fixing, send it up — and splitting them would make the
+     * second one a list most people never open. `review_note` is a column
+     * rather than a detail-page trip: a returned duty whose reason you have
+     * to click into is a reason you read once.
+     */
+    to_confirm: {
+      label: 'To confirm',
+      type: 'grid',
+      data,
+      columns: [
+        { field: 'name' },
+        { field: 'review_status' },
+        { field: 'review_note' },
+        { field: 'form' },
+        { field: 'frequency' },
+        { field: 'source' },
+      ],
+      filter: [
+        { field: 'owner', operator: 'equals', value: '{current_user_id}' },
+        { field: 'review_status', operator: 'in', value: ['to_confirm', 'returned'] },
+      ],
+      sort: [{ field: 'name', order: 'asc' }],
+    },
+
+    /**
+     * "What is waiting on a reviewer" — the other half.
+     *
+     * No owner filter, and that is the point: this list is somebody ELSE's
+     * duties. How far it reaches is not this view's decision — it is
+     * `duly_manager`'s `readScope: 'unit_and_below'` on `duly_duty`
+     * (`src/security/permission-sets.ts`), which resolves to owner-only on an
+     * open-edition boot and to the unit tree with `@objectstack/security-
+     * enterprise` installed. A view that tried to express reach in its own
+     * filter would be a second, weaker copy of the security model.
+     *
+     * `owner` is a column here for the same reason it is not a filter: the
+     * first question a reviewer asks of this list is whose duty each row is.
+     */
+    to_review: {
+      label: 'To review',
+      type: 'grid',
+      data,
+      columns: [
+        { field: 'name' },
+        { field: 'owner' },
+        { field: 'business_unit' },
+        { field: 'form' },
+        { field: 'frequency' },
+        { field: 'source' },
+      ],
+      filter: [{ field: 'review_status', operator: 'equals', value: 'to_review' }],
+      sort: [{ field: 'business_unit', order: 'asc' }, { field: 'name', order: 'asc' }],
     },
 
     // Standing duties never produce a task, so they would otherwise be

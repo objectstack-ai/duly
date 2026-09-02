@@ -26,6 +26,11 @@ export const DulyApp = App.create({
       children: [
         { id: 'nav_my_week', type: 'object', objectName: 'duly_task', viewName: 'my_week', label: 'My week', icon: 'calendar-check' },
         { id: 'nav_my_duties', type: 'object', objectName: 'duly_duty', viewName: 'mine', label: 'My duties', icon: 'clipboard-list' },
+        // Directly under "My duties", because it is the same list filtered to
+        // the rows that are waiting on this person — to confirm, or to correct
+        // and send back up. An unconfirmed duty dispatches nothing, so this is
+        // the one entry in the group whose emptiness is the goal.
+        { id: 'nav_to_confirm', type: 'object', objectName: 'duly_duty', viewName: 'to_confirm', label: 'To confirm', icon: 'clipboard-check' },
         { id: 'nav_standing', type: 'object', objectName: 'duly_duty', viewName: 'standing', label: 'Standing duties', icon: 'anchor' },
         { id: 'nav_log', type: 'object', objectName: 'duly_log_entry', label: 'Work log', icon: 'notebook-pen' },
         // The board lives HERE, not under Team, and that placement is a
@@ -48,6 +53,35 @@ export const DulyApp = App.create({
         // nav item carries `dashboardName` (resolved against the dashboards
         // barrel), never an `objectName` — nothing on it is entered.
         { id: 'nav_duty_health', type: 'dashboard', dashboardName: 'duly_duty_health', label: 'Duty health', icon: 'activity' },
+        // The way into `duly_member` (`src/pages/member.page.ts`) — "点开任何
+        // 一个人看全貌". A record page is reached by opening a RECORD, so the
+        // nav entry is the people list, not the page: a `type: 'page'` item
+        // routes through objectui's `PageView`, which mounts no
+        // `RecordContextProvider`, and every `record:related_list` on that page
+        // would then have a null parent and render nothing. Placed directly
+        // under the dashboard because the dashboard names who to look at and
+        // this is where you go to look at them.
+        //
+        // `requiresObject` is load-bearing twice over. It is the platform's own
+        // idiom for pointing nav at a RUNTIME-provided object, and without it
+        // `defineStack` refuses the stack outright: the cross-reference check
+        // resolves `objectName` against `config.objects` only, and exempts an
+        // entry that declares the dependency. It is also the right runtime
+        // behaviour — the entry hides instead of 404-ing where `sys_user` is
+        // not registered.
+        {
+          id: 'nav_people',
+          type: 'object',
+          objectName: 'sys_user',
+          requiresObject: 'sys_user',
+          label: 'People',
+          icon: 'users-round',
+        },
+        // A reviewer's queue, and the only entry in this group that is a
+        // WRITE surface. It sits with the manager's screens rather than under
+        // "My work" for the same reason the board does not: the rows in it
+        // belong to other people.
+        { id: 'nav_to_review', type: 'object', objectName: 'duly_duty', viewName: 'to_review', label: 'To review', icon: 'clipboard-pen' },
         { id: 'nav_late', type: 'object', objectName: 'duly_task', viewName: 'late', label: 'Late', icon: 'alert-circle' },
         { id: 'nav_stalled', type: 'object', objectName: 'duly_task', viewName: 'stalled', label: 'Not moving', icon: 'pause-circle' },
         { id: 'nav_assignments', type: 'object', objectName: 'duly_assignment', viewName: 'sent_by_me', label: 'Assignments', icon: 'send' },

@@ -171,7 +171,7 @@ import type { Hook, HookContext } from '@objectstack/spec/data';
  *
  * ── The same path and `last_update_at`: write nothing, do not refuse ─────
  * The stagnation stamp is row-conditional too, in the other direction: it
- * fires when THIS row's `status`, `note` or `skip_reason` differs from THIS
+ * fires when THIS row's `status`, `progress`, `note` or `skip_reason` differs from THIS
  * row's pre-image. D3 applies unchanged — that value goes into the one shared
  * payload and is written to every matched row, so a single genuine edit inside
  * a 200-row bulk write refreshes all 200 clocks and the stalled list quietly
@@ -389,6 +389,23 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
   // radius; do it only for something a person changes BECAUSE they worked the
   // task.
   //
+  // `progress` (#108) is on the list for exactly that reason, and it is the
+  // clearest case of it: the column exists so that reporting progress is ONE
+  // TAP instead of a typed sentence, and the phrase a person picks is a person
+  // saying "I am on this". Leaving it off would have made the product's own
+  // headline gesture the one interaction that does not count as movement — a
+  // task nudged every week would keep drifting into "Not moving", which is the
+  // list a manager is supposed to trust. It is the same category as `note`
+  // beside it (a human sentence about the work) and NOT the category of
+  // `owner` or `due_date` (somebody administering the row).
+  //
+  // ⛔ `attachments` is deliberately NOT here, and the asymmetry is the point.
+  // A file arriving is real, but the column is optional by product invariant
+  // and nothing may make it feel otherwise; an upload that silently reset the
+  // stagnation clock would turn "attach something" into the cheapest way to
+  // look busy, which is one step from the evidence gate the invariant forbids.
+  // A person who attaches a file and means it has a phrase to pick beside it.
+  //
   // Compared against the pre-image rather than merely tested for presence: a
   // re-save carrying an unchanged `status` is not progress.
   // ── …and nothing at all on the shared-payload path ─────────────────────
@@ -407,7 +424,7 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
   // in `test/bulk-stagnation-premise.test.ts`.
   if (ctx.dispatch?.mode === 'per-row') return;
 
-  for (const field of ['status', 'note', 'skip_reason']) {
+  for (const field of ['status', 'progress', 'note', 'skip_reason']) {
     if (!(field in input)) continue;
     const next = input[field];
     const prior = previous[field];
@@ -428,7 +445,8 @@ export const TaskLifecycleHook: Hook = {
   description:
     'Server-owned columns on duly_task: completed_at and the completed_late verdict on the '
     + 'transition into and out of done, late_after filled at insert for the paths the '
-    + 'dispatcher does not stamp, and last_update_at only when status, note or skip_reason '
+    + 'dispatcher does not stamp, and last_update_at only when status, progress, note or '
+    + 'skip_reason '
     + 'actually changed — never on an administrative write, which would reset the stagnation '
     + 'signal. Both lateness stamps are write-once: a later change to the duty\'s grace never '
     + 'moves them. On a predicate (bulk) write the row-conditional stamps are handled by '

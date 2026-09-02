@@ -1,0 +1,22 @@
+name,position_code,form,frequency,due_anchor,due_offset_days,lead_days,grace_days,regulation_ref,description,active
+Emissions return,plant_compliance_officer,recurring,monthly,period_end,-5,10,3,Group Environment Standard GE-02 §5,"Submit the site emissions figures for the month, with the meter readings they were derived from.",true
+Waste transfer log review,plant_compliance_officer,recurring,monthly,period_start,4,7,2,Group Environment Standard GE-04 §2,"Check every transfer note raised last month against the carrier register; flag anything unmatched.",true
+Effluent sampling record,plant_compliance_officer,recurring,weekly,period_start,1,3,1,Site Discharge Consent DC-11 cl.4,Draw and log the weekly outfall sample. Record the result even when it is within limits.,true
+Permit condition review,plant_compliance_officer,recurring,quarterly,period_end,-10,21,5,Group Environment Standard GE-09 §1,"Walk the permit conditions one by one and record, for each, the evidence that it was met this quarter.",true
+Site environmental audit,plant_compliance_officer,recurring,semiannual,period_end,0,150,10,Group Assurance Plan AP-3 §6,"Full walk-round audit against the group environmental standard, with findings and owners.",true
+Annual environmental statement,plant_compliance_officer,recurring,annual,period_end,-30,60,14,Group Environment Standard GE-01 §8,Compile the year's environmental performance into the statement the group publishes.,true
+Keep the permit register current,plant_compliance_officer,standing,,,,,,Group Environment Standard GE-09 §4,"The register reflects the permits actually in force — no expiry passes without the entry being updated. Never ""done""; attested, not ticked.",true
+Daily line start-up check,shift_supervisor,recurring,daily,period_start,0,1,0,Works Instruction WI-101 §2,Confirm the line is safe to start and record the guard and interlock checks before the first run of the day.,true
+Shift handover record,shift_supervisor,recurring,weekly,period_start,0,2,0,Works Instruction WI-120 §3,"Written handover for every shift change in the week: state of the line, anything left open.",true
+Line safety walk,shift_supervisor,recurring,monthly,period_start,2,7,2,Site Safety Standard SS-07 §2,Walk the line against the safety checklist with an operator present. Log what you fixed on the spot.,true
+Toolbox talk record,shift_supervisor,recurring,monthly,period_start,9,7,3,Site Safety Standard SS-07 §5,Run one toolbox talk with the shift and record who attended.,true
+Lifting equipment check,shift_supervisor,recurring,quarterly,period_start,5,14,5,Works Instruction WI-204 §1,"Visual check and tag review of every sling, hoist and eyebolt on the line.",true
+Contractor induction refresh,shift_supervisor,recurring,annual,period_end,-60,120,21,Site Safety Standard SS-15 §3,"Re-run the site induction for every contractor still holding a pass, and retire the passes nobody claimed.",true
+Answer the duty phone,shift_supervisor,standing,,,,,,Works Instruction WI-002 §1,The out-of-hours phone is carried and answered. There is no version of this that is ever finished.,true
+Overtime justification summary,shift_supervisor,recurring,monthly,period_end,-2,7,3,People Policy PP-22 cl.6,One line per overtime shift worked: why it was needed and what it covered.,true
+Calibration verification,quality_technician,recurring,monthly,period_start,6,7,2,Quality Manual QM-31 §4,"Verify each instrument against its reference standard and record the deviation, in range or not.",true
+Retained sample review,quality_technician,recurring,fortnightly,period_start,2,5,1,Quality Manual QM-18 §2,Inspect the retained samples due for review and dispose of anything past its retention window.,true
+Nonconformance log review,quality_technician,recurring,monthly,period_start,1,7,2,Quality Manual QM-05 §3,Review every nonconformance raised last month and confirm each one has an owner and a closing date.,true
+Cleaning verification swabs,quality_technician,recurring,weekly,period_start,3,3,1,Quality Manual QM-22 §7,Swab the changeover points after the weekly clean and log the plate counts.,true
+Instrument drift check,quality_technician,recurring,monthly,period_start,8,7,2,,Compare this month's calibration deviations against the last three and note any instrument trending out.,true
+Commissioning file handover,quality_technician,one_off,,,,,7,Project Standard PS-06 §5,"Hand the commissioning file to operations: as-built drawings, test records, spares list, signed off.",false

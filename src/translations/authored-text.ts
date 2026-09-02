@@ -162,6 +162,30 @@ const translate = (key: (ctx: KeyContext) => readonly string[] | undefined): Ver
 const id = (ctx: KeyContext): string | undefined => str(ctx.ids.name);
 
 /**
+ * The `id` of the page component a string was found inside.
+ *
+ * A page nests its labels two levels below the surface root
+ * (`regions[i].components[j].properties.title`), so `ctx.parent` is the
+ * `properties` bag — which carries no identity. The addressable id is on the
+ * component, one level up, and the only way back to it is the concrete path:
+ * `ctx.ids` IS the page node for a `simpleSurfaces` surface, so walk it.
+ *
+ * Addressing by the authored `id` rather than by position is what keeps a
+ * bundle key stable when a component moves — reordering the page must not
+ * silently re-point every translation, which `regions.1.components.7` would.
+ */
+const pageComponentId = (ctx: KeyContext): string | undefined => {
+  const [regionsKey, regionIndex, componentsKey, componentIndex] = ctx.path;
+  if (regionsKey !== 'regions' || componentsKey !== 'components') return undefined;
+  const regions = ctx.ids.regions;
+  if (!Array.isArray(regions)) return undefined;
+  const region = regions[Number(regionIndex)];
+  if (!isRec(region) || !Array.isArray(region.components)) return undefined;
+  const component = region.components[Number(componentIndex)];
+  return isRec(component) ? str(component.id) : undefined;
+};
+
+/**
  * Subtrees the walk does not descend into, each with the reason. An opaque
  * subtree holds machine values only — a field payload, a filter, a binding
  * block. Choosing one is a decision, not a shortcut: it must be a VALUE bag,
@@ -170,6 +194,10 @@ const id = (ctx: KeyContext): string | undefined => str(ctx.ids.name);
  */
 const OPAQUE: Readonly<Record<string, string>> = {
   'object.indexes': 'index definitions — field names and uniqueness scopes',
+  // `{ fromState: [toState] }` — state VALUES on both sides, never a label.
+  // Opaque rather than one verdict per state, so adding a state to a pipeline
+  // does not also mean adding a row to this table.
+  'object.validations[].transitions': 'state-machine transition table — stored state values',
   'object.fields{}.summaryOperations': 'rollup wiring — object, field and function names',
   'object.enable': 'capability flags',
   'view.data': 'the view\'s data binding — provider and object name',
@@ -200,6 +228,18 @@ const OPAQUE: Readonly<Record<string, string>> = {
   'permissionSet.objects': 'per-object CRUD scopes',
   'permissionSet.fieldPermissions': 'per-field read/write flags',
   'permissionSet.tabPermissions': 'per-app tab visibility',
+  // ── page ──────────────────────────────────────────────────────────────
+  // The same three value bags `view.*` above declares opaque, at their
+  // page-component position. A related list's `columns` / `sort` / `filter`
+  // carry exactly what a view's do — field paths, directions, operators,
+  // stored values and `{date-macros}` — and the prose net below is the
+  // backstop if one of them ever grows a sentence.
+  'page.regions[].components[].properties.columns': 'column list — field paths',
+  'page.regions[].components[].properties.sort': 'sort list — field paths and directions',
+  'page.regions[].components[].properties.filter':
+    'related-list filter rules — field paths, operators and machine values / date macros',
+  'page.regions[].components[].responsiveStyles':
+    'per-breakpoint CSS declarations (ADR-0065 scoped styles) — property names and values',
 };
 
 /**
@@ -219,6 +259,7 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'object.sharingModel': machine('security posture'),
   'object.datasource': machine('datasource name'),
   'object.nameField': machine('field name'),
+  'object.stageField': machine('field name — the record\'s lifecycle field (ADR-0085)'),
   'object.highlightFields[]': machine('field names'),
   'object.fields{}.label': translate((c) =>
     id(c) ? ['objects', id(c)!, 'fields', c.path[1]!, 'label'] : undefined),
@@ -230,8 +271,45 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
     const value = str(c.parent.value);
     return id(c) && value ? ['objects', id(c)!, 'fields', c.path[1]!, 'options', value] : undefined;
   }),
+  'object.fields{}.group': machine('field-group key — matches an `object.fieldGroups[].key`'),
+  /**
+   * A record page's section headings (#108).
+   *
+   * ── Which bundle slot, and why it is `_sections` ─────────────────────
+   * Measured on 17.2.0 rather than inferred, because the two halves of the
+   * platform disagree and only one of them is what a user sees:
+   *
+   *   `translateObject(obj, bundle, { locale })` does NOT rewrite
+   *   `fieldGroups[].label`. Fed a bundle carrying `_sections.basics.label`
+   *   it returns the group's authored English untouched (the object's own
+   *   `label` and every field `label` beside it do translate).
+   *
+   *   The CONSOLE does translate it, and that is the surface with a reader.
+   *   Its form runs the spec's `deriveFieldGroupLayout` and emits one section
+   *   per group with `name` set to the group's `key`, then resolves the
+   *   heading through `sectionLabel(object, name, fallback)` — which reads
+   *   `objects.<object>._sections.<name>.label`, the slot
+   *   `ObjectTranslationDataSchema` declares for exactly this shape.
+   *
+   * So the key below is real and the heading is Chinese in a zh-CN console.
+   * It is NOT `untranslatable`: a verdict of that kind would be wrong (a key
+   * exists and works) and would put an entry in the exemption list that the
+   * gate then has to be told to ignore.
+   */
+  'object.fieldGroups[].label': translate((c) => {
+    const group = str(c.parent.key);
+    return id(c) && group ? ['objects', id(c)!, '_sections', group, 'label'] : undefined;
+  }),
+  'object.fieldGroups[].key': machine('field-group key — the section name the layout is derived on'),
+  'object.fieldGroups[].icon': machine('icon name'),
+  'object.fieldGroups[].collapse': machine('section collapse behaviour'),
   'object.fields{}.options[].value': machine('the stored option value — the option key itself'),
   'object.fields{}.options[].color': machine('option colour'),
+  // Per-option `visibleWhen` (#107) — a CEL predicate over `record` and
+  // `current_user`, evaluated by the form AND by the write path. Machine, like
+  // every other expression envelope in this table.
+  'object.fields{}.options[].visibleWhen.dialect': machine('expression dialect'),
+  'object.fields{}.options[].visibleWhen.source': machine('CEL source'),
   'object.fields{}.type': machine('field type'),
   'object.fields{}.reference': machine('lookup target object'),
   'object.fields{}.deleteBehavior': machine('referential action'),
@@ -253,6 +331,11 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'object.validations[].events[]': machine('lifecycle events'),
   'object.validations[].condition.dialect': machine('expression dialect'),
   'object.validations[].condition.source': machine('CEL source'),
+  // The `state_machine` variant's own keys (#107). `field` and
+  // `initialStates` name a field and stored values; the transition table
+  // itself is opaque above.
+  'object.validations[].field': machine('the state field a state_machine rule governs'),
+  'object.validations[].initialStates[]': machine('stored states a record may be created in'),
 
   // ── view (walked per expanded view item, so `list` and `listViews.*`
   //    normalise to the same paths) ────────────────────────────────────────
@@ -312,6 +395,7 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'app.navigation[].children[].objectName': machine('bound object'),
   'app.navigation[].children[].viewName': machine('bound view'),
   'app.navigation[].children[].dashboardName': machine('bound dashboard'),
+  'app.navigation[].children[].requiresObject': machine('capability gate — the runtime object name this entry needs registered'),
 
   // ── dashboard ─────────────────────────────────────────────────────────
   'dashboard.name': machine('dashboard name'),
@@ -331,6 +415,61 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'dashboard.widgets[].dimensions[]': machine('dataset dimension names'),
   'dashboard.widgets[].values[]': machine('dataset measure names'),
   'dashboard.widgets[].colorVariant': machine('tile colour role'),
+
+  // ── page ──────────────────────────────────────────────────────────────
+  'page.name': machine('page name — its routing identity'),
+  'page.icon': machine('icon name'),
+  'page.type': machine('page kind'),
+  'page.kind': machine('page override mode'),
+  'page.template': machine('layout template name'),
+  'page.object': machine('bound object'),
+  'page.label': translate((c) => (id(c) ? ['pages', id(c)!, 'label'] : undefined)),
+  'page.description': translate((c) => (id(c) ? ['pages', id(c)!, 'description'] : undefined)),
+  'page.regions[].name': machine('layout region name'),
+  'page.regions[].width': machine('layout region width'),
+  'page.regions[].components[].id': machine('component id — the translation key itself'),
+  'page.regions[].components[].type': machine('component kind'),
+  'page.regions[].components[].properties.objectName': machine('bound object'),
+  'page.regions[].components[].properties.relationshipField': machine('field on the child object holding this record'),
+  'page.regions[].components[].properties.layout': machine('highlight strip orientation'),
+  'page.regions[].components[].properties.position': machine('panel dock position'),
+  'page.regions[].components[].properties.variant': machine('text style variant'),
+  // `element:text`'s `content` is the ONE string that component renders, and
+  // `PageTranslation.components` has no key for it — measured on
+  // `@objectstack/spec` 17.2.0: the face is
+  // `title | description | label | placeholder | emptyText | submitLabel`,
+  // its alias table maps `text → label` and `caption → description`, and
+  // `content` appears nowhere in either. The face's own comment says the keys
+  // were derived from the copy props components declare, so this is a missed
+  // one rather than a deliberate exclusion (the two exclusions it DOES make
+  // are named there: `help` and `subtitle`).
+  //
+  // The route that works is the other one the same comment blesses:
+  // `content` is `I18nLabelSchema`, which accepts an inline `{ en, 'zh-CN' }`
+  // locale map resolved by `pickLocalized` at render — the route the
+  // platform's own `sys-user.page.ts` uses for its eight `element:text`
+  // nodes. So these strings ARE localized; they are localized at the
+  // authoring site instead of in the bundle, which is why they are excused
+  // here rather than keyed. Filed upstream; see the PR body. When the key
+  // lands, replace these two verdicts with a `translate` on
+  // `…properties.content` and move the copy into the bundles.
+  'page.regions[].components[].properties.content.en':
+    untranslatable('`element:text` copy, localized inline — the bundle has no `content` key for this component'),
+  'page.regions[].components[].properties.content.zh-CN':
+    untranslatable('`element:text` copy, localized inline — the bundle has no `content` key for this component'),
+  'page.regions[].components[].properties.fields[].name': machine('field name'),
+  // The two strings a page component actually SHOWS. Both live under
+  // `properties` because that is where the renderer reads them from — a
+  // component's own top-level `label` is not what `record:related_list` draws
+  // as its heading, nor what `element:text` renders as its body.
+  'page.regions[].components[].properties.title': translate((c) => {
+    const component = pageComponentId(c);
+    return id(c) && component ? ['pages', id(c)!, 'components', component, 'title'] : undefined;
+  }),
+  'page.regions[].components[].properties.content': translate((c) => {
+    const component = pageComponentId(c);
+    return id(c) && component ? ['pages', id(c)!, 'components', component, 'content'] : undefined;
+  }),
 
   // ── action ────────────────────────────────────────────────────────────
   // An object-bound action is addressed under its object; an object-less one

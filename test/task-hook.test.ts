@@ -197,6 +197,55 @@ describe('completed_at', () => {
   });
 });
 
+/**
+ * The evidence gate that must never exist (#108).
+ *
+ * "Completion never requires evidence, a note, or a percentage" is a product
+ * invariant, and `attachments` is the field most likely to grow one by
+ * accident — a `requiredWhen: 'record.status == "done"'` looks like diligence
+ * and would turn the 5-second tick into a 5-minute chore.
+ *
+ * `test/invariants.test.ts` pins the METADATA half (not required, no rule
+ * names the column). This is the other half, and it is the one that cannot be
+ * argued with: a real booted engine, a task carrying no file at all, going to
+ * `done` and staying there.
+ */
+describe('attachments never gate completion', () => {
+  it('completes a task that carries no attachment at all', async () => {
+    const task = await newTask();
+    expect(task.attachments ?? null, 'the fixture must genuinely have no file').toBeFalsy();
+
+    const done = await data.update('duly_task', { id: task.id, status: 'done' });
+
+    expect(done.status).toBe('done');
+    expect(done.completed_at, 'the completion still stamps normally').toBeTruthy();
+    expect(done.attachments ?? null, 'and nothing invented a file to satisfy a gate').toBeFalsy();
+  });
+
+  it('completes one that DOES carry files, without treating them as evidence', async () => {
+    // The other direction, so the assertion above cannot pass by attachments
+    // being broken rather than optional.
+    const task = await newTask({ attachments: ['file_one', 'file_two'] });
+    expect(task.attachments, 'a multi-file column stores an array').toEqual(['file_one', 'file_two']);
+
+    const done = await data.update('duly_task', { id: task.id, status: 'done' });
+    expect(done.status).toBe('done');
+    expect(done.attachments).toEqual(['file_one', 'file_two']);
+  });
+
+  it('lets a done task be saved again with its files removed', async () => {
+    // A gate would most plausibly appear here — refusing to let the last file
+    // off a completed task. It must not.
+    const task = await newTask({ attachments: ['file_only'] });
+    await data.update('duly_task', { id: task.id, status: 'done' });
+
+    const stripped = await data.update('duly_task', { id: task.id, attachments: [] });
+
+    expect(stripped.status, 'the task stays done').toBe('done');
+    expect(stripped.attachments ?? [], 'and the files are gone, with no refusal').toEqual([]);
+  });
+});
+
 describe('last_update_at — the stagnation signal', () => {
   it('advances when the note is edited', async () => {
     const task = await newTask();
@@ -216,6 +265,70 @@ describe('last_update_at — the stagnation signal', () => {
     const moved = await data.update('duly_task', { id: task.id, status: 'in_progress' });
 
     expect(moved.last_update_at as string > before).toBe(true);
+  });
+
+  /**
+   * #108 — the product's headline gesture has to count as movement.
+   *
+   * Reporting progress is ONE TAP: the owner picks a preset phrase instead of
+   * typing a sentence. If that did not move the clock, a task nudged every
+   * week would still drift into "Not moving" (`status in (open, in_progress)
+   * AND last_update_at < {14_days_ago}`) — the one list a manager is told to
+   * trust, going wrong precisely for the people who are keeping it up to date.
+   *
+   * Red before `progress` joined the hook's field list, and measured that way
+   * rather than assumed: with the list back at `['status','note',
+   * 'skip_reason']` this assertion reads `false` — the clock does not move.
+   */
+  it('advances when a progress phrase is picked', async () => {
+    const task = await newTask();
+    const before = task.last_update_at as string;
+
+    await tick();
+    const reported = await data.update('duly_task', { id: task.id, progress: 'distributed' });
+
+    expect(
+      reported.last_update_at as string > before,
+      'picking a preset progress phrase IS somebody working the task',
+    ).toBe(true);
+  });
+
+  it('advances when the phrase CHANGES, and not when it is re-sent', async () => {
+    // Same pre-image comparison the rest of the list gets: a form that
+    // re-submits the whole record is not progress on it.
+    const task = await newTask({ progress: 'in_hand' });
+    const before = task.last_update_at as string;
+
+    await tick();
+    const resent = await data.update('duly_task', { id: task.id, progress: 'in_hand' });
+    expect(resent.last_update_at, 're-sending the same phrase is not a touch').toBe(before);
+
+    await tick();
+    const changed = await data.update('duly_task', { id: task.id, progress: 'awaiting_feedback' });
+    expect(changed.last_update_at as string > before).toBe(true);
+  });
+
+  /**
+   * The deliberate asymmetry (#108). A file arriving is real, but
+   * `attachments` is optional by product invariant and nothing may make it
+   * feel otherwise — an upload that silently refreshed the stagnation clock
+   * would make "attach something" the cheapest way to look busy, one step from
+   * the evidence gate the invariant forbids.
+   */
+  it('does NOT advance when a file is attached', async () => {
+    const task = await newTask();
+    const before = task.last_update_at as string;
+
+    await tick();
+    const attached = await data.update('duly_task', {
+      id: task.id,
+      attachments: ['file_abc123'],
+    });
+
+    expect(
+      attached.last_update_at,
+      'an attachment is not a status report — the phrase beside it is',
+    ).toBe(before);
   });
 
   it('advances when a skip reason is recorded', async () => {
@@ -731,6 +844,12 @@ describe('WRITE-ONCE — editing a duty\'s grace never rewrites history', () => 
         owner: 'user_alice',
         business_unit: null,
         source: 'catalog',
+        // Only an approved duty dispatches (#107). This fixture is asking
+        // "what deadline would the dispatcher have stamped", so the duty it
+        // asks about has to be one the dispatcher would actually have picked
+        // up — otherwise there is no draft and the assertion below reads as a
+        // `late_after` bug rather than an unapproved duty.
+        review_status: 'approved',
         frequency: 'monthly',
         due_anchor: 'period_start',
         due_offset_days: 4,

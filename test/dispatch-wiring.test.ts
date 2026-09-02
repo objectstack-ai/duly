@@ -99,7 +99,15 @@ describe('the dispatch engine is bound at boot, through the real onEnable path',
       due_offset_days: 4,
       lead_days: 0,
       timezone: 'UTC',
-    });
+      // Only an APPROVED duty dispatches (#107). Written straight, through
+      // the platform's own historical-write door — `skipStateMachine` is what
+      // the REST import endpoint sets for `treatAsHistorical`, and what the
+      // seed loader reaches via `seedReplay`; the pipeline itself is exercised
+      // by ordinary writes in `test/duty-review.test.ts`. Without this the
+      // duty is born `to_confirm` and this suite would report the wiring
+      // broken when what is actually true is that nobody approved anything.
+      review_status: 'approved',
+    }, { context: { skipStateMachine: true } });
     const dutyId = String((Array.isArray(created) ? created[0] : created).id);
 
     // If `registerDulyActionHandlers` never called `bindDispatchEngine`, this

@@ -4,6 +4,32 @@ import { P, defineView } from '@objectstack/spec';
 
 const data = { provider: 'object' as const, object: 'duly_task' };
 
+/**
+ * The columns every task grid carries.
+ *
+ * `progress` and `attachments` were appended by #108 rather than woven into
+ * the order, which keeps the blast radius of that card to two extra columns on
+ * four lenses instead of a re-ordering nobody asked for. `my_week` — the
+ * frontline screen the deck's p16 draws — states its own order below.
+ *
+ * ── Why the deck's "最新进展 (= progress 或 note)" is TWO things, not one ──
+ * The card asks for one column showing the progress phrase or, failing that,
+ * the note. There is no authorable way to say that, and every way of faking it
+ * is worse than the honest pair:
+ *
+ *   a stored `latest_progress`   needs a writer on every note and phrase edit
+ *                                — the maintained-flag shape AGENTS.md rule 5
+ *                                forbids, and it lies the day the writer skips.
+ *   a formula field              is virtual, so a filter naming it silently
+ *                                matches nothing (rule 5 again), and a formula
+ *                                over a select renders the STORED value —
+ *                                `on_time`, not "Finished on time".
+ *
+ * So the grid carries `progress`, which is the tappable one and the one that
+ * is short enough to be a column; `note` is a paragraph and lives on the
+ * record, in the same "Progress and attachments" group. Nothing is hidden: the
+ * phrase is what the frontline person is being asked for.
+ */
 const columns = [
   { field: 'subject' },
   { field: 'status' },
@@ -11,6 +37,8 @@ const columns = [
   { field: 'period_key' },
   { field: 'owner' },
   { field: 'source' },
+  { field: 'progress' },
+  { field: 'attachments' },
 ];
 
 /**
@@ -126,6 +154,16 @@ const bulkActions = [
  * it stays correct without a maintenance writer behind it.
  */
 export const TaskViews = defineView({
+  /**
+   * ── Which lenses are inline-editable, and why it is not all of them ─────
+   * `my_week` and `board` are the OWNER's screens and both take inline edits
+   * (#108). `list` here and the three manager lenses below — `late`,
+   * `stalled`, `by_unit` — deliberately do not: "Managers do not enter status.
+   * Assigning is their only write" is a product invariant, and a status or
+   * progress cell that edits in place on a team lens is an invitation to break
+   * it one row at a time. Nothing is lost — the row action and the record page
+   * are still there for a person editing their own task.
+   */
   list: {
     label: 'All tasks',
     type: 'grid',
@@ -136,11 +174,44 @@ export const TaskViews = defineView({
   },
 
   listViews: {
+    /**
+     * The frontline screen (deck p16). Column order is the deck's, read left
+     * to right the way the work is: what state it is in, what it is, who put
+     * it there, when it is owed, what the last word on it was, and whether
+     * anything is attached.
+     *
+     * ── `inlineEdit` is what makes the phrase one tap ────────────────────
+     * Without it the row is read-only and reporting progress costs a record
+     * page. With it the grid renders the select in the cell and the write is
+     * the ordinary data-plane update under the caller's own permissions — the
+     * same authority as the row action, no handler anywhere. `status` and
+     * `progress` are the two columns worth touching from here; the rest are
+     * server-owned or administrative, and a user who may not write a column
+     * gets the platform's refusal rather than a silent no-op.
+     *
+     * ── The due column needs no `format` key ─────────────────────────────
+     * Measured on @objectstack/console 17.2.0: the date cell defaults to
+     * `format: 'relative'` and derives "due-like" from the FIELD NAME (a
+     * `/(^|_)(due|deadline|…)(_|$)/` test, which `due_date` matches), so it
+     * already renders `Tomorrow` / `In 3 days` / `Overdue 5d` inside a
+     * ±7-day window and an absolute date outside it. The card's fallback — a
+     * `late_after` column standing in for "逾期 N 天" — is therefore NOT
+     * needed here, and `late_after` stays where it earns its place, on the
+     * `late` lens that filters by it.
+     */
     my_week: {
       label: 'My week',
       type: 'grid',
       data,
-      columns: [{ field: 'subject' }, { field: 'status' }, { field: 'due_date' }, { field: 'source' }],
+      columns: [
+        { field: 'status' },
+        { field: 'subject' },
+        { field: 'source' },
+        { field: 'due_date' },
+        { field: 'progress' },
+        { field: 'attachments' },
+      ],
+      inlineEdit: true,
       filter: [
         { field: 'owner', operator: 'equals', value: '{current_user_id}' },
         { field: 'status', operator: 'in', value: ['open', 'in_progress'] },
@@ -254,19 +325,107 @@ export const TaskViews = defineView({
      * No `summarizeField`: it renders a per-column SUM, and there is no number
      * on a task worth totalling. The nearest candidate would be a count, and
      * counts are never ranked or compared here.
+     *
+     * ── The card face is `kanban.columns`, and `cardFields` is not authorable ─
+     * Measured, because the deck (p17) asks for it by the renderer's name.
+     * `KanbanConfigSchema` in `@objectstack/spec/ui` is a STRICT object with
+     * exactly `groupByField`, `summarizeField` and `columns` — so
+     * `kanban.cardFields` is refused by `pnpm validate` rather than silently
+     * ignored, which is the good failure and the opposite of the gantt block's
+     * passthrough trap documented below. The console's view relay then reads
+     * `cardFields: kanban.cardFields || kanban.columns || …`, so the authorable
+     * spelling IS `columns` and it lands on the card. Nothing to file.
+     *
+     * ── Swimlanes: AUTHORABLE, and deliberately left off. Measured. ─────────
+     * The deck's p17 asks for "泳道或分组按来源". Both halves of the answer are
+     * measurements against a live `pnpm demo`, not readings of the source:
+     *
+     *  1. **The key is the view-level `grouping`, not `kanban.swimlaneField`.**
+     *     The strict schema above rejects `swimlaneField` outright (a failed
+     *     `pnpm validate`, which is the good failure). The console's relay
+     *     derives the kanban swimlane from
+     *     `swimlaneField || grouping.fields[0].field`, so
+     *     `grouping: { fields: [{ field: 'source' }] }` on THIS view turns them
+     *     on. Authored once, confirmed in a browser: lanes rendered, headed
+     *     `▼ CATALOG (19)`.
+     *
+     *     ⚠ Reading the console's OTHER relay (`ObjectView`, whose kanban
+     *     branch forwards no `grouping` at all) says the opposite. A comment
+     *     written off that reading — and the upstream bug it would have filed —
+     *     was already drafted here and was wrong. These views go through the
+     *     other path. Measure this one in a browser before changing it.
+     *
+     *  2. **Turning them on costs the column headers**, which is why the key is
+     *     not authored. In swimlane mode the status header row renders at
+     *     HEIGHT 0: the titles are in the DOM (`Open`, `In progress`, `Done`,
+     *     `Skipped`, `Cancelled`, at y=233) inside a
+     *     `flex … pl-36 overflow-x-auto` container whose measured height is
+     *     `0`, and a hit test at a title's own coordinates returns the lane's
+     *     collapse BUTTON behind it. Nothing paints. With the key absent the
+     *     same board renders them as real `<h3>`s — `OPEN 5 · IN PROGRESS 1 ·
+     *     DONE 20 · SKIPPED 0`.
+     *
+     *     A kanban whose columns are unlabelled is not a board, and this screen
+     *     is a p0 pre-sales demo. So: lanes off, `source` on the card face
+     *     instead (every card says which caliber it is), and the defect filed
+     *     as objectstack-ai/objectui#7303. Re-enabling is the one line in item
+     *     1 the day that lands; `test/views.test.ts` records the decision so it
+     *     cannot be flipped by accident.
      */
     board: {
       label: 'Board',
       type: 'kanban',
       data,
-      columns: [{ field: 'subject' }, { field: 'due_date' }, { field: 'owner' }, { field: 'source' }],
+      // The projection is built from `columns` alone — `kanban.columns` does
+      // not contribute to it on the `ObjectView` relay, so a card field that
+      // is not here arrives `undefined` and renders blank with nothing in
+      // error. Same lesson as `business_unit` on `by_unit` below.
+      columns: [
+        { field: 'subject' },
+        { field: 'due_date' },
+        { field: 'owner' },
+        { field: 'source' },
+        { field: 'progress' },
+      ],
       kanban: {
         groupByField: 'status',
         // The card face, in reading order: what it is, when it is owed, whose
-        // it is, and where it came from.
-        columns: ['subject', 'due_date', 'owner', 'source'],
+        // it is, where it came from, and the last word on it (#108, deck p17).
+        //
+        // `owner` stays even though the deck lists only source · due ·
+        // progress: this lens carries no owner filter, so on an account that
+        // can see other people's rows a face without a name is ambiguous
+        // rather than clean.
+        columns: ['subject', 'due_date', 'owner', 'source', 'progress'],
       },
       inlineEdit: true,
+      /**
+       * ⚠ LOAD-BEARING, for two independent reasons — do not widen it.
+       * `test/views.test.ts` fails if it is dropped.
+       *
+       * 1. **The product invariant.** Dragging a card writes `status` on the
+       *    task under it. "Managers do not enter status; assigning is their
+       *    only write" — so a board that shows other people's rows hands every
+       *    viewer a one-gesture way to break that, with no confirmation and no
+       *    trace beyond the field history. The board already sits under "My
+       *    work" for this reason (pinned in `test/views.test.ts`); this makes
+       *    its DATA agree with its placement instead of relying on where the
+       *    nav happens to put the link.
+       *
+       * 2. **The page cliff, measured on the #75 seed.** The kanban fetches
+       *    one page and the footer says so — "100 records · Showing first 100
+       *    records." Sorted by `due_date asc` over 186 tasks, those first 100
+       *    are ALL `done`: the Open and In-progress columns rendered "No
+       *    cards / 0" on a board whose whole job is live work, and the
+       *    swimlane showed one lane because the page held one caliber. Scoped
+       *    to the viewer it is a handful of rows — every status, every lane,
+       *    every count true. Same shape, and the same reasoning, as the scope
+       *    on `by_unit` and `schedule` below.
+       *
+       * ⛔ Not a page-size raise: that moves the cliff instead of removing it.
+       * The durable fix for the mechanism is objectstack-ai/objectui#7189.
+       */
+      filter: [{ field: 'owner', operator: 'equals', value: '{current_user_id}' }],
       sort: [{ field: 'due_date', order: 'asc' }],
     },
 

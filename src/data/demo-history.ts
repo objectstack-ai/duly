@@ -89,6 +89,20 @@ export const DISPATCH_DUTIES: readonly DispatchDuty[] = DUTIES.map((duty) => {
     owner: duty.owner,
     business_unit: unit,
     source: duty.source,
+    // ── Always `approved`, whatever the duty's review state is TODAY ──────
+    // The planner refuses an unapproved duty (`not_approved`), so passing
+    // each row's real review state would delete the history of every duty
+    // this fixture leaves mid-pipeline — including the two the "Late" and
+    // "Not moving" stories are told with.
+    //
+    // That would also be the wrong history. `review_status` is a fact about
+    // now, not about the six months behind it: those tasks WERE dispatched,
+    // which is precisely why returning a duty stops the next run rather than
+    // retracting the work already owed (pinned in `test/dispatch.test.ts`).
+    // A duty sitting in `to_confirm` with tasks behind it is the import case
+    // this card exists for — the work was always being done; the list is only
+    // now being formalised.
+    review_status: 'approved',
     frequency: cadence.frequency ?? null,
     due_anchor: cadence.due_anchor ?? null,
     due_offset_days: cadence.due_offset_days ?? null,
@@ -210,6 +224,30 @@ const IN_PROGRESS_IN_FLIGHT: readonly string[] = [
   'Shift handover record — Line A',
 ];
 
+/**
+ * The progress phrase each in-flight owner has reported (#108).
+ *
+ * The "最新进展" column and the board card face are the point of that card, and
+ * a column that is empty on every row demonstrates nothing — so the in-flight
+ * population carries phrases, spread deterministically by position the same
+ * way every other variation in this fixture is.
+ *
+ * Two populations are deliberately left BLANK, and each blank says something:
+ *
+ *  - **Stalled rows.** "Untouched since dispatch" and "the owner reported
+ *    progress" are contradictory claims about the same row. A phrase here
+ *    would undercut the one lens the product says is its most valuable.
+ *  - **Done rows.** A completed task's report IS its status. Stamping
+ *    `on_time` on 151 finished rows would also put a self-reported phrase
+ *    beside `completed_late: true` wherever the drift ran over — a screen
+ *    disagreeing with itself, and an invitation to read the phrase as the
+ *    on-time verdict, which `task.object.ts` says in as many words it is not.
+ */
+const IN_FLIGHT_PROGRESS = ['in_hand', 'distributed', 'awaiting_feedback'] as const;
+
+/** What a late task that IS being chased says about itself. */
+const CHASED_PROGRESS = 'awaiting_feedback' as const;
+
 /** Notes, so a record detail view is not a wall of empty fields. */
 const NOTES: Readonly<Record<string, string>> = {
   'Emissions return — Northgate': 'Meter 3 was swapped mid-period — figures split across the two serials, both attached.',
@@ -236,6 +274,8 @@ export interface SeededTask extends Omit<TaskDraft, 'status'> {
    */
   skip_reason?: string;
   note?: string;
+  /** A preset phrase the owner picked (#108) — absent on stalled and done rows. */
+  progress?: (typeof IN_FLIGHT_PROGRESS)[number] | typeof CHASED_PROGRESS | 'on_time';
   /** Written by a SECOND seed pass — an insert can never carry it. See `task.seed.ts`. */
   last_update_at: string;
 }
@@ -322,6 +362,9 @@ const resolveDraft = (draft: TaskDraft, index: number): SeededTask => {
         draft.duty === STALLED_LATE
           ? untouchedSinceDispatch
           : iso(new Date(NOW.getTime() - CHASED_DAYS_AGO[index % CHASED_DAYS_AGO.length]! * DAY)),
+      // The three that are being chased say so; the stalled one says nothing,
+      // which is the whole difference between the Late and Not-moving lenses.
+      ...(draft.duty === STALLED_LATE ? {} : { progress: CHASED_PROGRESS }),
     });
   }
   if (isMostRecentPast && draft.duty === SKIPPED_MOST_RECENT) {
@@ -362,6 +405,8 @@ const resolveDraft = (draft: TaskDraft, index: number): SeededTask => {
     ...draft,
     status: isInFlightHead && IN_PROGRESS_IN_FLIGHT.includes(draft.duty) ? 'in_progress' : 'open',
     last_update_at: stalled ? untouchedSinceDispatch : iso(new Date(NOW.getTime() - touchedDaysAgo(draft, dispatched, index) * DAY)),
+    // A stalled row has had nothing said about it — see IN_FLIGHT_PROGRESS.
+    ...(stalled ? {} : { progress: IN_FLIGHT_PROGRESS[index % IN_FLIGHT_PROGRESS.length]! }),
   });
 };
 

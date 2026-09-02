@@ -267,6 +267,8 @@ describe('untranslatable display text is declared rather than dropped', () => {
       'job.description',
       'job.label',
       'object.validations[].message',
+      'page.regions[].components[].properties.content.en',
+      'page.regions[].components[].properties.content.zh-CN',
       'permissionSet.description',
       'permissionSet.label',
       'position.description',
@@ -294,7 +296,13 @@ describe('untranslatable display text is declared rather than dropped', () => {
     const count = (prefix: string): number =>
       walk.untranslatable.filter((entry) => entry.path.startsWith(prefix)).length;
     expect(count('view.bulkActionDefs'), 'bulk-action toolbar copy').toBe(35);
-    expect(count('object.validations'), 'custom validation messages').toBe(11);
+    // Was 11 before #107 added `review_status_transitions` and
+    // `returned_needs_note`. Both messages are read by whoever is stopped by
+    // them — a reviewer taking a step the pipeline does not have, an owner
+    // returning a duty with no reason — so both enlarge the same declared gap
+    // (a custom rule message has no bundle key anywhere in the platform's
+    // schema) rather than opening a new kind of one.
+    expect(count('object.validations'), 'custom validation messages').toBe(13);
     // Was 26 before #52 added the three on-time measures — `Done on time`,
     // `Completed late` and the `On-time rate` derived from them. A measure
     // label still has no bundle key anywhere in the platform's schema, so each
@@ -313,6 +321,12 @@ describe('untranslatable display text is declared rather than dropped', () => {
     // checked below — so this is a gap that CLOSED, pinned at zero so it
     // cannot silently reopen as inline copy.
     expect(count('flow.nodes[].config.'), 'inline notification copy — closed by #69').toBe(0);
+    // `element:text` copy on `duly_member`, which IS end-user-facing and IS
+    // localized — inline, because `PageTranslation.components` has no
+    // `content` key (see the verdict's own note). Eight nodes × two locales.
+    // The number is the size of the filed spec gap; when the key lands these
+    // strings move into the bundles and this drops to 0.
+    expect(count('page.regions'), '`element:text` copy localized inline').toBe(16);
   });
 });
 

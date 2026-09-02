@@ -104,6 +104,12 @@ export const taskHistorySeed = defineSeed(Task, {
     // conclusion, which is the only way the demo and a live completion cannot
     // disagree.
     skip_reason: task.skip_reason,
+    // The preset phrase its owner reported (#108). Absent on the stalled and
+    // the done rows by design — `demo-history.ts` says why each blank is a
+    // blank. Carried on THIS pass and never on pass 3: `progress` is in the
+    // hook's `last_update_at` field list, so writing it in the backdating pass
+    // would re-stamp the clock that pass exists to set.
+    progress: task.progress,
     note: task.note,
   })),
 });
@@ -131,8 +137,8 @@ export const taskAdHocSeed = defineSeed(Task, {
  * Pass 3 — backdate the dispatched series.
  *
  * Carries the external id (so the row can be found) and `last_update_at`, and
- * nothing else. Deliberately nothing else: adding `status`, `note` or
- * `skip_reason` here would put the hook's stamping leg back in play and
+ * nothing else. Deliberately nothing else: adding `status`, `progress`, `note`
+ * or `skip_reason` here would put the hook's stamping leg back in play and
  * overwrite the value this pass exists to set.
  */
 export const taskHistoryTouchSeed = defineSeed(Task, {

@@ -46,6 +46,90 @@ describe('product invariants', () => {
     expect(Task.fields.note.required).not.toBe(true);
   });
 
+  /**
+   * #108 — the attachment column is optional on every path there is.
+   *
+   * Three ways an evidence gate could arrive, and none of them may: the field
+   * itself going `required`, a conditional `requiredWhen` that fires on `done`
+   * (which is how it would actually be written), or a validation rule naming
+   * the column. `test/task-hook.test.ts` completes a fileless task against a
+   * real engine; this is the metadata half, which is where the mistake would
+   * be MADE.
+   */
+  it('an attachment is never required, and no rule reads one', () => {
+    const attachments = Task.fields.attachments as {
+      required?: boolean; requiredWhen?: unknown; multiple?: boolean; type?: string;
+    };
+    expect(attachments, 'duly_task must carry an attachments column').toBeDefined();
+    expect(attachments.type, 'the platform file field, not a text column of URLs').toBe('file');
+    expect(attachments.multiple, 'more than one file, or the first one becomes the record').toBe(true);
+    expect(attachments.required, 'an evidence gate turns the tick into a chore').not.toBe(true);
+    expect(
+      attachments.requiredWhen,
+      'a `requiredWhen` on done is the evidence gate written the way it would really be written',
+    ).toBeUndefined();
+
+    for (const rule of Task.validations ?? []) {
+      expect(
+        JSON.stringify(rule),
+        `validation "${rule.name}" reads attachments — completion never requires evidence`,
+      ).not.toContain('attachments');
+    }
+  });
+
+  /**
+   * #108 — the progress phrase is a phrase, not a score and not a default.
+   *
+   * A default would put words nobody said on every dispatched row, and the
+   * list column would read as news on 186 tasks at once. Blank is the honest
+   * value for "nobody has reported anything yet".
+   */
+  it('the progress phrase starts blank and is never required', () => {
+    const progress = Task.fields.progress as {
+      required?: boolean; options?: Array<{ value: string; default?: boolean }>;
+    };
+    expect(progress.required, 'nobody is made to file a status line').not.toBe(true);
+    expect((progress.options ?? []).map((o) => o.value))
+      .toEqual(['on_time', 'distributed', 'awaiting_feedback', 'in_hand']);
+    expect(
+      (progress.options ?? []).filter((o) => o.default),
+      'a dispatched task has reported nothing yet — no option may claim the default',
+    ).toEqual([]);
+  });
+
+  /**
+   * #108 — the record page's `history` group is exactly the server-owned
+   * stamps, and every field is filed somewhere.
+   *
+   * Both halves matter and both are silent when wrong. A field whose `group`
+   * names no declared key is not an error: the platform drops it into an
+   * unnamed trailing bucket below the last section, so it renders — just in
+   * the wrong place, under no heading. And a new readonly stamp left out of
+   * `history` lands in the middle of the edit form, reading as a field
+   * somebody forgot to make editable.
+   */
+  it('every field is filed under a declared group, and history is exactly the readonly stamps', () => {
+    const groups = new Set((Task.fieldGroups ?? []).map((g) => g.key));
+    expect(groups, 'the three sections the deck asks for').toEqual(
+      new Set(['basics', 'progress', 'history']),
+    );
+
+    const entries = Object.entries(Task.fields) as Array<[string, { group?: string; readonly?: boolean }]>;
+    for (const [name, field] of entries) {
+      expect(
+        field.group && groups.has(field.group) ? field.group : undefined,
+        `duly_task.${name} has no group, or names one that is not declared — it renders `
+        + 'in an unnamed bucket after the last section, with nothing in error',
+      ).toBeDefined();
+    }
+
+    const readonlyFields = entries.filter(([, f]) => f.readonly === true).map(([name]) => name).sort();
+    const historyFields = entries.filter(([, f]) => f.group === 'history').map(([name]) => name).sort();
+    expect(historyFields, 'the history section IS the set of server-owned stamps')
+      .toEqual(readonlyFields);
+    expect(readonlyFields.length, 'and it is not vacuously empty').toBeGreaterThan(3);
+  });
+
   it('no MAINTAINED lateness flag exists on the task', () => {
     // The banned shape is a flag whose truth changes with the clock: it needs a
     // writer every midnight and lies the night it does not run. `late_after`
