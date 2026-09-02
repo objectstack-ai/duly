@@ -2,7 +2,7 @@
 
 import type { Seed } from '@objectstack/spec/data';
 
-import { ADMIN, PEOPLE, UNITS, emailOf } from './demo-org.js';
+import { ADMIN, PEOPLE, UNITS } from './demo-org.js';
 
 /**
  * The org: `sys_business_unit`, `sys_user`, and the membership junction
@@ -119,7 +119,10 @@ export const userSeed: Seed = {
     { name: ADMIN },
     ...PEOPLE.map((person) => ({
       name: person.name,
-      email: emailOf(person.name),
+      // Carried on the row rather than derived here: the derivation only works
+      // on an English name (see `demo-org.ts`), and in zh-CN the display name
+      // is Chinese while the address stays ASCII pinyin.
+      email: person.email,
       manager_id: person.manager,
     })),
   ],

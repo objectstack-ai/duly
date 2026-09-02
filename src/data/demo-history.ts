@@ -3,6 +3,7 @@
 import { periodBounds, periodKeyFor, visibleFromFor } from '../functions/period.js';
 import { planDispatch, type DispatchDuty, type DutySkip, type TaskDraft } from '../jobs/dispatch.plan.js';
 
+import { t } from './demo-locale.js';
 import { timezoneOf, unitOf } from './demo-org.js';
 import { DUTIES, cadenceOf, catalogItem, type DemoCatalogItem } from './demo-catalog.js';
 
@@ -174,6 +175,17 @@ const iso = (instant: Date): string => new Date(Math.min(instant.getTime(), NOW.
  */
 
 /**
+ * The tables below address an occurrence by DUTY NAME, and a duty name is a
+ * display string — so in a non-English compile the keys have to be translated
+ * with the duties they name, or every lookup here misses and the fixture
+ * quietly loses its late rows, its stalled rows, its skip and its
+ * cancellation. Written as one helper rather than a `t()` per key so a new
+ * entry cannot be added without it.
+ */
+const byDutyName = <T>(table: Readonly<Record<string, T>>): Readonly<Record<string, T>> =>
+  Object.fromEntries(Object.entries(table).map(([duty, value]) => [t(duty), value]));
+
+/**
  * Still open, and past due. The **Late** view.
  *
  * Three of the four are being actively chased (touched inside the fortnight);
@@ -182,19 +194,19 @@ const iso = (instant: Date): string => new Date(Math.min(instant.getTime(), NOW.
  * lateness reports a failure that has already happened, stagnation catches one
  * that has not.
  */
-const LATE_MOST_RECENT: Readonly<Record<string, 'open' | 'in_progress'>> = {
+const LATE_MOST_RECENT: Readonly<Record<string, 'open' | 'in_progress'>> = byDutyName({
   'Emissions return — Northgate': 'open',
   'Toolbox talk record — Line B': 'in_progress',
   'Line safety walk — Riverside': 'open',
   // The overlap: late AND untouched since the day it was dispatched.
   'Calibration verification — Lab 1': 'open',
-};
+});
 
 /** How long ago each actively-chased late row was last touched. */
 const CHASED_DAYS_AGO = [2, 6, 10] as const;
 
 /** Untouched since dispatch as well as late — the fourth Late row above. */
-const STALLED_LATE = 'Calibration verification — Lab 1';
+const STALLED_LATE = t('Calibration verification — Lab 1');
 
 /**
  * Open, NOT yet due, and untouched since dispatch. The **Not moving** view
@@ -208,21 +220,21 @@ const STALLED_LATE = 'Calibration verification — Lab 1';
 const STALLED_IN_FLIGHT: readonly string[] = [
   'Site environmental audit — Northgate',
   'Contractor induction refresh — Northgate',
-];
+].map(t);
 
 /** One skipped occurrence, with a reason that is an answer rather than "n/a". */
-const SKIPPED_MOST_RECENT = 'Line safety walk — Line A';
-const SKIP_REASON = 'Line A was down for the rebuild for the whole period — there was no line to walk.';
+const SKIPPED_MOST_RECENT = t('Line safety walk — Line A');
+const SKIP_REASON = t('Line A was down for the rebuild for the whole period — there was no line to walk.');
 
 /** One withdrawn occurrence. Cancelled work was never owed, so no measure counts it. */
-const CANCELLED_OLDEST = 'Retained sample review — Lab 1';
+const CANCELLED_OLDEST = t('Retained sample review — Lab 1');
 
 /** A few in-flight tasks somebody has actually started. */
 const IN_PROGRESS_IN_FLIGHT: readonly string[] = [
   'Permit condition review — Northgate',
   'Nonconformance log review — Northgate Quality',
   'Shift handover record — Line A',
-];
+].map(t);
 
 /**
  * The progress phrase each in-flight owner has reported (#108).
@@ -249,13 +261,18 @@ const IN_FLIGHT_PROGRESS = ['in_hand', 'distributed', 'awaiting_feedback'] as co
 const CHASED_PROGRESS = 'awaiting_feedback' as const;
 
 /** Notes, so a record detail view is not a wall of empty fields. */
-const NOTES: Readonly<Record<string, string>> = {
+const NOTES_EN: Readonly<Record<string, string>> = {
   'Emissions return — Northgate': 'Meter 3 was swapped mid-period — figures split across the two serials, both attached.',
   'Calibration verification — Lab 1': 'Waiting on the reference standard to come back from the calibration house.',
   'Site environmental audit — Northgate': 'Booked for the week of the shutdown so the lines are cold.',
   'Toolbox talk record — Line B': 'Two of the night shift still to attend; running a repeat session.',
   'Contractor induction refresh — Northgate': 'Pass list pulled from the gatehouse; fourteen to chase.',
 };
+
+/** Both halves translated: the key is a duty name, the value is prose on screen. */
+const NOTES: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(NOTES_EN).map(([duty, note]) => [t(duty), t(note)]),
+);
 
 export interface SeededTask extends Omit<TaskDraft, 'status'> {
   status: 'open' | 'in_progress' | 'done' | 'skipped' | 'cancelled';

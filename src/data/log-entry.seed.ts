@@ -5,7 +5,8 @@ import { defineSeed } from '@objectstack/spec/data';
 import { visibleFromFor } from '../functions/period.js';
 import { LogEntry } from '../objects/log-entry.object.js';
 
-import { ADMIN } from './demo-org.js';
+import { t } from './demo-locale.js';
+import { ADMIN, personOf } from './demo-org.js';
 import { TODAY } from './demo-history.js';
 
 /**
@@ -46,7 +47,7 @@ interface DemoLogEntry {
 }
 
 /** Subjects are unique across the fixture — `subject` is this dataset's external id. */
-const ENTRIES: readonly DemoLogEntry[] = [
+const ENTRIES_EN: readonly DemoLogEntry[] = [
   // ── The account you are logged in as ──────────────────────────────────
   { subject: 'Walked the new starter through the permit register', owner: ADMIN, daysAgo: 2, category: 'support', visibility: 'private' },
   { subject: 'Rewrote the sampling instruction after the lab query', owner: ADMIN, daysAgo: 4, category: 'drafting', visibility: 'private', detail: 'The old wording let two people read the hold time differently. Now it names the clock.' },
@@ -66,6 +67,24 @@ const ENTRIES: readonly DemoLogEntry[] = [
   { subject: 'Helped operations read the swab results', owner: 'Rosa Delgado', daysAgo: 22, category: 'support', visibility: 'private' },
   { subject: 'Sorted the supplier certificate folder into something findable', owner: 'Rosa Delgado', daysAgo: 30, category: 'coordination', visibility: 'private' },
 ];
+
+/**
+ * The log in this compile's language.
+ *
+ * `subject` is this dataset's external id as well as the line on screen, so it
+ * is translated with everything else and the key follows the display — which
+ * is the whole reason a replay in either locale matches its own rows rather
+ * than inserting fifteen more. `category` and `visibility` are select values
+ * the translations bundle renders. `owner` goes through `personOf`: eight of
+ * these entries belong to `ADMIN`, whose name is already in this compile's
+ * language and is deliberately not a dictionary entry.
+ */
+const ENTRIES: readonly DemoLogEntry[] = ENTRIES_EN.map((entry) => ({
+  ...entry,
+  subject: t(entry.subject),
+  owner: personOf(entry.owner),
+  ...(entry.detail === undefined ? {} : { detail: t(entry.detail) }),
+}));
 
 export const logEntrySeed = defineSeed(LogEntry, {
   externalId: 'subject',
