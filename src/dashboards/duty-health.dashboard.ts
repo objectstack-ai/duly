@@ -62,6 +62,113 @@ import { Dashboard } from '@objectstack/spec/ui';
  * - **The governed filter is already on every measure.** This file neither
  *   adds it nor removes it.
  *
+ * ── The p20 set: four cards, and why six tiles is still four cards ───────
+ *
+ * The sales deck's p20 is the leadership first screen: four KPI cards and two
+ * charts. Read against this file the four are 停滞项 (stagnation), 逾期项
+ * (overdue), 按期完成率 (on-time rate) and 清单完备度 (list completeness) —
+ * and the first of them is the THREE tiles at the top of this file, not one.
+ * That is deliberate and predates the deck: the >14d and >30d thresholds nest,
+ * so two tiles is the one arrangement that cannot be misread as a partition
+ * (above), and `oldest_last_update_at` is the date that answers "the worst
+ * one" without ranking anybody. Collapsing them to fit a slide count would
+ * delete a measured decision to satisfy an arithmetic that was never about
+ * widget count. `test/dashboard.test.ts` pins the >30d tile's "subset" wording
+ * for the same reason.
+ *
+ * Neither of the two charts already here was retired to make room. "Not
+ * moving, by unit" and "Coming up" answer questions the deck's two do not —
+ * the earliest actionable signal per unit, and the forward look — and the deck
+ * is a sales narrative, not an inventory of what a manager may see. Four
+ * charts, two rows.
+ *
+ * ── 逾期項: a plain date filter now, and still not a due-date window ──────
+ *
+ * `tasks_overdue` is `late_after < {today} AND status IN (open, in_progress)`,
+ * on the governed measure like everything else here. Two things about it are
+ * worth not re-deriving:
+ *
+ *  - It is a column against a MACRO, not a column against a column. #52 put
+ *    the deadline on the row at dispatch, so the comparison objectstack#14104
+ *    cannot express never has to be made. Nothing here needs the platform to
+ *    change.
+ *  - It is NOT `due_date < {today}`. That version needs no new measure at all,
+ *    which is exactly why it keeps being written: it marks late every task
+ *    still inside the grace its own duty grants. The dataset file carries the
+ *    refusal; `test/dashboard.test.ts` pins both the widget and the measure
+ *    side.
+ *
+ * The by-unit chart under it is the same measure with the unit dimension, and
+ * is ordered by the unit NAME for the same reason its neighbour above it is:
+ * the bar order is a property of the org chart, never of who is doing badly
+ * this week.
+ *
+ * ── 清单完备度, and the sub-caption that is a platform gap ────────────────
+ *
+ * The tile binds `approved_rate` — approved duties as a share of the duty
+ * REGISTER, over `review_status`. It is never a count of list items per person
+ * or per unit: "whose list is shortest" is the ranking `AGENTS.md` bans
+ * outright, and the two are easy to confuse because both are "completeness".
+ * `duly_duty_register` carries that distinction in full.
+ *
+ * The deck also asks for a sub-caption under the number — "N to confirm / M to
+ * approve". **The platform cannot render one on a dataset-bound tile today**,
+ * measured on objectui rather than assumed:
+ *
+ *  - `plugin-dashboard/src/DatasetWidget.tsx`, the `isMetric` branch, reads
+ *    `values[0]` and drops every other measure the widget selects. A second
+ *    and third measure here would be silently invisible — the worst available
+ *    failure on this screen.
+ *  - The authored sub-caption slot IS `widget.options.description`
+ *    (`DashboardRenderer.tsx`, `tWidgetSubCaption`, translation key
+ *    `…widgets.<id>.subCaption`) — but it is passed only on the inline
+ *    `object-metric` / static-value paths, under `isObjectProvider`. A
+ *    dataset-bound widget renders through `DatasetWidget`, which never reads
+ *    it. Since `dataset` is REQUIRED on `DashboardWidgetSchema`, every
+ *    spec-valid widget takes that path, so the key is declared and reachable
+ *    by nothing.
+ *
+ * So the tile ships with the rate and its `description` line, and the two
+ * pending counts are NOT approximated into the title, faked as static text, or
+ * smuggled in as extra `values` that would not render. Filed as
+ * **objectstack-ai/objectui#7293** with both measurements; the two measures
+ * arrive on `duly_duty_register` when the renderer can show them. This is the
+ * AGENTS.md rule 9 shape: the gap is reported, not written around.
+ *
+ * ── 本月工作构成: duties, not tasks — and no month filter ─────────────────
+ *
+ * The pie counts `duly_duty.form` over the register: recurring / one-off /
+ * standing. It is the only place on this screen a STANDING duty appears at
+ * all, because a standing duty never generates a task and every other widget
+ * here counts tasks. The description says so, and carries the deck's own
+ * caption — the on-time rate counts recurring work only.
+ *
+ * There is no "this month" filter behind the deck's card name, and that is a
+ * decision rather than an omission: a duty is a standing definition and has no
+ * month. What "this month's work" can honestly mean over duties is the
+ * register as it stands now, which is what the measure's `status != retired`
+ * already says. A date window bolted on here would have to read
+ * `effective_from` / `effective_to`, which are null on almost every seeded
+ * duty — it would silently shrink the pie to whichever duties happened to
+ * carry an effective window, and read as a composition of the whole register.
+ *
+ * Two presentation properties of this chart come from the FIELD, not from
+ * here, and the metadata is written to agree with them rather than to fight
+ * them (measured in objectui's `core/src/utils/chart-presentation.ts`,
+ * `chartConfigPresentation`, and `DatasetWidget`'s `buildOptionColorMap` /
+ * `buildCategoryOrder`):
+ *
+ *  - **Slice colour.** A select dimension's own option colours become
+ *    `categoryColors`, which take PRECEDENCE over the positional `colors`
+ *    palette. So the three hexes below are `duly_duty.form`'s own option
+ *    colours, written out so the metadata claims what the screen actually
+ *    draws — a different palette here would be inert decoration, and a
+ *    contrast assertion over it would be testing a colour nobody sees.
+ *  - **Slice order.** It is the picklist's declared option order, not the
+ *    counts. That is the same count-independence the unit chart buys with
+ *    `sortBy`, already true here by construction — which is why this widget
+ *    authors no `sortBy` at all: a second, conflicting order.
+ *
  * ── No ranking of people ─────────────────────────────────────────────────
  * `owner` is a dimension on `duly_stagnation` and on `duly_workload`, and no
  * widget below selects it. Unit comparison is a workload question and is
@@ -87,6 +194,15 @@ import { Dashboard } from '@objectstack/spec/ui';
  * entries were measured and rejected for chart FILLS on exactly this test:
  * `#16515F` and `#5A3F0C` pass on white (8.8:1, 9.8:1) and land at 2.2:1 and
  * 2.0:1 on a dark card.
+ *
+ * The three form colours the pie inherits were put through the identical
+ * test before this file agreed to restate them: `#2E7C8E` (recurring, the teal
+ * already here), `#8C6512` (one-off, L≈0.149 → 5.3:1 on white, 3.6:1 on
+ * #0B0F14) and `#576B73` (standing, L≈0.138 → 5.6:1 and 3.4:1). All three sit
+ * inside the same [0.118, 0.30] band, so the pie needs no per-theme colour
+ * either. The overdue bar reuses `#B07C17` rather than introducing a fourth
+ * fill: late and not-moving are the same ATTENTION role, and this app has one
+ * amber for it.
  *
  * The same measurement is why `showDataLabels` stays off rather than being
  * left to the default: white text ON `#B07C17` is 3.7:1, which is a contrast
@@ -217,6 +333,65 @@ export const DutyHealthDashboard = Dashboard.create({
     },
 
     /**
+     * 3c. Overdue — the deck's 逾期项, and the second half of what #52 made
+     * expressible.
+     *
+     * `tasks_overdue` counts OPEN governed work past its own `late_after`, the
+     * deadline stamped at dispatch from the duty's grace. Its neighbour to the
+     * left is a rate over work that FINISHED; this is the same family of
+     * numbers asked of work that has not. Both read a write-once stamp, and
+     * neither compares a column to a column.
+     *
+     * `warning`, not `danger`: an overdue task is a thing to go and look at.
+     * The file header carries the refusal of the two-line `due_date < {today}`
+     * version, which is what this tile would be if the grace were dropped.
+     */
+    {
+      id: 'overdue',
+      title: 'Overdue',
+      description:
+        'Open governed tasks past their own deadline — the due date plus the grace their duty '
+        + 'granted, as it stood when the task was dispatched.',
+      type: 'metric',
+      dataset: 'duly_duty_health',
+      values: ['tasks_overdue'],
+      colorVariant: 'warning',
+      layout: { x: 6, y: 4, w: 3, h: 3 },
+    },
+
+    /**
+     * 3d. List completeness — the deck's 清单完备度.
+     *
+     * Approved duties as a share of the governed register, over
+     * `review_status`. NEVER a count of list items per person or per unit:
+     * that is the ranking `AGENTS.md` bans, and the resemblance between the
+     * two is the whole reason the dataset states the difference at length.
+     *
+     * `default` rather than an attention colour, for the same reason the
+     * on-time tile is: this is a number that is GOOD when it is high, and
+     * painting it as an alert would read as a problem at 100%.
+     *
+     * The card's "N to confirm / M to approve" sub-caption is missing on
+     * purpose — a dataset-bound tile renders `values[0]` and nothing else, and
+     * the authored sub-caption slot is unreachable on this path. Measured, and
+     * filed as objectui#7293; the file header has both citations. It is not
+     * faked into the description, which would be a static number that goes
+     * stale the first time somebody approves a duty.
+     */
+    {
+      id: 'list_completeness',
+      title: 'List completeness',
+      description:
+        'Approved duties as a share of the governed duty register. Retired duties are out of both '
+        + 'halves; paused ones are still owed and stay in.',
+      type: 'metric',
+      dataset: 'duly_duty_register',
+      values: ['approved_rate'],
+      colorVariant: 'default',
+      layout: { x: 9, y: 4, w: 3, h: 3 },
+    },
+
+    /**
      * 4. By unit. Ordered by the unit DIMENSION, never by the count —
      * `sortBy` names a selected dimension, so the bar order is a property of
      * the org chart and not of who is doing badly this week. Unit comparison
@@ -297,6 +472,84 @@ export const DutyHealthDashboard = Dashboard.create({
       // Chronological, and — like the chart above — independent of the count.
       options: { sortBy: 'due_week', sortOrder: 'asc' },
       layout: { x: 7, y: 7, w: 5, h: 6 },
+    },
+
+    /**
+     * 6. Overdue by unit — the deck's 各部门逾期项分布.
+     *
+     * The same measure as the tile above, split by the org chart, and ordered
+     * by the unit DIMENSION exactly like the not-moving chart it sits under:
+     * `sortBy` names a selected dimension, so the bar order is a property of
+     * the org chart and not of who is doing badly this week. Ordering it by the
+     * count would turn a workload picture into a league table of units, which
+     * is the same mechanism the person rule exists to stop, one level up.
+     *
+     * One series, and `#B07C17` again: late and not-moving are one ATTENTION
+     * role and this app has one amber for it. Nothing here is `danger`.
+     *
+     * ⚠ Nothing in the platform checks that `sortBy` names something this
+     * widget selects (objectstack#14148 part B) — `test/dashboard.test.ts`
+     * resolves it.
+     */
+    {
+      id: 'overdue_by_unit',
+      title: 'Overdue, by business unit',
+      description:
+        'Open governed tasks past their own deadline, per unit. Units are ordered by name, '
+        + 'never by the count.',
+      type: 'horizontal-bar',
+      dataset: 'duly_duty_health',
+      dimensions: ['business_unit'],
+      values: ['tasks_overdue'],
+      chartConfig: {
+        type: 'horizontal-bar',
+        colors: ['#B07C17'],
+        showLegend: false,
+        showDataLabels: false,
+      },
+      options: { sortBy: 'business_unit', sortOrder: 'asc' },
+      layout: { x: 0, y: 13, w: 7, h: 6 },
+    },
+
+    /**
+     * 7. Work mix — the deck's 本月工作构成.
+     *
+     * The one widget on this screen that counts DUTIES rather than tasks, and
+     * therefore the only place a STANDING duty is visible at all: standing work
+     * never generates a task, so every other number here is structurally blind
+     * to it. The description says which population it is over and carries the
+     * deck's own caption — the on-time rate counts recurring work only — because
+     * a composition chart beside a completion rate invites exactly the reading
+     * that the rate covers all three slices.
+     *
+     * A pie is legitimate here where it never is for the stagnation buckets:
+     * these three forms PARTITION the register (a duty has exactly one `form`),
+     * while `>14d` and `>30d` nest. `test/dashboard.test.ts` enforces that
+     * distinction rather than banning the chart type.
+     *
+     * The palette restates `duly_duty.form`'s own option colours because a
+     * select dimension's option colours take precedence over the positional
+     * palette — see the file header. Slice order is the picklist's, which is
+     * why there is no `sortBy` here; `showDataLabels` stays off so no text is
+     * drawn on a fill, and the legend carries the names on the card background.
+     */
+    {
+      id: 'work_mix',
+      title: 'Work mix',
+      description:
+        'The governed duty register by form. This counts duties, not tasks — a standing duty '
+        + 'never generates one — and the on-time rate counts recurring work only.',
+      type: 'pie',
+      dataset: 'duly_duty_register',
+      dimensions: ['form'],
+      values: ['duties_in_register'],
+      chartConfig: {
+        type: 'pie',
+        colors: ['#2E7C8E', '#8C6512', '#576B73'],
+        showLegend: true,
+        showDataLabels: false,
+      },
+      layout: { x: 7, y: 13, w: 5, h: 6 },
     },
   ],
 });

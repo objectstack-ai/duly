@@ -28,11 +28,21 @@
 // the only thing standing between a typo here and a chart that renders empty while
 // every gate reports success.
 
+// ⚠ Three of the four are based on `duly_task` and one — `duly_duty_register`
+// — is based on `duly_duty`. That is not a detail of convenience: a task-based
+// dataset structurally cannot see a `standing` duty (it never generates a
+// task) or an unapproved one (it never dispatches), so a question about the
+// DUTY LIST has to be asked of the duty list. Check which object a dataset
+// sits on before adding a measure to it; a duty count and a task count that
+// share a screen are two different populations, and only their names look
+// alike.
+
 import { DutyHealth } from './duty-health.dataset.js';
+import { DutyRegister } from './duty-register.dataset.js';
 import { Stagnation } from './stagnation.dataset.js';
 import { Workload } from './workload.dataset.js';
 
-export { DutyHealth, Stagnation, Workload };
+export { DutyHealth, DutyRegister, Stagnation, Workload };
 export { GOVERNED_SOURCES, governed } from './governed.js';
 
-export const dulyDatasets = [DutyHealth, Stagnation, Workload];
+export const dulyDatasets = [DutyHealth, DutyRegister, Stagnation, Workload];

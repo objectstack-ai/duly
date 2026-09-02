@@ -591,6 +591,49 @@ describe('lateness is on the screen, and only in the one shape that respects gra
   });
 });
 
+describe('the four numbers the sales deck p20 promises are all on the screen', () => {
+  /**
+   * The deck's leadership first screen is four KPI cards: stagnation, overdue,
+   * on-time rate and list completeness. Two of them arrived late (#52 for the
+   * rate, this card for the other two), and the failure mode for a demo screen
+   * is not an error — it is a tile quietly missing, which reads as a screen
+   * that never promised it. So the four are pinned by the MEASURE each one
+   * binds rather than by widget id, which is the part that cannot be satisfied
+   * by renaming a tile.
+   *
+   * Stagnation is deliberately three tiles, not one; the dashboard file header
+   * carries why (nested thresholds must not be summable by eye), and the >30d
+   * tile's "subset" wording is pinned above.
+   */
+  const boundMeasures = new Set(allWidgets.flatMap((entry) => entry.widget.values ?? []));
+
+  it('binds a stagnation count, an overdue count, an on-time rate and a completeness rate', () => {
+    for (const measure of ['untouched_over_14d', 'tasks_overdue', 'on_time_rate', 'approved_rate']) {
+      expect(boundMeasures.has(measure), `no widget binds '${measure}' — a p20 card is missing`).toBe(true);
+    }
+  });
+
+  it('the work-mix chart counts DUTIES, because a standing duty has no task to count', () => {
+    // The one widget on this screen over `duly_duty`. Re-binding it to a
+    // task-based dataset would drop standing work entirely and lose nothing
+    // visible: the chart would still render, with two slices instead of three.
+    const mix = allWidgets.find((entry) => entry.widget.id === 'work_mix');
+    expect(mix, 'the work-mix chart is gone').toBeDefined();
+    const dataset = (dulyDatasets as unknown as DatasetLike[])
+      .find((ds) => ds.name === String(mix!.widget.dataset));
+    expect(dataset?.object, 'the work-mix chart counts tasks, not duties').toBe('duly_duty');
+    expect(mix!.widget.dimensions).toEqual(['form']);
+  });
+
+  it('says the completion rate covers recurring work only, where the mix is shown', () => {
+    // p20's own caption. Beside a three-slice composition chart, an on-time
+    // rate reads as a rate over all three unless the screen says otherwise —
+    // and two of the three forms cannot have one.
+    const mix = allWidgets.find((entry) => entry.widget.id === 'work_mix')!;
+    expect(String(mix.widget.description ?? '').toLowerCase()).toContain('recurring');
+  });
+});
+
 describe('the caliber note is on the screen, not in a tooltip', () => {
   it('the dashboard description carries it', () => {
     for (const dashboard of dashboards) {
