@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { SysUser } from '@objectstack/platform-objects/identity';
 import { isPlatformProvidedObjectName } from '@objectstack/spec/system';
 import { SystemFieldName } from '@objectstack/spec/system';
 
@@ -438,6 +439,24 @@ interface Stack {
    * `dulyDatasets`. Optional so the self-test fixtures below can omit it.
    */
   readonly dashboards?: readonly unknown[];
+  /**
+   * List-view names declared by the PLATFORM objects this app binds nav to —
+   * `sys_user` → { me, all_users, unverified, … }. Supplied by the real stack
+   * from `@objectstack/platform-objects`, which ships the definitions on disk;
+   * omitted by the synthetic fixtures below, which have no platform package to
+   * read and so keep exercising the boundary branch.
+   *
+   * It exists because #118 authored this app's first cross-boundary nav
+   * reference, and the boundary was the WRONG answer for it. A platform
+   * object's FIELDS genuinely cannot be judged from `@objectstack/spec` (it
+   * exports the name registry, not field lists) — but its VIEWS can: the
+   * package that declares them is a devDependency and its `listViews` is a
+   * plain object. Recording `viewName` as an unjudgeable boundary would have
+   * left exactly the defect #118 fixed — a nav entry silently falling back to
+   * the object's default view while keeping its authored label — unguarded on
+   * the one surface where it had just been measured.
+   */
+  readonly platformViews?: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 /**
@@ -733,7 +752,26 @@ export const metadataBindingFindings = (stack: Stack): WalkResult => {
       }
 
       if (bound.kind === 'platform') {
-        result.boundaries.push({ where: `${where} · viewName`, reference: viewName, at: objectName });
+        // Resolvable after all, when the platform package is on disk: see
+        // `Stack.platformViews`. With no map supplied the reference stays a
+        // declared boundary, which is what the synthetic fixtures assert.
+        const platformKnown = stack.platformViews?.get(objectName);
+        if (!platformKnown) {
+          result.boundaries.push({ where: `${where} · viewName`, reference: viewName, at: objectName });
+          continue;
+        }
+        if (platformKnown.has(viewName)) {
+          result.resolved.push(`${where} · viewName → ${objectName}.${viewName} (platform)`);
+          continue;
+        }
+        result.findings.push({
+          where: `${where} · viewName`,
+          reference: viewName,
+          reason:
+            `the platform object ${objectName} declares no list view named "${viewName}" — the shell `
+            + `SILENTLY falls back to its default view and keeps this entry's authored label. Declared: `
+            + `${[...platformKnown].sort().join(', ') || '(none)'}`,
+        });
         continue;
       }
       const known = viewsByObject.get(objectName) ?? new Set<string>();
@@ -789,12 +827,22 @@ function filterFieldKeys(filter: unknown, out: string[] = []): string[] {
 
 // ─── The check, over this app's real metadata ────────────────────────────
 
+/**
+ * Read off `@objectstack/platform-objects` rather than hand-listed, so the
+ * day the platform renames or drops a view this walk says so instead of
+ * pinning a name that stopped existing.
+ */
+const platformViews = new Map<string, ReadonlySet<string>>([
+  [String(SysUser.name), new Set(Object.keys(SysUser.listViews ?? {}))],
+]);
+
 const stack: Stack = {
   views: dulyViews as unknown[],
   datasets: dulyDatasets as unknown[],
   apps: dulyApps as unknown[],
   objects: dulyObjects as unknown as DeclaredObject[],
   dashboards: dulyDashboards as unknown[],
+  platformViews,
 };
 
 const result = metadataBindingFindings(stack);
@@ -851,6 +899,14 @@ describe('metadata bindings — every reference resolves (stopgap for objectstac
     // `@objectstack/spec` exports the platform object NAME registry but no
     // field lists, so a path like `owner.some_typo` cannot be judged. Rather
     // than let that be a silent hole, fail the day one is authored.
+    //
+    // #118 authored the first one — `nav_people` naming `sys_user.all_users`
+    // — and answering it by widening this pin would have been the wrong
+    // move: a platform object's VIEWS are on disk even though its fields are
+    // not, so the walk now RESOLVES that reference (`Stack.platformViews`)
+    // and this stays an exact zero. What still lands here is the case that
+    // genuinely cannot be judged: a field path hopping into a platform
+    // object.
     expect(
       result.boundaries.map((b) => `${b.where}: "${b.reference}" stops at ${b.at}`),
       'a reference reaches into a platform object, whose fields are not on disk — this guard cannot check it',
@@ -1177,6 +1233,47 @@ describe('metadata bindings — the guard can fail (self-test on synthetic metad
     // The other half of the case above — otherwise "no viewName" is a hole.
     const r = run({ apps: [app([{ id: 'n', type: 'object', objectName: 'fx_task' }])] });
     expect(r.findings[0]!.reason).toContain('no default `list` view');
+  });
+
+  // ── Nav `viewName` on a PLATFORM object (#118) ─────────────────────────
+  //
+  // Three cases, because the branch has three outcomes and the middle one is
+  // the whole point: an unresolvable platform view name is a real finding,
+  // not a boundary. All three drive the same `metadataBindingFindings` the
+  // shipped metadata goes through.
+  const platformNav = (viewName?: string): Partial<Stack> => ({
+    apps: [app([{ id: 'people', type: 'object', objectName: 'sys_user', ...(viewName ? { viewName } : {}) }])],
+  });
+
+  it('resolves a nav `viewName` on a platform object against the platform package', () => {
+    const r = run({
+      ...platformNav('all_users'),
+      platformViews: new Map([['sys_user', new Set(['me', 'all_users'])]]),
+    });
+    expect(messages(r), 'a view the platform really declares is not a finding').toEqual([]);
+    expect(r.boundaries, 'and it is no longer an unjudgeable boundary either').toEqual([]);
+    expect(r.resolved.some((x) => x.includes('sys_user.all_users (platform)'))).toBe(true);
+  });
+
+  it('DOES fire on a nav `viewName` the platform object does not declare', () => {
+    // The defect #118 fixed, in its typo form: the shell falls back to the
+    // object's default view and keeps the authored label, so the screen looks
+    // right and lists the wrong rows.
+    const r = run({
+      ...platformNav('all_userz'),
+      platformViews: new Map([['sys_user', new Set(['me', 'all_users'])]]),
+    });
+    expect(r.findings.map((f) => f.reference)).toEqual(['all_userz']);
+    expect(r.findings[0]!.reason).toContain('SILENTLY falls back');
+    expect(r.findings[0]!.reason, 'and it names what IS declared').toContain('all_users');
+  });
+
+  it('records a boundary when no platform view map is supplied — the pre-#118 behaviour', () => {
+    // Unchanged for any platform object this repo has not taught the walk
+    // about: unjudgeable is still declared rather than assumed fine.
+    const r = run(platformNav('all_users'));
+    expect(messages(r)).toEqual([]);
+    expect(r.boundaries.map((b) => `${b.reference}@${b.at}`)).toEqual(['all_users@sys_user']);
   });
 
   // ── 5. Dashboard nav ───────────────────────────────────────────────────

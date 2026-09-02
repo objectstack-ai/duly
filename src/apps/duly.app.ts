@@ -69,11 +69,24 @@ export const DulyApp = App.create({
         // entry that declares the dependency. It is also the right runtime
         // behaviour — the entry hides instead of 404-ing where `sys_user` is
         // not registered.
+        //
+        // `viewName` is load-bearing in the same way, and leaving it off was a
+        // real defect (#118). A nav entry with no `viewName` lands on the
+        // object's DEFAULT view, and `sys_user`'s default is `me` — "My
+        // Profile", filtered `id == {current_user_id}` with `pageSize: 1`. So
+        // the manager who followed the dashboard here to look at OTHER PEOPLE
+        // saw exactly one row: themselves. `all_users` is the platform's own
+        // unfiltered lens (`@objectstack/platform-objects`,
+        // `sys_user.listViews.all_users`) — named here rather than redeclared,
+        // because the views of a runtime-provided object are not ours to
+        // author, and a local copy would drift from the one the platform
+        // maintains.
         {
           id: 'nav_people',
           type: 'object',
           objectName: 'sys_user',
           requiresObject: 'sys_user',
+          viewName: 'all_users',
           label: 'People',
           icon: 'users-round',
         },
