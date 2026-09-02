@@ -74,9 +74,9 @@ import { governed } from './governed.js';
  *   because `dataset` is required. Measured on objectui's
  *   `plugin-dashboard/src/DatasetWidget.tsx` (the `isMetric` branch) and
  *   `DashboardRenderer.tsx` (`tWidgetSubCaption`, used only under
- *   `isObjectProvider`). Filed upstream rather than approximated; the tile
- *   ships with the rate, and the two counts arrive with the renderer. See the
- *   dashboard file header.
+ *   `isObjectProvider`). Filed as objectstack-ai/objectui#7293 rather than
+ *   approximated; the tile ships with the rate, and the two counts arrive with
+ *   the renderer. See the dashboard file header.
  */
 export const DutyRegister = defineDataset({
   name: 'duly_duty_register',

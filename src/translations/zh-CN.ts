@@ -509,7 +509,7 @@ export const dulyChinese = defineTranslationBundle({
           },
           // 「清单完备度」按 review_status 计数，绝不按条目数——「谁的清单条目
           // 少」是产品明令禁止的排名。副标「N 条待确认 / M 条待审定」当前渲染
-          // 不出来（平台缺口，见仪表盘文件头），所以这里不用静态文字假装有。
+          // 不出来（平台缺口 objectui#7293，见仪表盘文件头），所以这里不用静态文字假装有。
           list_completeness: {
             title: '清单完备度',
             description: '已审定的职责占组织认定职责清单的比例。已退役的职责分子分母都不计；暂停的职责仍然是欠着的，计入。',

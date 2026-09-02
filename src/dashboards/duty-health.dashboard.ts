@@ -130,9 +130,10 @@ import { Dashboard } from '@objectstack/spec/ui';
  *
  * So the tile ships with the rate and its `description` line, and the two
  * pending counts are NOT approximated into the title, faked as static text, or
- * smuggled in as extra `values` that would not render. Filed upstream; the
- * measures arrive with the renderer. This is the AGENTS.md rule 9 shape: the
- * gap is reported, not written around.
+ * smuggled in as extra `values` that would not render. Filed as
+ * **objectstack-ai/objectui#7293** with both measurements; the two measures
+ * arrive on `duly_duty_register` when the renderer can show them. This is the
+ * AGENTS.md rule 9 shape: the gap is reported, not written around.
  *
  * ── 本月工作构成: duties, not tasks — and no month filter ─────────────────
  *
@@ -373,9 +374,9 @@ export const DutyHealthDashboard = Dashboard.create({
      * The card's "N to confirm / M to approve" sub-caption is missing on
      * purpose — a dataset-bound tile renders `values[0]` and nothing else, and
      * the authored sub-caption slot is unreachable on this path. Measured, and
-     * filed upstream; the file header has both citations. It is not faked into
-     * the description, which would be a static number that goes stale the
-     * first time somebody approves a duty.
+     * filed as objectui#7293; the file header has both citations. It is not
+     * faked into the description, which would be a static number that goes
+     * stale the first time somebody approves a duty.
      */
     {
       id: 'list_completeness',
