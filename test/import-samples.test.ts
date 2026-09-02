@@ -89,7 +89,7 @@ function csvHeader(file: string): string[] {
 }
 
 /** `[fieldName, definition]` for every field the schema declares. */
-function fieldEntries(schema: unknown): Array<[string, { readonly?: boolean; required?: boolean }]> {
+function fieldEntries(schema: unknown): Array<[string, { readonly?: boolean; required?: boolean; defaultValue?: unknown }]> {
   const fields = (schema as { fields?: Record<string, Record<string, unknown>> }).fields;
   if (!fields || typeof fields !== 'object') throw new Error('schema declares no fields');
   return Object.entries(fields).map(([key, def]) => [
