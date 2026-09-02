@@ -1,4 +1,7 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
+
+import { MemberPage } from './member.page.js';
+
 //
 // Barrel for src/pages/.
 //
@@ -13,4 +16,4 @@
 // makes `name` optional and fails the assignment. A named array is `never[]`
 // while empty and infers correctly the moment something is pushed into it.
 
-export const dulyPages = [];
+export const dulyPages = [MemberPage];
