@@ -300,7 +300,14 @@ describe('untranslatable display text is declared rather than dropped', () => {
     // label still has no bundle key anywhere in the platform's schema, so each
     // new one enlarges the same declared gap rather than opening a new kind of
     // one; the number moves with the code because that is what this pin is for.
-    expect(count('dataset.'), 'dataset labels behind chart axes').toBe(29);
+    //
+    // 29 -> 36 with the p20 dashboard set: `duly_duty_health.Overdue` (+1) and
+    // the whole of `duly_duty_register` — its label, its description, one
+    // dimension label and three measure labels (+6). Same declared gap, seven
+    // strings wider. It closes for all of them at once when the platform makes
+    // datasets translatable (duly#106 / objectstack#14253); nothing here works
+    // around it in the meantime.
+    expect(count('dataset.'), 'dataset labels behind chart axes').toBe(36);
     // Was 6 before #99 (#69) landed: three `notify` nodes' inline title and
     // message. They now reference an email template, whose per-locale rows are
     // checked below — so this is a gap that CLOSED, pinned at zero so it

@@ -75,14 +75,28 @@ describe('dataset protocol', () => {
     }
   });
 
-  it('the barrel carries the three datasets the manager side binds', () => {
+  it('the barrel carries the four datasets the manager side binds', () => {
     // Dashboards bind BY NAME (#10). A rename here is a silent empty chart
     // there, so the names are pinned rather than derived.
     expect(dulyDatasets.map((ds) => ds.name)).toEqual([
       'duly_duty_health',
+      'duly_duty_register',
       'duly_stagnation',
       'duly_workload',
     ]);
+  });
+
+  it('three are task-based and exactly one asks about the duties themselves', () => {
+    // Not a tally for its own sake: a task-based dataset structurally cannot
+    // see a `standing` duty (it never generates a task) or an unapproved one
+    // (it never dispatches). A measure about the duty LIST added to a
+    // task-based dataset would answer a smaller population under the right
+    // name — and would do it silently, because both are just counts.
+    const byObject = new Map(dulyDatasets.map((ds) => [ds.name, ds.object]));
+    expect([...byObject].filter(([, object]) => object === 'duly_duty').map(([name]) => name))
+      .toEqual(['duly_duty_register']);
+    expect([...byObject].filter(([, object]) => object === 'duly_task').map(([name]) => name))
+      .toEqual(['duly_duty_health', 'duly_stagnation', 'duly_workload']);
   });
 });
 
@@ -325,6 +339,32 @@ describe('duly_duty_health', () => {
     expect(health.include).toContain('duty');
   });
 
+  it('the overdue count reads the dispatched deadline, never a due-date window', () => {
+    // The grace-free approximation is two lines wherever it is written, and a
+    // measure is the place a reviewer is least likely to look for it: a
+    // `due_date < {today}` count marks late every task still inside the grace
+    // its own duty granted. `late_after` is that grace, resolved at dispatch
+    // and stored (#52), so the comparison is a plain column against a macro.
+    const overdue = health.measures.find((m) => m.name === 'tasks_overdue')!;
+    const entries = filterEntries(overdue.filter);
+    expect(entries.find(([key]) => key === 'late_after')?.[1]).toEqual({ $lt: '{today}' });
+    expect(deepText(overdue).join(' '), 'tasks_overdue reads due_date').not.toContain('due_date');
+
+    const threshold = entries.find(([key]) => key === 'late_after.$lt')?.[1];
+    const match = String(threshold).match(DATE_MACRO_WRAPPED_RE);
+    expect(match, 'the overdue threshold is not a {placeholder}').not.toBeNull();
+    expect(isDateMacroToken(match![1]), 'the overdue threshold is not a known token').toBe(true);
+  });
+
+  it('overdue counts only work somebody can still act on', () => {
+    // Open work, so the tile answers "what is late and still mine to fix".
+    // Folding in done/skipped/cancelled would make it a historical count under
+    // a present-tense name.
+    const overdue = health.measures.find((m) => m.name === 'tasks_overdue')!;
+    const entries = filterEntries(overdue.filter);
+    expect(entries.find(([key]) => key === 'status')?.[1]).toEqual({ $in: ['open', 'in_progress'] });
+  });
+
   it('does not denormalise grace_days onto the task', () => {
     // A copy on `duly_task` would be a second writer that drifts the day a duty
     // is re-graced — AGENTS.md rule 5. If a measure ever needs grace, it reads
@@ -332,6 +372,61 @@ describe('duly_duty_health', () => {
     for (const measure of health.measures) {
       const text = deepText(measure).join(' ');
       expect(text).not.toContain('grace_days');
+    }
+  });
+});
+
+describe('duly_duty_register — the duty list, not the tasks it produces', () => {
+  const register = dulyDatasets.find((ds) => ds.name === 'duly_duty_register')!;
+
+  it('is based on duly_duty, which is what makes standing duties countable at all', () => {
+    // A standing duty NEVER generates a task, so no task-based dataset can see
+    // one. This is the only dataset that can, and the work-mix chart is the
+    // only place on the manager screen where standing work appears.
+    expect(register.object).toBe('duly_duty');
+  });
+
+  it('completeness is measured over review_status, never over how many items a list has', () => {
+    // The product invariant this measure is one careless ticket away from
+    // breaking: "Item counts are never ranked or compared, anywhere in the UI"
+    // (AGENTS.md). "Whose list is shortest" and "how much of the list was
+    // agreed" are both called completeness, and only one of them is allowed.
+    const approved = register.measures.find((m) => m.name === 'duties_approved')!;
+    const entries = filterEntries(approved.filter);
+    expect(entries.find(([key]) => key === 'review_status')?.[1]).toBe('approved');
+    // The ranking shape needs a person axis to be authored at all. There is
+    // none here, and there must not be one.
+    expect(register.dimensions.map((d) => d.name)).toEqual(['form']);
+  });
+
+  it('the rate is a ratio of two measures of this dataset, so it cannot drift from them', () => {
+    const rate = register.measures.find((m) => m.name === 'approved_rate')!;
+    expect((rate as { derived?: { op: string; of: string[] } }).derived).toEqual({
+      op: 'ratio',
+      of: ['duties_approved', 'duties_in_register'],
+    });
+    // #101: `format` is a numeral PATTERN, not a keyword — 'percent' renders
+    // 0.94 as `1`. The on-time tile measured that; this one must not
+    // rediscover it.
+    expect((rate as { format?: string }).format).toBe('0.00');
+  });
+
+  it('a retired duty is out of BOTH halves of the rate — withdrawn, therefore never owed', () => {
+    // Asymmetry here would be the invisible bug: retired duties left in the
+    // denominator make the register look worse every time it is tidied up.
+    for (const name of ['duties_in_register', 'duties_approved']) {
+      const measure = register.measures.find((m) => m.name === name)!;
+      const entries = filterEntries(measure.filter);
+      expect(entries.find(([key]) => key === 'status')?.[1], name).toEqual({ $ne: 'retired' });
+    }
+  });
+
+  it('a paused duty is still on the register — it is owed, just not dispatching', () => {
+    // The converse of the rule above, and the reason the filter is `!= retired`
+    // rather than `== active`: pausing is a scheduling state, not a withdrawal.
+    for (const measure of register.measures) {
+      const text = deepText(measure).join(' ');
+      expect(text, `${measure.name} excludes paused duties`).not.toContain('paused');
     }
   });
 });

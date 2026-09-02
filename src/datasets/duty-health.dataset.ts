@@ -61,6 +61,14 @@ import { governed } from './governed.js';
  * exactly the direction a customer configures grace against, and wrong
  * invisibly. `test/dashboard.test.ts` and `test/datasets.test.ts` both pin it.
  *
+ * ── The same stamps answer a SECOND question: what is late right now ─────
+ * `tasks_done_on_time` / `tasks_completed_late` read `completed_late`, the
+ * verdict stamped at completion. `tasks_overdue` reads the other stamp,
+ * `late_after`, because there is no verdict on a task that has not finished —
+ * open work past its own dispatched deadline. One family of numbers, two
+ * stamps, and neither is a query-time comparison against today's
+ * `duty.grace_days`.
+ *
  * ── `tasks_due` excludes cancelled, in every dataset that uses the name ───
  * A cancelled task was withdrawn: it was never owed, so it is neither load nor
  * the denominator of anything. Keeping it out is also what makes the counts
@@ -144,6 +152,47 @@ export const DutyHealth = defineDataset({
       label: 'Completed late',
       aggregate: 'count',
       filter: governed({ status: 'done', completed_late: true }),
+    },
+    {
+      /**
+       * STILL OPEN and already past its own deadline — the p20 deck's
+       * 「逾期项」 tile, and the only lateness measure here that is not about
+       * completed work.
+       *
+       * Its neighbours above all count rows that have FINISHED and read the
+       * verdict `completed_late` stamped at completion. Nothing stamps a
+       * verdict on a task that has not finished, so this one reads the other
+       * write-once stamp instead: `late_after` (`due_date + duty.grace_days`,
+       * stamped at dispatch) against today. That is a plain date column
+       * compared to a date macro, which this filter grammar has always been
+       * able to express — the reason it could not be written before #52 is
+       * that the deadline itself did not exist on the row, not that the
+       * comparison was hard.
+       *
+       * ⛔ The two-line version of this measure is `due_date: { $lt:
+       * '{today}' }`, and it is the grace-free approximation the file header
+       * refuses: it marks late every task still inside the grace its own duty
+       * grants — wrong in exactly the direction a customer configures grace
+       * AGAINST, and wrong invisibly. `test/dashboard.test.ts` pins the
+       * measure side of that as well as the widget side.
+       *
+       * A task carrying no `late_after` is never counted, and that is correct
+       * rather than a gap: no deadline was ever stamped, so there is nothing
+       * to be past. It is the same direction as `completed_late: false` for a
+       * task with no due date — an absent deadline is not a missed one.
+       *
+       * `cancelled` and `skipped` are excluded by asking for the two OPEN
+       * statuses directly, which is also what makes this the population a
+       * manager can still act on: the tile answers "what is late and still
+       * mine to fix", not "what was late once".
+       */
+      name: 'tasks_overdue',
+      label: 'Overdue',
+      aggregate: 'count',
+      filter: governed({
+        status: { $in: ['open', 'in_progress'] },
+        late_after: { $lt: '{today}' },
+      }),
     },
     {
       /**
