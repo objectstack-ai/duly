@@ -464,6 +464,7 @@ export const dulyChinese = defineTranslationBundle({
           nav_board: { label: '看板' },
           group_team: { label: '团队' },
           nav_duty_health: { label: '职责健康度' },
+          nav_people: { label: '成员' },
           nav_late: { label: '逾期' },
           nav_stalled: { label: '停滞' },
           nav_assignments: { label: '指派' },
@@ -474,6 +475,30 @@ export const dulyChinese = defineTranslationBundle({
           nav_catalog: { label: '岗位职责库' },
           nav_all_duties: { label: '全部职责' },
           nav_catalog_tree: { label: '各团队应尽的职责' },
+        },
+      },
+    },
+
+    pages: {
+      duly_member: {
+        // 「看全貌」页:主管打开一个人,不必先问他任何问题。
+        label: '成员',
+        description:
+          '一个人的全貌:当下有什么未完成、本周期应尽什么、长期持有什么、最近动了什么——只读,不需要任何人录入。',
+        components: {
+          // 岗位来自 `sys_user_position` 联结表,不是 `sys_user` 上的字段。
+          member_position: { title: '岗位' },
+          right_now_open: { title: '未完成' },
+          // 逾期 = 过了派发当时该职责给出的宽限期,且仍未完成。
+          right_now_late: { title: '逾期' },
+          // 与「停滞」视图同名:同一个判断在产品里只能有一种说法。
+          right_now_stalled: { title: '停滞' },
+          // 「受治理」= 来自岗位职责库或主管指派;自行申报的不在此列。
+          this_period_duties: { title: '受治理的职责' },
+          // ⛔ 不要写成「常设任务」:常设职责永不产生任务,也永不完成。
+          standing_duties: { title: '长期持有' },
+          recent_activity: { title: '最近触碰' },
+          assigned_tasks: { title: '被指派的工作' },
         },
       },
     },
