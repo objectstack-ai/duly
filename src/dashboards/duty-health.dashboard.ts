@@ -262,7 +262,10 @@ export const DutyHealthDashboard = Dashboard.create({
       dataset: 'duly_stagnation',
       values: ['untouched_over_14d'],
       colorVariant: 'warning',
-      layout: { x: 0, y: 0, w: 6, h: 4 },
+      // Seven of the twelve columns since #122, up from six — the same 7/5
+      // split the two charts under it already use. Why it moved is the
+      // note on the tile beside it.
+      layout: { x: 0, y: 0, w: 7, h: 4 },
     },
 
     /**
@@ -273,13 +276,23 @@ export const DutyHealthDashboard = Dashboard.create({
      * `orange` rather than `danger`: deeper attention, not a failure verdict.
      *
      * It holds the rest of the top row since #122 retired the tile that used
-     * to sit at `x: 9` (the removal note is below). **`h` came down from 4 to
-     * 3 in the same edit, and that is forced rather than taste**: this screen's
-     * rule is that no other NUMBER may compete with the headline, and
-     * `test/dashboard.test.ts` spells it as a strict area comparison
-     * (`w * h`). At the full width the card asked for, `h: 4` would make this
-     * tile 6 × 4 — EQUAL to the headline, which fails that pin. Shorter is
-     * also the truer reading: this is the subset tile, not a second headline.
+     * to sit at `x: 9` (the removal note is below), and the row is split 7/5
+     * rather than 6/6. **Both halves of that are forced, and the second one
+     * was measured in the browser rather than reasoned about:**
+     *
+     *  - **Not 6/6.** No other NUMBER may compete with the headline, and
+     *    `test/dashboard.test.ts` spells it as a strict area comparison
+     *    (`w * h`). Six columns at `h: 4` would make this tile EXACTLY the
+     *    headline's area, which fails that pin — and reads as a second
+     *    headline, which is what the pin is protecting against.
+     *  - **Not 6 × 3 either, which was the first attempt.** The console's grid
+     *    COMPACTS VERTICALLY: a shorter tile leaves a gap that the next widget
+     *    is pulled up into. Screenshotted at 1440 — with this tile at `h: 3`,
+     *    the on-time rate jumped into the right column beside the headline and
+     *    the overdue and completeness tiles rose to fill the left, so the
+     *    documented reading order (`on_time_rate` directly under the headline)
+     *    silently stopped being what the screen showed. A row of tiles must be
+     *    UNIFORM in height; the width is the only free dimension.
      */
     {
       id: 'not_moving_30d',
@@ -291,7 +304,7 @@ export const DutyHealthDashboard = Dashboard.create({
       dataset: 'duly_stagnation',
       values: ['untouched_over_30d'],
       colorVariant: 'orange',
-      layout: { x: 6, y: 0, w: 6, h: 3 },
+      layout: { x: 7, y: 0, w: 5, h: 4 },
     },
 
     /**
@@ -367,11 +380,14 @@ export const DutyHealthDashboard = Dashboard.create({
       dataset: 'duly_duty_health',
       values: ['on_time_rate'],
       colorVariant: 'default',
-      // Directly under the headline tile and the same width as it — the second
-      // number a manager reads — but SHORTER, and that is a rule rather than a
-      // taste call: no other number on this screen may out-area the not-moving
-      // tile, because stagnation is the signal that arrives early enough to act
-      // on. `test/dashboard.test.ts` pins it.
+      // Directly under the headline tile — the second number a manager reads —
+      // and SHORTER than it, which is a rule rather than a taste call: no other
+      // number on this screen may out-area the not-moving tile, because
+      // stagnation is the signal that arrives early enough to act on.
+      // `test/dashboard.test.ts` pins it. One column narrower than the headline
+      // since #122 widened that to 7; this row is 6/3/3 and its three tiles are
+      // the same height, because the grid compacts vertically and a ragged row
+      // reorders the screen (see the top-right tile).
       layout: { x: 0, y: 4, w: 6, h: 3 },
     },
 
