@@ -744,6 +744,15 @@ const RECORD_MAPS: ReadonlySet<string> = new Set(['object.fields']);
  */
 const REENTER: Readonly<Record<string, string>> = {
   'flow.nodes[].config.body': 'flow',
+  // ADR-0031 gives a `try_catch` container two regions of the same shape as a
+  // `loop` body, so they re-enter for the same reason (#123). Listed only for
+  // the slots this app actually authors: a `parallel` block's
+  // `config.branches[]` is NOT here, because a branch is `{name, nodes, edges}`
+  // and its `name` would land on `flow.name` — a verdict that reads "flow
+  // name" and would be wrong about it. When a parallel block is first
+  // authored here, it needs its own verdict for that key, not this shortcut.
+  'flow.nodes[].config.try': 'flow',
+  'flow.nodes[].config.catch': 'flow',
 };
 
 /** Two words of three-plus letters — the shape machine values do not have. */
