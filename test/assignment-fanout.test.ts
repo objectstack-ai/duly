@@ -1,7 +1,14 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { PlatformObjectsPlugin } from '@objectstack/platform-objects';
+import { AutomationServicePlugin } from '@objectstack/service-automation';
+import { JobServicePlugin } from '@objectstack/service-job';
+import { MessagingServicePlugin } from '@objectstack/service-messaging';
+import { EmailServicePlugin } from '@objectstack/plugin-email';
 
+import stack from '../objectstack.config.js';
 import { AssignmentFanout } from '../src/flows/assignment.flow.js';
 import { dulyFlows } from '../src/flows/index.js';
 import { Assignment, Task } from '../src/objects/index.js';
@@ -60,12 +67,55 @@ const startNode = (): NodeLike => {
   if (!found) throw new Error('flow has no start node');
   return found;
 };
+interface RegionLike { nodes?: NodeLike[]; edges?: EdgeLike[] }
+
+/** The ADR-0031 container slots this flow uses, in the order they nest. */
+const region = (n: NodeLike, slot: 'body' | 'try' | 'catch'): RegionLike =>
+  ((n.config?.[slot] ?? {}) as RegionLike);
+
+/** The loop's outermost body region — one node, the `try_catch` container. */
+const loopRegion = (): RegionLike => region(node('fan_out'), 'body');
+
+/** The `try_catch` container the loop body is made of. */
+const attempt = (): NodeLike => {
+  const found = (loopRegion().nodes ?? []).find((n) => n.type === 'try_catch');
+  if (!found) throw new Error('the loop body holds no try_catch container');
+  return found;
+};
+
+/**
+ * The PROTECTED region — what used to be the loop body directly.
+ *
+ * Every assertion below that reads "the loop body" means this: the three nodes
+ * that do one assignee's work. They moved one level down when #123 wrapped them
+ * in a `try_catch`, and reading them through this helper is what keeps those
+ * assertions about the same three nodes instead of quietly finding nothing.
+ */
 const loopBody = (): { nodes: NodeLike[]; edges: EdgeLike[] } => {
-  const body = (node('fan_out').config?.body ?? {}) as { nodes?: NodeLike[]; edges?: EdgeLike[] };
+  const body = region(attempt(), 'try');
   return { nodes: body.nodes ?? [], edges: body.edges ?? [] };
 };
-/** Every node in the flow, region bodies included. */
-const allNodes = (): NodeLike[] => [...nodes, ...loopBody().nodes];
+
+/** The handler region — what runs for an assignee whose work threw. */
+const catchBody = (): { nodes: NodeLike[]; edges: EdgeLike[] } => {
+  const body = region(attempt(), 'catch');
+  return { nodes: body.nodes ?? [], edges: body.edges ?? [] };
+};
+
+/** Every node in the flow, every container region included. */
+const allNodes = (): NodeLike[] => [
+  ...nodes,
+  ...(loopRegion().nodes ?? []),
+  ...loopBody().nodes,
+  ...catchBody().nodes,
+];
+/** Every edge in the flow, every container region included. */
+const allEdges = (): EdgeLike[] => [
+  ...edges,
+  ...(loopRegion().edges ?? []),
+  ...loopBody().edges,
+  ...catchBody().edges,
+];
 /** Every predicate authored anywhere, as its bare CEL source. */
 const allPredicates = (): { where: string; source: string }[] => {
   const out: { where: string; source: string }[] = [];
@@ -75,7 +125,7 @@ const allPredicates = (): { where: string; source: string }[] => {
     if (source !== '') out.push({ where, source });
   };
   for (const n of allNodes()) read(`node '${n.id}' condition`, n.config?.condition as EdgeLike['condition']);
-  for (const e of [...edges, ...loopBody().edges]) read(`edge '${e.id}'`, e.condition);
+  for (const e of allEdges()) read(`edge '${e.id}'`, e.condition);
   return out;
 };
 
@@ -339,5 +389,274 @@ describe('assignment fan-out — invariants a refactor would undo', () => {
       const fields = (create.config?.fields ?? {}) as AnyRec;
       expect(fields.subject, `${create.id}`).toBe('{record.subject}');
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// One bad assignee, isolated — the structure (#123)
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('assignment fan-out — a bad row costs one task, not the fan-out', () => {
+  it('the loop body is a try_catch container and nothing else', () => {
+    // `loop-node.ts` iterates with a bare `await runRegion(...)` and holds no
+    // try/catch of its own, so anything that can throw must be INSIDE one. A
+    // second node beside the container would be exactly that unprotected gap.
+    const body = loopRegion();
+    expect((body.nodes ?? []).map((n) => n.type)).toEqual(['try_catch']);
+    expect(body.edges ?? []).toEqual([]);
+  });
+
+  it('every node that can fail sits inside the protected region', () => {
+    // The three data nodes are the ones that return `success: false` or throw;
+    // a `get_record`/`create_record` left outside the `try` would abort the
+    // whole loop exactly as before the wrapper existed.
+    expect(loopBody().nodes.map((n) => n.id)).toEqual([
+      'fanout_find_existing', 'fanout_find_unit', 'fanout_create_task',
+    ]);
+    for (const n of loopBody().nodes) {
+      expect(['get_record', 'create_record'], `${n.id}`).toContain(n.type);
+    }
+  });
+
+  it('the handler tells the ASSIGNER, and names the assignee from the iterator', () => {
+    const handler = catchBody().nodes;
+    expect(handler.map((n) => n.type)).toEqual(['notify']);
+    const config = (handler[0].config ?? {}) as AnyRec;
+    expect(config.recipients).toBe('{record.assigner}');
+    const templateData = (config.templateData ?? {}) as AnyRec;
+    // `fanout_assignee` is re-bound by the loop before every iteration.
+    // `fanout_assignee_user` is NOT: a region that throws at `fanout_find_unit`
+    // leaves it holding the PREVIOUS assignee's row, so a handler reading a
+    // name from it would calmly name the wrong colleague.
+    expect(templateData.assignee).toBe('{fanout_assignee}');
+    expect(JSON.stringify(templateData)).not.toContain('fanout_assignee_user');
+  });
+
+  it('the handler says something, in a bundle, never inline', () => {
+    // AGENTS.md §8. `NotifyConfigSchema` refuses `template` beside inline
+    // `title`/`message`, so the check that matters is that a template is named
+    // at all — a handler with neither would not parse, and one with inline copy
+    // would ship English into a zh-CN deployment.
+    const config = (catchBody().nodes[0].config ?? {}) as AnyRec;
+    expect(config.template).toBe('duly.assignment_fanout_failed');
+    expect(Object.keys(config)).not.toContain('title');
+    expect(Object.keys(config)).not.toContain('message');
+  });
+
+  it('the handler still writes nothing back onto the assignment', () => {
+    // A write to the trigger record re-enters this same flow (the start node is
+    // `record-after-write` on a row still `dispatched`), so the notification
+    // would be re-sent on every re-entry. The inbox costs no such loop.
+    for (const n of catchBody().nodes) {
+      expect(['create_record', 'update_record', 'delete_record'], `${n.id}`).not.toContain(n.type);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// The same claim, against a REAL booted engine (#123)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Everything above is structure. None of it can answer the question the card
+ * is actually about — *what does the engine do with a bad row* — because the
+ * abort lived in `loop-node.ts`, not in this flow's shape.
+ *
+ * ── Why the run is started by `automation.execute` and not by an insert ──
+ * This repo installs no `record_change` trigger. The triggers ship as separate
+ * packages (`@objectstack/trigger-*`) and only `trigger-schedule` is a
+ * devDependency here, so a `duly_assignment` insert fires nothing and the boot
+ * says so out loud:
+ *
+ *   WARN flow 'duly_assignment_fanout' declares a 'record_change' trigger but
+ *   is NOT bound — it will never auto-launch.
+ *
+ * `execute(flowName, context)` is not a test-only side door around that: it is
+ * the *same* door the trigger uses. `AutomationEngine.registerFlow` arms every
+ * trigger with `trigger.start(binding, (ctx) => this.execute(flowName, ctx))`,
+ * so a record-change fire and the call below differ only in who assembles the
+ * context. WHICH context the trigger would assemble is pinned separately, by
+ * the start-node assertions at the top of this file.
+ */
+describe('assignment fan-out — one bad row, driven through the real engine', () => {
+  let kernel: any;
+  let data: any;
+  /** The two assignees whose rows are fine, and the manager who assigned. */
+  let alice: string;
+  let carol: string;
+  let boss: string;
+  let assignmentId: string;
+  let result: AnyRec;
+  let tasks: AnyRec[];
+  let assignmentAfter: AnyRec;
+  let inbox: AnyRec[];
+  let notifications: AnyRec[];
+
+  const SUBJECT = 'Quarterly control walkthrough';
+
+  /** Per-node rollup from the run summary, by node id. */
+  const nodeSummary = (id: string): AnyRec => {
+    const nodesOut = ((result.summary as AnyRec)?.nodes ?? []) as AnyRec[];
+    const found = nodesOut.find((n) => n.nodeId === id);
+    if (!found) throw new Error(`run summary has no node '${id}'`);
+    return found;
+  };
+
+  beforeAll(async () => {
+    const { plugins } = await createStandaloneStack({
+      // Memory, not sqlite: nothing here rests on a unique index (a fan-out
+      // task writes neither `duty` nor `period_key`, so the dispatch identity
+      // index cannot constrain these rows — see the idempotency block above).
+      // What this suite DOES need is `sys_user`, which the bare standalone
+      // stack does not declare — hence PlatformObjectsPlugin below. Measured:
+      // on `databaseDriver: 'sqlite'` the `sys_user` read inside the loop is
+      // refused by the driver, and every iteration fails for a reason that has
+      // nothing to do with this card.
+      databaseDriver: 'memory',
+      skipSeedData: true,
+      // Same reason as every other suite here: left to its default this
+      // resolves `<cwd>/dist/objectstack.json`, and a local `pnpm build` would
+      // make the run report on the last BUILD rather than on `src/`.
+      artifactPath: 'dist/objectstack.this-suite-must-not-load-an-artifact.json',
+    });
+    kernel = new ObjectKernel();
+    for (const plugin of plugins) await kernel.use(plugin);
+    await kernel.use(new PlatformObjectsPlugin());
+    await kernel.use(new AppPlugin(stack as any, undefined, { skipSeedData: true }));
+    await kernel.use(new JobServicePlugin());
+    await kernel.use(new AutomationServicePlugin());
+    // The handler's notification only reaches an inbox row if the delivery
+    // path is real, and "a notification was emitted" is not the claim being
+    // tested — "the assigner can read what went wrong" is.
+    await kernel.use(new MessagingServicePlugin());
+    await kernel.use(new EmailServicePlugin());
+    await kernel.bootstrap();
+    data = kernel.getService('data');
+    const automation = kernel.getService('automation') as {
+      execute(flow: string, ctx: AnyRec): Promise<AnyRec>;
+    };
+
+    const mkUser = async (name: string): Promise<string> => {
+      const created = await data.insert(
+        'sys_user',
+        { name, username: name, email: `${name}@example.test` },
+        { context: { isSystem: true } },
+      );
+      const row = (Array.isArray(created) ? created[0] : created) as AnyRec;
+      return String(row.id);
+    };
+    alice = await mkUser('fanout_alice');
+    carol = await mkUser('fanout_carol');
+    boss = await mkUser('fanout_boss');
+
+    const created = await data.insert('duly_assignment', {
+      subject: SUBJECT,
+      assigner: boss,
+      // Three people, and the middle row is bad — a blank entry, the "missing
+      // owner" shape from the card. The position is the point: `carol` comes
+      // AFTER the failure, so a task of hers is proof the loop kept going
+      // rather than proof it never had to.
+      assignees: [alice, '', carol],
+      due_date: '2026-10-01',
+      status: 'dispatched',
+      needs_collection: false,
+    });
+    const assignment = (Array.isArray(created) ? created[0] : created) as AnyRec;
+    assignmentId = String(assignment.id);
+
+    result = await automation.execute('duly_assignment_fanout', {
+      record: assignment,
+      object: 'duly_assignment',
+      event: 'afterInsert',
+    });
+
+    tasks = (await data.find('duly_task', { where: { assignment: assignmentId } })) as AnyRec[];
+    assignmentAfter = ((await data.find('duly_assignment', { where: { id: assignmentId } })) as AnyRec[])[0];
+    // The messaging service hands the inbox channel the delivery and returns;
+    // the row lands a moment later, so poll rather than sleep a fixed guess.
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      inbox = (await data.find('sys_inbox_message', { where: { user_id: boss } })) as AnyRec[];
+      if (inbox.length > 0 || Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    notifications = (await data.find('sys_notification', {})) as AnyRec[];
+  }, 180_000);
+
+  afterAll(async () => {
+    await kernel?.shutdown?.();
+  });
+
+  it('creates the other two tasks — including the assignee AFTER the bad row', () => {
+    // The regression, stated as the product outcome: two of the three people
+    // are holding their work. Without the try_catch this is ONE task (the loop
+    // threw on the middle item and iteration three never ran).
+    expect(tasks.map((t) => String(t.owner)).sort()).toEqual([alice, carol].sort());
+    expect(tasks.every((t) => t.subject === SUBJECT)).toBe(true);
+    expect(tasks.every((t) => t.status === 'open' && t.source === 'assigned')).toBe(true);
+  });
+
+  it('the count the assigner reads is the tasks that exist — two', () => {
+    // `task_count` is a `Field.summary` over the children, so it cannot drift
+    // from the rows; this asserts the rows are what a partial fan-out should
+    // leave behind, not three and not zero.
+    expect(assignmentAfter.task_count).toBe(2);
+  });
+
+  it('the run finishes and REPORTS the two it wrote, instead of acted: 0', () => {
+    // The measured symptom in the card: an aborted loop never returns its
+    // `childSteps`, so the two rows it had already written were invisible to
+    // the run summary and it reported `acted: 0` next to `status: failed`.
+    expect(result.success, String(result.error ?? '')).toBe(true);
+    expect((result.summary as AnyRec).acted).toBe(2);
+  });
+
+  it('records the failure rather than swallowing it', () => {
+    // "Recovered" must not read as "clean". The container reports success —
+    // that is the point of catching — and underneath it the failing node still
+    // carries its own failure, once, at the iteration it happened in.
+    expect(nodeSummary('fanout_attempt')).toMatchObject({
+      nodeType: 'try_catch', runs: 3, failures: 0,
+    });
+    expect(nodeSummary('fanout_create_task')).toMatchObject({
+      nodeType: 'create_record', runs: 3, failures: 1, acted: 2,
+    });
+  });
+
+  it('tells the assigner, in their inbox, which row failed and why', () => {
+    // Not "a notification was emitted": a template that resolves to nothing
+    // emits one too. The assertion is on the words the assigner reads.
+    expect(inbox.length, 'the assigner got no notification at all').toBe(1);
+    const message = inbox[0];
+    expect(message.topic).toBe('duly.assignment_fanout_failed');
+    expect(message.severity).toBe('warning');
+    // The subject rides in unescaped (`{{{subject}}}`) — the inbox title is not
+    // an HTML document.
+    expect(message.title).toBe(`No task was created for one assignee: ${SUBJECT}`);
+    // The engine's own sentence, naming the node and the real cause.
+    expect(String(message.body_md)).toContain('Owner is required');
+    expect(String(message.body_md)).toContain('fanout_create_task');
+    // And a way back to the assignment, so the assigner can fix the row.
+    expect(String(message.action_url)).toContain(assignmentId);
+  });
+
+  it('one notification per failed assignee — not one per fan-out', () => {
+    // Three assignees, one bad row, one message. A handler that fired per RUN
+    // could not name the person; one that fired per iteration would tell the
+    // assigner twice about the people who are fine.
+    expect(notifications.length).toBe(1);
+  });
+
+  it('the handler read the ITERATOR, not the previous assignee it looked up', () => {
+    // `fanout_assignee_user` still holds ALICE's row when the middle iteration
+    // fails — the loop shares one variable scope across iterations. A handler
+    // that named the person from it would have reported Alice, who is fine.
+    // The blank handle below is the bad row's own value, and its blankness is
+    // the evidence: a stale read could not have produced it.
+    const payload = (notifications[0].payload ?? {}) as AnyRec;
+    const templateData = (payload.templateData ?? {}) as AnyRec;
+    expect(templateData.assignee).toBe('');
+    expect(templateData.subject).toBe(SUBJECT);
+    expect(String(templateData.reason)).toContain('Owner is required');
   });
 });

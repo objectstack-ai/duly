@@ -21,6 +21,11 @@
 // entry to this array, never editing an existing one.
 
 import {
+  AssignmentFanoutFailedEn,
+  AssignmentFanoutFailedZhCN,
+  dulyAssignmentEmailTemplates,
+} from './assignment.email-template.js';
+import {
   TaskDueSoonReminderEn,
   TaskDueSoonReminderZhCN,
   TaskLeadTimeReminderEn,
@@ -38,6 +43,12 @@ export {
   TaskOverdueEscalationEn,
   TaskOverdueEscalationZhCN,
   dulyReminderEmailTemplates,
+  AssignmentFanoutFailedEn,
+  AssignmentFanoutFailedZhCN,
+  dulyAssignmentEmailTemplates,
 };
 
-export const dulyEmailTemplates = [...dulyReminderEmailTemplates];
+export const dulyEmailTemplates = [
+  ...dulyReminderEmailTemplates,
+  ...dulyAssignmentEmailTemplates,
+];

@@ -67,6 +67,52 @@ import { defineFlow } from '@objectstack/spec';
  * so it is a decision and not an accident: an assigner who is also one of the
  * assignees already owns a task on this assignment, so `needs_collection` adds
  * no second one for them.
+ *
+ * ── One bad assignee must not cost the other four (#123) ─────────────────
+ * The loop body is wrapped in a `try_catch` container, and that wrapper is
+ * load-bearing rather than defensive dressing. `loop-node.ts` iterates with a
+ * bare `await engine.runRegion(...)` and has no try/catch of its own, so a
+ * body node that fails throws straight out of the CONTAINER: the first bad
+ * item ends the whole run, every later assignee is never processed, and the
+ * loop never returns its `childSteps` — so the rows it DID write are not even
+ * counted. Measured on the real engine before this wrapper, with a three-name
+ * assignment whose middle row was bad:
+ *
+ *     status: failed · acted: 0 · duly_task rows actually written: 1
+ *
+ * Two people were silently dropped and the one task that was created was
+ * reported as nothing at all. That is worse than either failure on its own,
+ * which is why "abort the fan-out" is not an acceptable reading of a bad row.
+ *
+ * **What the assignment shows afterwards**, decided here so it is a contract
+ * and not an accident:
+ *
+ *  1. **The count is the truth.** `duly_assignment.task_count` is a
+ *     `Field.summary` count over the children, so it reports the tasks that
+ *     actually exist — two, on a three-name assignment with one bad row. The
+ *     run summary now agrees with it (`acted: 2`), because a loop that
+ *     completes returns the `childSteps` an aborted one threw away.
+ *  2. **The failure is named to the assigner**, in their inbox, one
+ *     notification per failed assignee, carrying the assignee handle, the
+ *     engine's own reason, and a click-through to the assignment. A partial
+ *     fan-out that nobody is told about is the "silent partial success" this
+ *     card exists to remove; the run log alone does not count, because it is
+ *     an operator surface and the assigner never sees it.
+ *
+ * The flow still writes NOTHING back onto `duly_assignment` — not a note, not
+ * a status. It cannot: the start trigger is `record-after-write`, so a write
+ * back onto the trigger record re-enters this same flow on a row whose status
+ * is still `dispatched`, and the notification would then be re-sent on every
+ * re-entry. The inbox is the assigner-visible surface that costs no such loop.
+ *
+ * **The handler reads `{fanout_assignee}` and nothing else about the person.**
+ * The iterator variable is re-bound by the loop before every iteration, so it
+ * is the one value guaranteed to describe THIS item. `fanout_assignee_user` is
+ * not: a region that throws at `fanout_find_unit` leaves it holding the
+ * PREVIOUS iteration's row, and a handler that read a name from it would
+ * calmly name the wrong colleague. Where the assignee handle itself is the
+ * defect (a blank entry in `assignees` — the "missing owner" shape), the
+ * handle renders empty and the engine's reason carries the diagnosis.
  */
 export const AssignmentFanout = defineFlow({
   name: 'duly_assignment_fanout',
@@ -131,71 +177,129 @@ export const AssignmentFanout = defineFlow({
         // of `sys_user` ids.
         collection: '{record.assignees}',
         iteratorVariable: 'fanout_assignee',
+        // The body is ONE node: the try_catch container. Everything that can
+        // fail for one person lives inside its `try`, so the blast radius of a
+        // bad row is that row (see the header). A region is single-entry /
+        // single-exit by construction, which a one-node body trivially is.
         body: {
           nodes: [
             {
-              id: 'fanout_find_existing',
-              type: 'get_record',
-              label: 'Does this assignee already have a task?',
+              id: 'fanout_attempt',
+              type: 'try_catch',
+              label: 'One assignee, isolated from the rest',
               config: {
-                objectName: 'duly_task',
-                // Per OWNER, not per assignment. `limit` omitted → findOne →
-                // the variable is set to the row or to null, never to [].
-                filter: { assignment: '{record.id}', owner: '{fanout_assignee}' },
-                fields: ['id'],
-                outputVariable: 'existing_task',
-              },
-            },
-            {
-              id: 'fanout_find_unit',
-              type: 'get_record',
-              label: "Read the assignee's business unit",
-              config: {
-                objectName: 'sys_user',
-                filter: { id: '{fanout_assignee}' },
-                fields: ['id', 'primary_business_unit_id'],
-                outputVariable: 'fanout_assignee_user',
-              },
-            },
-            {
-              id: 'fanout_create_task',
-              type: 'create_record',
-              label: 'Create the assignee task',
-              config: {
-                objectName: 'duly_task',
-                fields: {
-                  subject: '{record.subject}',
-                  owner: '{fanout_assignee}',
-                  // Denormalised at dispatch so a later transfer does not
-                  // rewrite history (see duly_task.business_unit).
-                  business_unit: '{fanout_assignee_user.primary_business_unit_id}',
-                  assignment: '{record.id}',
-                  source: 'assigned',
-                  due_date: '{record.due_date}',
-                  // An assignment has no lead time to spread, so the task is
-                  // visible from the day it is due.
-                  visible_from: '{record.due_date}',
-                  status: 'open',
-                  // `period_key` is NOT written. An assignment has no period,
-                  // and the dispatch identity index does not apply to it.
+                // `errorVariable` is left at its declared default `$error`,
+                // which is also the name `executeNode` binds a node failure
+                // to — one spelling, and no second key to keep in step.
+                try: {
+                  nodes: [
+                    {
+                      id: 'fanout_find_existing',
+                      type: 'get_record',
+                      label: 'Does this assignee already have a task?',
+                      config: {
+                        objectName: 'duly_task',
+                        // Per OWNER, not per assignment. `limit` omitted →
+                        // findOne → the variable is set to the row or to null,
+                        // never to [].
+                        filter: { assignment: '{record.id}', owner: '{fanout_assignee}' },
+                        fields: ['id'],
+                        outputVariable: 'existing_task',
+                      },
+                    },
+                    {
+                      id: 'fanout_find_unit',
+                      type: 'get_record',
+                      label: "Read the assignee's business unit",
+                      config: {
+                        objectName: 'sys_user',
+                        filter: { id: '{fanout_assignee}' },
+                        fields: ['id', 'primary_business_unit_id'],
+                        outputVariable: 'fanout_assignee_user',
+                      },
+                    },
+                    {
+                      id: 'fanout_create_task',
+                      type: 'create_record',
+                      label: 'Create the assignee task',
+                      config: {
+                        objectName: 'duly_task',
+                        fields: {
+                          subject: '{record.subject}',
+                          owner: '{fanout_assignee}',
+                          // Denormalised at dispatch so a later transfer does
+                          // not rewrite history (see duly_task.business_unit).
+                          business_unit: '{fanout_assignee_user.primary_business_unit_id}',
+                          assignment: '{record.id}',
+                          source: 'assigned',
+                          due_date: '{record.due_date}',
+                          // An assignment has no lead time to spread, so the
+                          // task is visible from the day it is due.
+                          visible_from: '{record.due_date}',
+                          status: 'open',
+                          // `period_key` is NOT written. An assignment has no
+                          // period, and the dispatch identity index does not
+                          // apply to it.
+                        },
+                      },
+                    },
+                  ],
+                  edges: [
+                    {
+                      id: 'fanout_e_missing',
+                      source: 'fanout_find_existing',
+                      target: 'fanout_find_unit',
+                      type: 'conditional',
+                      label: 'No task yet',
+                      // `isBlank` takes the value itself (`dyn`), so it is
+                      // total over null/undefined/'' /[] — unlike a field
+                      // access through a null root, which aborts the predicate.
+                      condition: P`isBlank(vars.existing_task)`,
+                    },
+                    { id: 'fanout_e_create', source: 'fanout_find_unit', target: 'fanout_create_task' },
+                  ],
+                },
+                // The handler is what turns "this person got nothing" from a
+                // dropped row into something the assigner is told. It must not
+                // be able to fail the container itself: `notify` degrades to a
+                // no-op success when no messaging service is mounted, and a
+                // catch region that threw would put the abort straight back.
+                catch: {
+                  nodes: [
+                    {
+                      id: 'fanout_report_failure',
+                      type: 'notify',
+                      label: 'Tell the assigner this person got no task',
+                      config: {
+                        recipients: '{record.assigner}',
+                        // The localizable content path (AGENTS.md §8) — the
+                        // words live in src/email-templates/, never inline.
+                        template: 'duly.assignment_fanout_failed',
+                        templateData: {
+                          subject: '{record.subject}',
+                          // The iterator, not `fanout_assignee_user`: see the
+                          // header on why a stale row would name the wrong
+                          // colleague.
+                          assignee: '{fanout_assignee}',
+                          // `$error.message` is the engine's own sentence and
+                          // it names the node that failed, e.g. "Node
+                          // 'fanout_create_task' failed: create_record
+                          // (duly_task) failed: Owner is required".
+                          reason: '{$error.message}',
+                        },
+                        severity: 'warning',
+                        topic: 'duly.assignment_fanout_failed',
+                        sourceObject: 'duly_assignment',
+                        sourceId: '{record.id}',
+                      },
+                    },
+                  ],
+                  edges: [],
                 },
               },
             },
           ],
-          edges: [
-            {
-              id: 'fanout_e_missing',
-              source: 'fanout_find_existing',
-              target: 'fanout_find_unit',
-              type: 'conditional',
-              label: 'No task yet',
-              // `isBlank` takes the value itself (`dyn`), so it is total over
-              // null/undefined/'' /[] — unlike a field access through a null
-              // root, which aborts the predicate.
-              condition: P`isBlank(vars.existing_task)`,
-            },
-            { id: 'fanout_e_create', source: 'fanout_find_unit', target: 'fanout_create_task' },
-          ],
+          edges: [],
         },
       },
     },
