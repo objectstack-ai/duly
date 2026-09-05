@@ -39,14 +39,31 @@ import { TRANSLATABLE_METADATA_TYPES } from '@objectstack/spec/system';
  * ── What is translatable is the PLATFORM's answer, not ours ──────────────
  * `TRANSLATABLE_METADATA_TYPES` is imported from `@objectstack/spec/system`,
  * where it is documented as "derived from the dispatch table — never restate
- * it". Measured on 17.2.0 it is exactly
- * `{ view, action, object, app, dashboard, page }`. Every other metadata type
- * this app ships — dataset, flow, job, hook, permission set, position,
+ * it". Measured on 17.3.0 it is exactly
+ * `{ view, action, object, app, dashboard, dataset, page }`. Every other
+ * metadata type this app ships — flow, job, hook, permission set, position,
  * sharing rule — has no translator and no bundle group, so its display text is
  * `untranslatable` by the platform's own declaration rather than by our
- * judgement. `test/i18n-coverage.test.ts` pins the set, so the day the
- * platform makes datasets translatable the pin goes red and this walk gets
- * extended instead of quietly staying behind.
+ * judgement. `test/i18n-coverage.test.ts` pins the set, so a platform change
+ * cannot pass silently.
+ *
+ * ── That pin did its job, which is why this file changed (#106) ──────────
+ * `dataset` is in the set above because objectstack#14381 put it there. The
+ * pin went red on the 17.3.0 bump — before any of this file was touched — and
+ * three exemptions that had been correct became stale in one release:
+ *
+ *   dataset label / description / dimension / measure labels → the `datasets`
+ *     group, resolved by the new `translateDataset`.
+ *   a view's `bulkActionDefs` copy → `objects.<o>._views.<v>.bulkActions`,
+ *     resolved by `translateView`.
+ *   a custom validation rule's `message` → `objects.<o>._validations.<r>
+ *     .message`, resolved by `@objectstack/objectql` at THROW time.
+ *
+ * Each verdict below records where its key is resolved, because in two of the
+ * three cases it is NOT the document translator a reader would reach for
+ * first. The exemption list is now the designer- and operator-facing text
+ * only: flows, jobs, hooks, positions, permission sets, and the one
+ * `element:text` `content` slot the page face still has no key for.
  *
  * ── Measured behaviour the key builders below depend on ──────────────────
  * Run against `@objectstack/spec` 17.2.0's own resolvers, not assumed:
@@ -316,15 +333,36 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'object.fields{}.defaultValue': machine('default value or token'),
   'object.fields{}.defaultValue.dialect': machine('expression dialect'),
   'object.fields{}.defaultValue.source': machine('CEL source'),
-  // No bundle slot exists for a custom validation rule's message. Measured on
-  // `@objectstack/objectql` 17.2.0: a rule's `message` is put on the error
-  // verbatim. `messages['validation.field.*']` overrides the platform's
-  // BUILT-IN field catalog (which already ships zh-CN), not an authored rule.
-  'object.validations[].message': untranslatable(
-    'a custom validation rule\'s message is emitted verbatim — the bundle has no '
-    + '`_validations` group and `messages.validation.field.*` addresses only the '
-    + 'platform\'s built-in field catalog. Filed upstream; see the PR body.',
-  ),
+  /**
+   * A custom validation rule's refusal sentence (#106, objectstack#14381).
+   *
+   * ── Where this key is resolved, and why it is not `translateObject` ───
+   * Measured on 17.3.0, because the two halves disagree and only one of them
+   * reaches a person:
+   *
+   *   `translateObject(obj, bundle, { locale })` does NOT rewrite
+   *   `validations[].message`. Fed a bundle carrying
+   *   `_validations.<rule>.message` it returns the authored English untouched
+   *   (the object's own `label` beside it does translate).
+   *
+   *   `@objectstack/objectql` 17.3.0 resolves it at THROW time instead, which
+   *   is the only moment the sentence is used. `authoredRuleMessage(rule,
+   *   messages)` builds `objects.<object>._validations.<rule>.message` through
+   *   the spec's own `objectValidationMessageKey` and asks the bridged i18n
+   *   service for it in the CALLER's locale, falling back to `rule.message`.
+   *   The bridge is real in this app: booting the stack logs
+   *   `[ObjectQLPlugin] Bridging i18n service to ObjectQL for validation
+   *   messages`.
+   *
+   * Resolving at throw time is what makes it correct — one stored rule serves
+   * every locale, and the refusal is spoken in the locale of whoever was
+   * stopped. So the key below is real, and a zh-CN session gets a Chinese
+   * refusal in the same envelope as the platform's own.
+   */
+  'object.validations[].message': translate((c) => {
+    const rule = str(c.parent.name);
+    return id(c) && rule ? ['objects', id(c)!, '_validations', rule, 'message'] : undefined;
+  }),
   'object.validations[].name': machine('rule name'),
   'object.validations[].type': machine('rule kind'),
   'object.validations[].severity': machine('rule severity'),
@@ -351,16 +389,32 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   }),
   'view.type': machine('visualisation kind'),
   'view.inlineEdit': machine('editing flag'),
-  // An authored `bulkActionDefs` entry is NOT an action document: it never
-  // reaches `translateAction`, and there is no `_bulkActions` group. The
-  // authored comment in `src/views/task.view.ts` said as much before this
-  // bundle existed; it is now measured rather than assumed.
-  'view.bulkActionDefs[].label': untranslatable(BULK_WHY('the toolbar button caption')),
-  'view.bulkActionDefs[].confirmText': untranslatable(BULK_WHY('the confirmation prompt')),
-  'view.bulkActionDefs[].confirmLabel': untranslatable(BULK_WHY('the confirm button caption')),
-  'view.bulkActionDefs[].params[].label': untranslatable(BULK_WHY('a parameter\'s field label')),
-  'view.bulkActionDefs[].params[].placeholder': untranslatable(BULK_WHY('a parameter\'s placeholder')),
-  'view.bulkActionDefs[].params[].help': untranslatable(BULK_WHY('a parameter\'s help text')),
+  /**
+   * The bulk toolbar's own copy (#106, objectstack#14381).
+   *
+   * A `bulkActionDefs` entry still is not an action DOCUMENT — it never
+   * reaches `translateAction` — but `_views.<view>.bulkActions` is now its own
+   * group, so it no longer needs to be one. Measured on `translateView`
+   * 17.3.0 rather than read off the schema: the resolver keys the group by the
+   * def's `name`, keys each param by the param's `name`, and addresses the
+   * view exactly as `view.label` above does — `viewTranslationKey` strips the
+   * `<object>.` prefix, which is the same registry name `expandViewContainer`
+   * produces. So these six slots hang off the SAME `_views.<viewKey>` prefix
+   * the view's own label uses, one level down.
+   *
+   * One shape detail worth recording, because it looks like a mismatch and is
+   * not: `translateView` reads the array from `view.config.bulkActionDefs`
+   * (the registry document), while this walk reads it from the AUTHORED node,
+   * where it sits at the top level. The bundle key depends on neither — only
+   * on object, view key, def name and param name — so both halves address the
+   * same slot.
+   */
+  'view.bulkActionDefs[].label': translate((c) => bulkActionKey(c, 'label')),
+  'view.bulkActionDefs[].confirmText': translate((c) => bulkActionKey(c, 'confirmText')),
+  'view.bulkActionDefs[].confirmLabel': translate((c) => bulkActionKey(c, 'confirmLabel')),
+  'view.bulkActionDefs[].params[].label': translate((c) => bulkActionParamKey(c, 'label')),
+  'view.bulkActionDefs[].params[].placeholder': translate((c) => bulkActionParamKey(c, 'placeholder')),
+  'view.bulkActionDefs[].params[].help': translate((c) => bulkActionParamKey(c, 'help')),
   'view.bulkActionDefs[].name': machine('bulk action name'),
   'view.bulkActionDefs[].icon': machine('icon name'),
   'view.bulkActionDefs[].operation': machine('data-plane operation'),
@@ -495,14 +549,31 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'action.visible.dialect': machine('expression dialect'),
   'action.visible.source': machine('CEL source'),
 
-  // ── dataset — no translator, no bundle group ──────────────────────────
+  // ── dataset — a translator and a bundle group as of 17.3.0 ────────────
+  //
+  // `METADATA_DOCUMENT_TRANSLATORS` gained `dataset` in objectstack#14381, so
+  // `TRANSLATABLE_METADATA_TYPES` now carries it and `translateDataset`
+  // rewrites all four slots below out of the `datasets` group. Measured, not
+  // read off the schema: fed `datasets.duly_duty_health.measures.<m>.label`,
+  // the resolver returns the Chinese for the measure, the dimension, the
+  // dataset label and its description.
+  //
+  // This is the group behind the dashboard: a measure label is what a metric
+  // tile prints under its number and what a pie legend names each slice, which
+  // is why a Chinese dashboard had English sub-labels before this landed.
   'dataset.name': machine('dataset name'),
   'dataset.object': machine('base object'),
   'dataset.include[]': machine('join paths'),
-  'dataset.label': untranslatable(DATASET_WHY()),
-  'dataset.description': untranslatable(DATASET_WHY()),
-  'dataset.dimensions[].label': untranslatable(DATASET_WHY()),
-  'dataset.measures[].label': untranslatable(DATASET_WHY()),
+  'dataset.label': translate((c) => (id(c) ? ['datasets', id(c)!, 'label'] : undefined)),
+  'dataset.description': translate((c) => (id(c) ? ['datasets', id(c)!, 'description'] : undefined)),
+  'dataset.dimensions[].label': translate((c) => {
+    const dimension = str(c.parent.name);
+    return id(c) && dimension ? ['datasets', id(c)!, 'dimensions', dimension, 'label'] : undefined;
+  }),
+  'dataset.measures[].label': translate((c) => {
+    const measure = str(c.parent.name);
+    return id(c) && measure ? ['datasets', id(c)!, 'measures', measure, 'label'] : undefined;
+  }),
   'dataset.dimensions[].name': machine('dimension name — bound by dashboards'),
   'dataset.dimensions[].field': machine('field path'),
   'dataset.dimensions[].type': machine('dimension kind'),
@@ -591,23 +662,6 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'permissionSet.description': untranslatable(ADMIN_WHY('permission set')),
 };
 
-function BULK_WHY(what: string): string {
-  return `${what} of an authored \`bulkActionDefs\` entry. A bulk-action def is not an `
-    + 'action DOCUMENT — it never reaches `translateAction`, and `TranslationDataSchema` '
-    + 'has no group that addresses one — so this string renders in the source locale in '
-    + 'every locale. The alternative shape (`bulkActions: [\'duly_task_complete\']`, '
-    + 'promoting the row actions) is rejected in `src/views/task.view.ts` for a measured '
-    + 'reason: N elevated action dispatches instead of one data-plane write. Filed '
-    + 'upstream; see the PR body.';
-}
-
-function DATASET_WHY(): string {
-  return 'a dataset is not one of the platform\'s translatable metadata types '
-    + '(`TRANSLATABLE_METADATA_TYPES`) and `TranslationDataSchema` has no `datasets` '
-    + 'group, so a measure or dimension label reaches a chart axis in the source '
-    + 'locale. Filed upstream; see the PR body.';
-}
-
 function FLOW_WHY(): string {
   return 'a flow is not one of the platform\'s translatable metadata types and the '
     + '`flows` bundle group addresses only `label` and SCREEN copy — this app declares '
@@ -617,6 +671,43 @@ function FLOW_WHY(): string {
 function ADMIN_WHY(kind: string): string {
   return `a ${kind} is not one of the platform's translatable metadata types and has no `
     + 'bundle group. Operator-facing text (Studio, the run log), not an end-user screen.';
+}
+
+/**
+ * The `_views.<viewKey>.bulkActions.<def>` prefix a bulk-action string hangs
+ * off, or `undefined` when the surface is not addressable.
+ *
+ * `ctx.parent` is the def itself for the three top-level slots, so its `name`
+ * is right there. A PARAM's parent is the param, and the def is one level up —
+ * reachable only through the concrete path, exactly as `pageComponentId` above
+ * reaches a page component. `viewNode` is on `ctx.ids` for that reason.
+ */
+const bulkActionDefAt = (ctx: KeyContext, index: string | undefined): string | undefined => {
+  const view = ctx.ids.viewNode;
+  if (!isRec(view) || !Array.isArray(view.bulkActionDefs)) return undefined;
+  const def = view.bulkActionDefs[Number(index)];
+  return isRec(def) ? str(def.name) : undefined;
+};
+
+const bulkActionBase = (ctx: KeyContext, defName: string | undefined): readonly string[] | undefined => {
+  const object = str(ctx.ids.object);
+  const viewKey = str(ctx.ids.viewKey);
+  return object && viewKey && defName
+    ? ['objects', object, '_views', viewKey, 'bulkActions', defName]
+    : undefined;
+};
+
+function bulkActionKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {
+  const base = bulkActionBase(ctx, str(ctx.parent.name));
+  return base ? [...base, leaf] : undefined;
+}
+
+function bulkActionParamKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {
+  const [defsKey, defIndex, paramsKey] = ctx.path;
+  if (defsKey !== 'bulkActionDefs' || paramsKey !== 'params') return undefined;
+  const base = bulkActionBase(ctx, bulkActionDefAt(ctx, defIndex));
+  const param = str(ctx.parent.name);
+  return base && param ? [...base, 'params', param, leaf] : undefined;
 }
 
 function actionKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {
@@ -763,7 +854,7 @@ const viewSurfaces = (views: readonly unknown[]): Surface[] => {
         kind: 'view',
         where: `view ${object} › listViews.${authored}`,
         node: view,
-        ids: { object, viewKey: namedKeys[at] ?? authored },
+        ids: { object, viewKey: namedKeys[at] ?? authored, viewNode: view },
       });
     });
     if (list) {
@@ -771,7 +862,7 @@ const viewSurfaces = (views: readonly unknown[]): Surface[] => {
         kind: 'view',
         where: `view ${object} › list`,
         node: list,
-        ids: { object, viewKey: defaultKey },
+        ids: { object, viewKey: defaultKey, viewNode: list },
       });
     }
   }

@@ -96,6 +96,35 @@ import { defineTranslationBundle } from '@objectstack/spec';
  * literal compound carries nothing in Chinese. Its help text keeps the two
  * worked examples per anchor and is translated for sense, not structure.
  */
+/**
+ * 批量工具条的文案，`duly_task` 每个提供它的列表视图共用一份。
+ *
+ * 平台按「视图」寻址这组键（`objects.duly_task._views.<视图>.bulkActions`），
+ * 所以同一个批量动作出现在五个视图里就是五份键。这里共用一个对象而不是抄
+ * 五遍：抄五遍的那份迟早会有一处被改、四处没改，而这组文案在哪个视图里都
+ * 必须读起来一样。
+ *
+ * 与行内动作 `duly_task_skip` 的措辞刻意保持一致（跳过原因、同一句占位
+ * 示例），只有说明文字不同——批量的那句要说清楚它落在所选的每一个任务上。
+ */
+const TASK_BULK_ACTIONS = {
+  duly_task_bulk_complete: {
+    label: '完成',
+    confirmText: '把所选任务标记为已完成。',
+    confirmLabel: '完成',
+  },
+  duly_task_bulk_skip: {
+    label: '跳过',
+    params: {
+      skip_reason: {
+        label: '跳过原因',
+        help: '会记录在所选的每一个任务上。',
+        placeholder: '当时装置停车，没有任何东西需要申报',
+      },
+    },
+  },
+};
+
 export const dulyChinese = defineTranslationBundle({
   'zh-CN': {
     objects: {
@@ -217,6 +246,35 @@ export const dulyChinese = defineTranslationBundle({
           catalog_tree: { label: '各团队应尽的职责' },
           default: { label: '全部职责' },
         },
+        // 校验规则的拒绝语。由 objectql 在抛错当时按调用方的语言解析
+        // （`objects.<对象>._validations.<规则>.message`），所以一条规则
+        // 只存一句英文原文，中文会话看到的是这里的句子。
+        //
+        // 写法上跟平台内建的拒绝语保持一致：先说清楚被拒的是什么，再说该
+        // 怎么办。配置者是在填表当中被挡下来的，只被告知“不合法”没有用。
+        _validations: {
+          recurring_needs_frequency: {
+            message: '周期性职责必须设置频率，否则没有任何东西能派发它。',
+          },
+          standing_no_frequency: {
+            message: '常设职责从不派发任务，给它设频率没有意义。请清除频率。',
+          },
+          non_recurring_no_due_timing: {
+            message: '“到期日锚定于”、偏移天数与提前天数用于算出每个周期的到期日，只有周期性职责才有周期。常设与一次性职责请清空这三项。',
+          },
+          standing_no_grace_days: {
+            message: '宽限期是相对任务的到期日判定逾期的；常设职责从不产生任务，因此也谈不上宽限期。',
+          },
+          review_status_transitions: {
+            message: '审定流程没有这一步。职责的流转是：待确认 → 待审定 → 已审定或已打回；已打回的职责修正之后重新回到待审定。',
+          },
+          returned_needs_note: {
+            message: '请写明打回的原因——负责人需要据此知道该改什么。',
+          },
+          effective_window_ordered: {
+            message: '生效日期不得晚于失效日期。',
+          },
+        },
       },
 
       // ── duly_task — 任务：职责的一次派发 ────────────────────────────
@@ -316,9 +374,9 @@ export const dulyChinese = defineTranslationBundle({
           history: { label: '历史' },
         },
         _views: {
-          my_week: { label: '我的本周' },
-          late: { label: '逾期' },
-          stalled: { label: '停滞' },
+          my_week: { label: '我的本周', bulkActions: TASK_BULK_ACTIONS },
+          late: { label: '逾期', bulkActions: TASK_BULK_ACTIONS },
+          stalled: { label: '停滞', bulkActions: TASK_BULK_ACTIONS },
           calendar: { label: '日历' },
           board: { label: '看板' },
           schedule: { label: '排期' },
@@ -326,8 +384,9 @@ export const dulyChinese = defineTranslationBundle({
           by_unit: {
             label: '按部门',
             description: '仅包含待办与进行中的工作。分组计数是在已加载的这一页上算出来的——按部门的权威口径在仪表板，这个视图用于浏览。',
+            bulkActions: TASK_BULK_ACTIONS,
           },
-          default: { label: '全部任务' },
+          default: { label: '全部任务', bulkActions: TASK_BULK_ACTIONS },
         },
         _actions: {
           duly_task_complete: {
@@ -351,6 +410,16 @@ export const dulyChinese = defineTranslationBundle({
                 helpText: '会保存在这个任务上。写得短没关系，留空不行。',
               },
             },
+          },
+        },
+        _validations: {
+          // 这一条挡的是「历史怎么写」那条路：完成时间是只读列，普通调用方
+          // 建不出一个直接就是 done 的任务。中文照样要说清楚缺的是什么。
+          completed_at_required_when_done: {
+            message: '已完成的任务必须带有完成时间。',
+          },
+          skip_needs_reason: {
+            message: '请写明这个任务被跳过的原因。',
           },
         },
       },
@@ -432,6 +501,23 @@ export const dulyChinese = defineTranslationBundle({
                 helpText: '每个人都会得到这个岗位职责库中每一条启用职责的独立副本。',
               },
             },
+          },
+        },
+        // 与 duly_duty 上的同名规则逐字一致，这是刻意的：职责库条目就是职责
+        // 的模板，同一条约束在两处必须说同一句话。配置者常常先在职责库里被
+        // 挡下、再到职责上被挡下一次，两句话不一样只会让人以为是两回事。
+        _validations: {
+          recurring_needs_frequency: {
+            message: '周期性职责必须设置频率，否则没有任何东西能派发它。',
+          },
+          standing_no_frequency: {
+            message: '常设职责从不派发任务，给它设频率没有意义。请清除频率。',
+          },
+          non_recurring_no_due_timing: {
+            message: '“到期日锚定于”、偏移天数与提前天数用于算出每个周期的到期日，只有周期性职责才有周期。常设与一次性职责请清空这三项。',
+          },
+          standing_no_grace_days: {
+            message: '宽限期是相对任务的到期日判定逾期的；常设职责从不产生任务，因此也谈不上宽限期。',
           },
         },
       },
@@ -618,6 +704,81 @@ export const dulyChinese = defineTranslationBundle({
             title: '本月工作构成',
             description: '组织认定的职责清单按形态划分。这里数的是职责，不是任务——常设职责永远不产生任务；完成率只统计重复事项。',
           },
+        },
+      },
+    },
+
+    // ── datasets — 仪表板数字底下的那一层文字 ─────────────────────────
+    // 17.3.0 (objectstack#14381) 之前这一组不存在：数据集不是可翻译的元数据
+    // 类型，度量标签就是图表轴上、指标块数字下面那行英文。所以一个中文会话
+    // 看到的是中文标题配英文小字——#106 关掉的正是这个。
+    //
+    // 度量标签是「小字」，不是句子：它要在一个数字底下、在一条饼图图例里读
+    // 得通，所以一律短词，口径写在数据集自己的 description 与仪表板部件的
+    // description 里，不塞进标签。
+    datasets: {
+      duly_duty_health: {
+        label: '职责健康度',
+        description: '组织认定职责的按期全貌（来自岗位职责库与主管指派）。自行申报的工作只在任务视图里呈现，这里从不为它打分。',
+        dimensions: {
+          business_unit: { label: '部门' },
+          owner: { label: '负责人' },
+          period_key: { label: '所属周期' },
+          frequency: { label: '频率' },
+          source: { label: '来源' },
+        },
+        measures: {
+          tasks_due: { label: '应完成任务' },
+          tasks_done: { label: '已完成任务' },
+          tasks_skipped: { label: '已跳过任务' },
+          tasks_done_on_time: { label: '按期完成' },
+          tasks_completed_late: { label: '逾期完成' },
+          tasks_overdue: { label: '逾期未完成' },
+          // 与仪表板部件 `on_time_rate` 的标题同词。同一个数在两处出现，
+          // 叫法不一样会被读成两个指标。
+          on_time_rate: { label: '按期率' },
+        },
+      },
+      duly_duty_register: {
+        label: '职责清单',
+        description: '组织认定的职责清单本身：其中有多少已确认、已审定，以及它由哪些形式的工作构成。这里数的是职责，不是它们派发出来的任务——所以常设职责只在这里露面。',
+        dimensions: {
+          // 与 duly_duty.form 的字段标签同词：饼图图例上的那一列就是这个
+          // 字段的取值，标签跟着字段走才不会出现两个名字。
+          form: { label: '形式' },
+        },
+        measures: {
+          duties_in_register: { label: '清单内职责' },
+          duties_approved: { label: '已审定职责' },
+          approved_rate: { label: '审定率' },
+        },
+      },
+      duly_stagnation: {
+        label: '停滞',
+        description: '没有动静的组织认定待办工作，按已多久无人过问分档。刻意与到期日无关——一个还没到期、却始终没人碰的任务，同样是停滞。',
+        dimensions: {
+          business_unit: { label: '部门' },
+          owner: { label: '负责人' },
+        },
+        measures: {
+          open_tasks: { label: '待办任务' },
+          untouched_over_7d: { label: '超过 7 天无动静' },
+          untouched_over_14d: { label: '超过 14 天无动静' },
+          untouched_over_30d: { label: '超过 30 天无动静' },
+          oldest_last_update_at: { label: '最久未动' },
+        },
+      },
+      duly_workload: {
+        label: '工作量',
+        description: '组织认定任务的到期分布，按周与按月向前分档，让一个即将超载的周期在还来得及重新平衡的时候就能被看见。',
+        dimensions: {
+          business_unit: { label: '部门' },
+          owner: { label: '负责人' },
+          due_week: { label: '到期（周）' },
+          due_month: { label: '到期（月）' },
+        },
+        measures: {
+          tasks_due: { label: '应完成任务' },
         },
       },
     },

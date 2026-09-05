@@ -151,7 +151,14 @@ describe('i18n coverage — every authored label is translated, every key has a 
         expected.add(`objects.${object}._views.${String(item.name).slice(object.length + 1)}.label`);
       }
     }
-    const derivedViewLabels = new Set(derivedKeys.filter((k) => k.endsWith('.label') && k.includes('._views.')));
+    // Exactly `objects.<object>._views.<view>.label` — the view's OWN label,
+    // five segments and no more. A substring test was enough until 17.3.0 put
+    // `bulkActions.<def>.label` and `bulkActions.<def>.params.<p>.label`
+    // underneath the same prefix (#106); it then swept 15 nested slots into a
+    // set that is supposed to hold one entry per LIST VIEW, and this assertion
+    // failed for a reason that had nothing to do with registry naming.
+    const VIEW_LABEL_KEY = /^objects\.[^.]+\._views\.[^.]+\.label$/;
+    const derivedViewLabels = new Set(derivedKeys.filter((k) => VIEW_LABEL_KEY.test(k)));
     expect([...expected].sort(), 'a view the walk did not key, or keyed under the wrong name')
       .toEqual([...derivedViewLabels].sort());
   });
@@ -230,14 +237,23 @@ describe('the bundles reach the stack', () => {
 
   it('pins the metadata types the PLATFORM says are translatable', () => {
     // The anchor the walk's `untranslatable` verdicts rest on: a dataset
-    // measure label has no bundle key because the platform has no dataset
+    // measure label had no bundle key because the platform had no dataset
     // translator, not because we decided so. When this set grows, that
     // reasoning changes and the walk must be extended — so fail here.
+    //
+    // It did exactly that. `dataset` arrived in 17.3.0 (objectstack#14381) and
+    // this assertion went red on the bump, before anything else was touched —
+    // which is the whole point of pinning a set the platform owns. The verdict
+    // it was holding up has been RE-DERIVED rather than the pin widened: the
+    // four `dataset.*` paths are now `translate`, and `datasets` is a real
+    // group in the bundles. Widening this list without extending the walk
+    // would have turned the one assertion that noticed into the one that hid
+    // it (#106).
     expect(
       [...PLATFORM_TRANSLATABLE_TYPES].sort(),
       'the platform\'s translatable metadata types changed — re-derive the '
       + '`untranslatable` verdicts in src/translations/authored-text.ts against the new set',
-    ).toEqual(['action', 'app', 'dashboard', 'object', 'page', 'view']);
+    ).toEqual(['action', 'app', 'dashboard', 'dataset', 'object', 'page', 'view']);
   });
 });
 
@@ -253,11 +269,14 @@ describe('untranslatable display text is declared rather than dropped', () => {
       paths,
       'authored display text with no bundle key that this repo has not recorded — either '
       + 'it has a key (add it to the walk) or it is a platform gap worth filing',
+    //
+    // Eleven paths left this list in one release (#106, objectstack#14381):
+    // the four `dataset.*`, the six `view.bulkActionDefs[].*` and
+    // `object.validations[].message`. What remains is designer- and
+    // operator-facing text plus the one page `content` slot — no END USER
+    // screen is on this list any more, which is the property the three counts
+    // below now pin at zero.
     ).toEqual([
-      'dataset.description',
-      'dataset.dimensions[].label',
-      'dataset.label',
-      'dataset.measures[].label',
       'flow.description',
       'flow.edges[].label',
       'flow.label',
@@ -266,19 +285,12 @@ describe('untranslatable display text is declared rather than dropped', () => {
       'hook.label',
       'job.description',
       'job.label',
-      'object.validations[].message',
       'page.regions[].components[].properties.content.en',
       'page.regions[].components[].properties.content.zh-CN',
       'permissionSet.description',
       'permissionSet.label',
       'position.description',
       'position.label',
-      'view.bulkActionDefs[].confirmLabel',
-      'view.bulkActionDefs[].confirmText',
-      'view.bulkActionDefs[].label',
-      'view.bulkActionDefs[].params[].help',
-      'view.bulkActionDefs[].params[].label',
-      'view.bulkActionDefs[].params[].placeholder',
     ]);
   });
 
@@ -289,33 +301,33 @@ describe('untranslatable display text is declared rather than dropped', () => {
   });
 
   it('counts the user-facing half, which is what a reader of the PR needs', () => {
-    // These three groups reach an END USER in English in a Chinese deployment.
-    // The rest (flow node labels, job/hook/position/permission-set text) is
-    // designer- or operator-facing. Asserted as counts so the PR body's
-    // numbers cannot drift from the code.
+    // These three groups USED to reach an END USER in English in a Chinese
+    // deployment. All three closed at once in 17.3.0 (objectstack#14381), so
+    // all three are pinned at ZERO — the same shape, and for the same reason,
+    // as the `flow.nodes[].config.` line below that #69 closed: a count that
+    // is merely deleted cannot notice the gap reopening, and the way each of
+    // these reopens is ordinary (a new bulk action, a new validation rule, a
+    // new measure, all of which the walk will key automatically — unless
+    // someone re-adds an `untranslatable` verdict to make a red gate green).
+    //
+    // The 84 strings they were holding are now authored in `zh-CN.ts`:
+    // 35 bulk-toolbar + 13 validation messages + 36 dataset labels.
     const count = (prefix: string): number =>
       walk.untranslatable.filter((entry) => entry.path.startsWith(prefix)).length;
-    expect(count('view.bulkActionDefs'), 'bulk-action toolbar copy').toBe(35);
-    // Was 11 before #107 added `review_status_transitions` and
-    // `returned_needs_note`. Both messages are read by whoever is stopped by
-    // them — a reviewer taking a step the pipeline does not have, an owner
-    // returning a duty with no reason — so both enlarge the same declared gap
-    // (a custom rule message has no bundle key anywhere in the platform's
-    // schema) rather than opening a new kind of one.
-    expect(count('object.validations'), 'custom validation messages').toBe(13);
-    // Was 26 before #52 added the three on-time measures — `Done on time`,
-    // `Completed late` and the `On-time rate` derived from them. A measure
-    // label still has no bundle key anywhere in the platform's schema, so each
-    // new one enlarges the same declared gap rather than opening a new kind of
-    // one; the number moves with the code because that is what this pin is for.
-    //
-    // 29 -> 36 with the p20 dashboard set: `duly_duty_health.Overdue` (+1) and
-    // the whole of `duly_duty_register` — its label, its description, one
-    // dimension label and three measure labels (+6). Same declared gap, seven
-    // strings wider. It closes for all of them at once when the platform makes
-    // datasets translatable (duly#106 / objectstack#14253); nothing here works
-    // around it in the meantime.
-    expect(count('dataset.'), 'dataset labels behind chart axes').toBe(36);
+    expect(count('view.bulkActionDefs'), 'bulk-action toolbar copy — keyed since 17.3.0').toBe(0);
+    // Was 13. A custom rule's message is now resolved by
+    // `@objectstack/objectql` at THROW time out of
+    // `objects.<o>._validations.<r>.message`, in the locale of whoever was
+    // stopped — so a Chinese session gets the refusal in Chinese, in the same
+    // envelope as the platform's own built-in ones.
+    expect(count('object.validations'), 'custom validation messages — keyed since 17.3.0').toBe(0);
+    // Was 36, and the comment here used to say it "closes for all of them at
+    // once when the platform makes datasets translatable (duly#106 /
+    // objectstack#14253)". That is what happened: `translateDataset` landed,
+    // `dataset` joined `TRANSLATABLE_METADATA_TYPES`, and all 36 became keys
+    // in the `datasets` group in one move. Nothing was worked around in the
+    // meantime, which is why the close was a re-derivation and not a rewrite.
+    expect(count('dataset.'), 'dataset labels behind chart axes — keyed since 17.3.0').toBe(0);
     // Was 6 before #99 (#69) landed: three `notify` nodes' inline title and
     // message. They now reference an email template, whose per-locale rows are
     // checked below — so this is a gap that CLOSED, pinned at zero so it
@@ -485,7 +497,10 @@ describe('i18n coverage guard — the guard can fail (self-test on synthetic met
     const result = collectAuthoredText(emptyStack());
     expect(result.staleExemptions.length, 'a stack with no authored text must make every exemption stale')
       .toBeGreaterThan(10);
-    expect(result.staleExemptions).toContain('object.validations[].message');
+    // Was `object.validations[].message` until 17.3.0 gave it a key (#106).
+    // A job's label has no translator and no bundle group at all, so it is the
+    // stable pick for "an exemption that is still an exemption".
+    expect(result.staleExemptions).toContain('job.label');
   });
 
   it('detects a missing translation, and an orphan key', () => {
