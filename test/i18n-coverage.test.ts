@@ -16,6 +16,7 @@ import {
 } from '../src/translations/authored-text.js';
 import type { TextStack } from '../src/translations/authored-text.js';
 import { buildEnglishBundle, dulyTextStack, dulyEnglish } from '../src/translations/en.js';
+import { dulyTranslations } from '../src/translations/index.js';
 import { dulyChinese } from '../src/translations/zh-CN.js';
 
 /**
@@ -50,31 +51,74 @@ import { dulyChinese } from '../src/translations/zh-CN.js';
 type Rec = Record<string, unknown>;
 
 const SOURCE_LOCALE = 'en';
-const TARGET_LOCALE = 'zh-CN';
 
 const walk = collectAuthoredText(dulyTextStack);
 const derivedKeys = walk.translatable.map((entry) => keyPath(entry.key!));
 const englishKeys = new Set(bundleKeys((dulyEnglish as Rec)[SOURCE_LOCALE]));
-const chineseKeys = new Set(bundleKeys((dulyChinese as Rec)[TARGET_LOCALE]));
+
+/**
+ * Every locale the barrel ships except the source one (#102).
+ *
+ * This used to be the literal `'zh-CN'`, which made the two directional gates
+ * below check ONE named locale. The locale-set assertion further down would
+ * have caught a `ja-JP` that was declared and missing, but not a `ja-JP.ts`
+ * that existed and carried ten of the keys: nothing ran the coverage check
+ * against it. Read off `dulyTranslations` instead, so the third locale is
+ * gated by existing, not by somebody remembering to add a line here.
+ *
+ * `templateGaps()` at the bottom of this file already iterated
+ * `supportedLocales` generically — only the bundle half had the gap.
+ */
+const TRANSLATED_LOCALES: readonly string[] = (dulyTranslations as Rec[])
+  .flatMap((bundle) => Object.keys(bundle))
+  .filter((locale) => locale !== SOURCE_LOCALE)
+  .sort();
+
+const keysForLocale = (locale: string): Set<string> => {
+  const bundle = (dulyTranslations as Rec[]).find((b) => locale in b);
+  return new Set(bundleKeys(bundle?.[locale]));
+};
+
+const localeKeys = new Map(TRANSLATED_LOCALES.map((l) => [l, keysForLocale(l)] as const));
+const chineseKeys = keysForLocale('zh-CN');
 
 // ─── The gate, over this app's real metadata ─────────────────────────────
 
 describe('i18n coverage — every authored label is translated, every key has a source', () => {
-  it('every declared label the walk can address is carried by zh-CN', () => {
+  it('gates every locale the app actually ships, so the per-locale checks below are not vacuous', () => {
+    // Non-vacuity guard for the generalisation (#102). `it.each` over an empty
+    // array reports success with zero cases, so a bug that emptied
+    // `TRANSLATED_LOCALES` would turn the two gates below into nothing at all
+    // and every one of them would still be green.
+    expect(TRANSLATED_LOCALES, 'the translations barrel ships no non-source locale')
+      .toContain('zh-CN');
+    // And the keys read for `zh-CN` come from the hand-written bundle itself.
+    // The generalisation above swapped the source of those keys from the FILE
+    // to the BARREL; if the barrel ever carried a different object under that
+    // locale, every gate here would go on passing while measuring the wrong
+    // bundle. One identity check closes the gap the refactor opened.
+    expect(
+      (dulyTranslations as Rec[]).find((b) => 'zh-CN' in b),
+      'the barrel\'s zh-CN entry is not the authored `dulyChinese` bundle',
+    ).toBe(dulyChinese);
+  });
+
+  it.each(TRANSLATED_LOCALES)('every declared label the walk can address is carried by %s', (locale) => {
+    const keys = localeKeys.get(locale)!;
     const missing = walk.translatable
-      .filter((entry) => !chineseKeys.has(keyPath(entry.key!)))
+      .filter((entry) => !keys.has(keyPath(entry.key!)))
       .map((entry) => `${keyPath(entry.key!)}  ← ${entry.where} = ${JSON.stringify(entry.text)}`);
     expect(
       missing,
-      'a declared label with no bundle key in zh-CN — it renders in English inside a '
-      + 'Chinese deployment, beside labels that did translate',
+      `a declared label with no bundle key in ${locale} — it renders in English inside a `
+      + `${locale} deployment, beside labels that did translate`,
     ).toEqual([]);
   });
 
-  it('every zh-CN key still has a source in the metadata', () => {
+  it.each(TRANSLATED_LOCALES)('every %s key still has a source in the metadata', (locale) => {
     const sources = new Set(derivedKeys);
     expect(
-      [...chineseKeys].filter((key) => !sources.has(key)).sort(),
+      [...localeKeys.get(locale)!].filter((key) => !sources.has(key)).sort(),
       'a bundle key that names nothing the metadata declares — a rename or a deletion '
       + 'left it behind and it resolves nothing',
     ).toEqual([]);
@@ -197,8 +241,8 @@ describe('the English bundle is derived from the metadata, never hand-written', 
     expect(((second.en as Rec).objects as Rec).syn_thing).toMatchObject({ label: 'Gadget' });
   });
 
-  it('keys `en` and `zh-CN` identically', () => {
-    expect([...englishKeys].sort()).toEqual([...chineseKeys].sort());
+  it.each(TRANSLATED_LOCALES)('keys `en` and `%s` identically', (locale) => {
+    expect([...englishKeys].sort()).toEqual([...localeKeys.get(locale)!].sort());
   });
 });
 
