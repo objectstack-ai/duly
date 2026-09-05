@@ -106,11 +106,20 @@ interface DeclaredObject {
   readonly fields: Rec;
 }
 
+interface MeasureLike {
+  readonly name: string;
+  /** Absent on a derived measure — it combines other measures instead. */
+  readonly aggregate?: string;
+  /** Absent on `count`, and on a derived measure. */
+  readonly field?: string;
+  readonly derived?: unknown;
+}
+
 interface DatasetLike {
   readonly name: string;
   readonly object: string;
   readonly dimensions?: ReadonlyArray<{ name: string }>;
-  readonly measures?: ReadonlyArray<{ name: string }>;
+  readonly measures?: ReadonlyArray<MeasureLike>;
 }
 
 interface Finding {
@@ -601,9 +610,11 @@ describe('the four numbers the sales deck p20 promises are all on the screen', (
    * binds rather than by widget id, which is the part that cannot be satisfied
    * by renaming a tile.
    *
-   * Stagnation is deliberately three tiles, not one; the dashboard file header
+   * Stagnation is deliberately two tiles, not one; the dashboard file header
    * carries why (nested thresholds must not be summable by eye), and the >30d
-   * tile's "subset" wording is pinned above.
+   * tile's "subset" wording is pinned above. It was three until #122 retired
+   * the oldest-touch tile — an instant, where every other tile on the row is a
+   * number; the last describe in this file is what stops it coming back.
    */
   const boundMeasures = new Set(allWidgets.flatMap((entry) => entry.widget.values ?? []));
 
@@ -916,5 +927,248 @@ describe('widget bindings — the guard can fail (self-test on synthetic metadat
     const r = run({ filter: { 'duty.frequency': 'monthly' } });
     expect(r.findings).toEqual([]);
     expect(r.boundaries).toEqual([expect.stringContaining('duty.frequency')]);
+  });
+});
+
+/**
+ * ── A metric tile prints a NUMBER, never an instant (#122) ───────────────
+ *
+ * `duly_stagnation.oldest_last_update_at` is `min(last_update_at)`, and the
+ * "Oldest untouched task" tile bound it. A metric widget renders the measure's
+ * value as it arrives, and what arrives for an instant is the instant:
+ * `POST /api/v1/analytics/dataset/query` answered
+ * `"2026-07-04T07:00:00.000Z"` on a real boot of this app — under a `fields[]`
+ * entry typed `number`, which is the mismatch underneath the symptom.
+ *
+ * What the reader saw depended on the console version, and that is the reason
+ * this is pinned in the repo rather than left to the renderer: on Console
+ * 17.2.0 the tile printed the ISO string verbatim and overflowed; on 17.3.0 the
+ * same value renders through a locale date formatter (`2026年7月4日 07:00` /
+ * `Jul 4, 2026, 07:00 AM`) and fits. Better, and still a DATE — carrying a
+ * time-of-day that is the dispatch clock — sitting in a row of counts and
+ * rates, where the number a manager wants is "how many days".
+ *
+ * That number is not expressible here: `AggregationFunction` has no
+ * date-difference member, and a derived measure's `of` takes other MEASURE
+ * NAMES only — no literal, no `now` — so `today − min(last_update_at)` has
+ * nothing to put on the left of the minus. Measured, on a temporary measure
+ * added to the real dataset and queried on a real boot: `{ op: 'difference',
+ * of: [<max instant>, <min instant>] }` answers `null`, because the executor's
+ * `computeDerived` coerces operands with `Number()` and an ISO string is
+ * `NaN`. A stored `days_stalled` is AGENTS.md rule 5's banned shape.
+ *
+ * So the rule is about the BINDING, not about the measure: the measure stays a
+ * legitimate semantic-layer value (a table column, a report, an API read) and
+ * this walk bans putting one on a tile whose whole content is one value. It
+ * iterates the dashboards barrel, so a second dashboard is covered the moment
+ * it enters — and it resolves the measure's field against the objects barrel
+ * rather than matching on a name, because the next one will not be called
+ * `oldest_last_update_at`.
+ */
+
+/** Field types whose value is an instant, not a magnitude. */
+const INSTANT_FIELD_TYPES: ReadonlySet<string> = new Set(['date', 'datetime', 'time']);
+
+/**
+ * Aggregations that hand back a value of the FIELD's own type. `count` /
+ * `count_distinct` always return a number, whatever they count.
+ */
+const VALUE_PRESERVING_AGGREGATES: ReadonlySet<string> = new Set(['min', 'max', 'sum', 'avg']);
+
+/** Widget types that render exactly one value, with no axis to date it. */
+const SINGLE_VALUE_WIDGETS: ReadonlySet<string> = new Set(['metric', 'kpi']);
+
+export const instantTileFindings = (stack: {
+  readonly dashboards: readonly Dash[];
+  readonly datasets: readonly DatasetLike[];
+  readonly objects: readonly DeclaredObject[];
+}): WalkResult => {
+  const result: WalkResult = { findings: [], resolved: [], boundaries: [] };
+  const datasets = new Map(stack.datasets.map((d) => [d.name, d]));
+  const objects = new Map(stack.objects.map((o) => [o.name, o]));
+
+  for (const dashboard of stack.dashboards) {
+    for (const widget of dashboard.widgets ?? []) {
+      if (!SINGLE_VALUE_WIDGETS.has(String(widget.type))) continue;
+      const where = `dashboard ${dashboard.name ?? '(unnamed)'} · widget '${widget.id ?? '(no id)'}'`;
+      const dataset = datasets.get(String(widget.dataset ?? ''));
+      // An unresolvable dataset is the other walk's finding, not this one's.
+      if (!dataset) continue;
+
+      for (const name of widget.values ?? []) {
+        const measure = (dataset.measures ?? []).find((m) => m.name === name);
+        if (!measure) continue;
+        // Derived measures are arithmetic over other measures — always a
+        // number, or `null` when an operand will not coerce.
+        if (measure.derived) {
+          result.resolved.push(`${where} · ${name} → derived, a number`);
+          continue;
+        }
+        const aggregate = String(measure.aggregate ?? '');
+        if (!VALUE_PRESERVING_AGGREGATES.has(aggregate)) {
+          result.resolved.push(`${where} · ${name} → ${aggregate || '(none)'}, a number`);
+          continue;
+        }
+        const path = String(measure.field ?? '');
+        if (path.includes('.')) {
+          // A joined path. No measure authors one today; this walk resolves
+          // base fields only, so record it rather than pass it — the day one
+          // appears, the tripwire below says so instead of reading as clean.
+          result.boundaries.push(`${where} · ${name} aggregates "${path}" through a join`);
+          continue;
+        }
+        const base = objects.get(dataset.object);
+        const field = base && Object.hasOwn(base.fields, path)
+          ? (base.fields[path] as { type?: unknown })
+          : undefined;
+        if (!field) {
+          result.boundaries.push(
+            `${where} · ${name} aggregates "${path}", which is not a declared field of ${dataset.object}`,
+          );
+          continue;
+        }
+        const type = String(field.type ?? '');
+        if (!INSTANT_FIELD_TYPES.has(type)) {
+          result.resolved.push(`${where} · ${name} → ${aggregate}(${type}), a number`);
+          continue;
+        }
+        result.findings.push({
+          where,
+          reference: `${dataset.name}.${name}`,
+          reason:
+            `a ${widget.type} tile renders one value and this one is an INSTANT: `
+            + `${aggregate}(${dataset.object}.${path}), a ${type}. The tile prints what the `
+            + `analytics door returns — an ISO string, typed \`number\` in the response's own `
+            + `fields[] — so the reader gets a date where the row beside it shows counts and `
+            + `rates, and how it reads is the console's choice, not this repo's (17.2.0 printed `
+            + `the raw ISO and overflowed; 17.3.0 formats it). "Days since" is not expressible: `
+            + `no date-difference aggregate, and a derived measure's \`of\` takes measure names `
+            + `only. Put the instant in a LIST ordered by it — task.view.ts's \`stalled\` — or `
+            + `bind a count. #122`,
+        });
+      }
+    }
+  }
+  return result;
+};
+
+describe('a metric tile prints a number, never an instant', () => {
+  const stack = {
+    dashboards,
+    datasets: dulyDatasets as unknown as readonly DatasetLike[],
+    objects: dulyObjects as unknown as readonly DeclaredObject[],
+  };
+
+  it('no tile on any dashboard binds an aggregate over a date/datetime field', () => {
+    const result = instantTileFindings(stack);
+    expect(
+      result.findings.map((f) => `${f.where} · ${f.reference}: ${f.reason}`),
+      'a metric tile is bound to an instant',
+    ).toEqual([]);
+  });
+
+  it('the walk actually reached the tiles — an empty walk proves nothing', () => {
+    const result = instantTileFindings(stack);
+    // Six metric tiles minus the one #122 removed; the count is not asserted,
+    // the REACH is: every tile resolved at least one measure to a verdict.
+    expect(result.resolved.length, 'the walk judged no measure at all').toBeGreaterThan(0);
+    expect(result.boundaries, 'a measure this walk cannot judge').toEqual([]);
+  });
+
+  it('the retired tile is gone, and its measure is still declared', () => {
+    // Both halves matter. Deleting the measure too would be a contract change
+    // nobody asked for (the dataset already ships measures no widget binds);
+    // keeping the tile is the defect.
+    const ids = allWidgets.map((entry) => entry.widget.id);
+    expect(ids, 'the oldest-touch tile is back').not.toContain('oldest_touch');
+    const stagnation = (dulyDatasets as unknown as readonly DatasetLike[])
+      .find((d) => d.name === 'duly_stagnation');
+    expect(
+      (stagnation?.measures ?? []).map((m) => m.name),
+      'the semantic-layer measure was dropped with the tile',
+    ).toContain('oldest_last_update_at');
+  });
+});
+
+describe('the instant-tile guard can fail (self-test on synthetic metadata)', () => {
+  /**
+   * The guard that has never been observed failing is indistinguishable from
+   * the guard that cannot fail — and this one is written to stay green on the
+   * real barrel forever, so its only evidence is here.
+   */
+  const objects: DeclaredObject[] = [
+    {
+      name: 'fx_task',
+      fields: {
+        touched_at: { type: 'datetime' },
+        due_date: { type: 'date' },
+        amount: { type: 'number' },
+      },
+    },
+  ];
+  const datasets: DatasetLike[] = [
+    {
+      name: 'fx_metrics',
+      object: 'fx_task',
+      dimensions: [{ name: 'week' }],
+      measures: [
+        { name: 'n', aggregate: 'count' },
+        { name: 'total', aggregate: 'sum', field: 'amount' },
+        { name: 'oldest', aggregate: 'min', field: 'touched_at' },
+        { name: 'earliest_due', aggregate: 'min', field: 'due_date' },
+        { name: 'joined', aggregate: 'min', field: 'duty.reviewed_at' },
+        { name: 'ghost', aggregate: 'min', field: 'not_a_field' },
+        { name: 'rate', derived: { op: 'ratio', of: ['n', 'total'] } },
+      ],
+    },
+  ];
+  const run = (widget: Widget): WalkResult =>
+    instantTileFindings({ dashboards: [{ name: 'fx_dash', widgets: [widget] }], datasets, objects });
+
+  const tile = (values: string[], type = 'metric'): Widget => ({
+    id: 'w', type, dataset: 'fx_metrics', values,
+  });
+
+  it('is clean on a count tile — otherwise every case below is meaningless', () => {
+    const r = run(tile(['n']));
+    expect(r.findings).toEqual([]);
+    expect(r.boundaries).toEqual([]);
+    expect(r.resolved.length).toBeGreaterThan(0);
+  });
+
+  it('is clean on a sum over a number', () => {
+    expect(run(tile(['total'])).findings).toEqual([]);
+  });
+
+  it('is clean on a derived ratio', () => {
+    expect(run(tile(['rate'])).findings).toEqual([]);
+  });
+
+  it('FIRES on min() over a datetime — the #122 shape', () => {
+    const r = run(tile(['oldest']));
+    expect(r.findings.map((f) => f.reference)).toEqual(['fx_metrics.oldest']);
+    expect(r.findings[0]!.reason).toContain('INSTANT');
+  });
+
+  it('FIRES on min() over a date as well — the type set is not one spelling', () => {
+    expect(run(tile(['earliest_due'])).findings.map((f) => f.reference)).toEqual(['fx_metrics.earliest_due']);
+  });
+
+  it('fires on a kpi tile too, not just a metric one', () => {
+    expect(run(tile(['oldest'], 'kpi')).findings).toHaveLength(1);
+  });
+
+  it('does NOT fire on a chart — an instant on an axis is legitimate', () => {
+    expect(run(tile(['oldest'], 'bar')).findings).toEqual([]);
+  });
+
+  it('records a boundary — not a pass — for a joined measure path', () => {
+    const r = run(tile(['joined']));
+    expect(r.findings).toEqual([]);
+    expect(r.boundaries).toEqual([expect.stringContaining('duty.reviewed_at')]);
+  });
+
+  it('records a boundary for a measure field the object does not declare', () => {
+    expect(run(tile(['ghost'])).boundaries).toEqual([expect.stringContaining('not_a_field')]);
   });
 });

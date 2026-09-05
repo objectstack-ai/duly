@@ -98,10 +98,32 @@ export const Stagnation = defineDataset({
       }),
     },
     {
-      // The single oldest untouched moment in the group. A KPI tile bound to
-      // this answers "what is the worst thing here" without ranking anybody
-      // against anybody — it is a timestamp, not a score, and it names a date
-      // rather than a person.
+      // The single oldest untouched moment in the group — a timestamp, not a
+      // score: it names a date rather than a person, which is what makes "what
+      // is the worst thing here" answerable on a screen that ranks nobody.
+      //
+      // ⛔ Never bind it to a METRIC TILE (#122). A metric widget prints what
+      // the measure returns, and the analytics door returns the instant
+      // itself: `POST /api/v1/analytics/dataset/query` answered
+      // `"2026-07-04T07:00:00.000Z"` here on a real boot, under a `fields[]`
+      // entry typed `number`. Console 17.3.0 runs that through a locale date
+      // formatter, so the tile reads `2026年7月4日 07:00` rather than the raw
+      // ISO string it printed on 17.2.0 — better, and still a DATE carrying a
+      // meaningless time-of-day where every neighbouring tile shows a number.
+      //
+      // The number a manager wants — days since — cannot be derived here:
+      // `AggregationFunction` has no date-difference member, and a derived
+      // measure's `of` takes OTHER MEASURE NAMES only (no literal, no `now`),
+      // so there is nothing to put on the left of `today − min(...)`. Measured:
+      // even `{ op: 'difference', of: [<max ts>, <min ts>] }` returns `null`,
+      // because `computeDerived` coerces operands with `Number()` and an ISO
+      // string is `NaN`. A stored `days_stalled` is the banned shape (AGENTS.md
+      // rule 5 — it needs a writer every midnight and lies the day it does not
+      // run).
+      //
+      // So this stays a semantic-layer value — a table column, a report, an
+      // API read — and no dashboard binds it. `test/dashboard.test.ts` enforces
+      // the tile ban across the whole dashboards barrel.
       name: 'oldest_last_update_at',
       label: 'Oldest touch',
       aggregate: 'min',

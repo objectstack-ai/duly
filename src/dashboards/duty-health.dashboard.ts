@@ -51,9 +51,13 @@ import { Dashboard } from '@objectstack/spec/ui';
  *   a pie. Here they are two separate KPI tiles, which is the one arrangement
  *   that cannot be misread as a partition — and the by-unit chart carries a
  *   SINGLE series for the same reason.
- * - **`oldest_last_update_at` is a timestamp, not a score.** It answers "what
- *   is the worst thing here" with a DATE and names no person. It is a metric
- *   tile, never a bar length.
+ * - **`oldest_last_update_at` is a timestamp, and no widget here binds it any
+ *   more (#122).** A metric tile prints what the measure returns, and what it
+ *   returns is an instant: `POST /api/v1/analytics/dataset/query` answers
+ *   `"2026-07-04T07:00:00.000Z"` for it — measured on a real boot of this
+ *   app, and typed `number` in the response's own `fields[]`, which is the
+ *   mismatch underneath. The removal note where the tile used to be carries
+ *   what was measured and why a days-since number cannot replace it.
  * - **`due_week` / `due_month` are one column at two granularities** — group
  *   by one, never both.
  * - **`tasks_due` means the same thing in both datasets that declare it**, so
@@ -67,14 +71,14 @@ import { Dashboard } from '@objectstack/spec/ui';
  * The sales deck's p20 is the leadership first screen: four KPI cards and two
  * charts. Read against this file the four are 停滞项 (stagnation), 逾期项
  * (overdue), 按期完成率 (on-time rate) and 清单完备度 (list completeness) —
- * and the first of them is the THREE tiles at the top of this file, not one.
+ * and the first of them is the TWO tiles at the top of this file, not one.
  * That is deliberate and predates the deck: the >14d and >30d thresholds nest,
  * so two tiles is the one arrangement that cannot be misread as a partition
- * (above), and `oldest_last_update_at` is the date that answers "the worst
- * one" without ranking anybody. Collapsing them to fit a slide count would
- * delete a measured decision to satisfy an arithmetic that was never about
- * widget count. `test/dashboard.test.ts` pins the >30d tile's "subset" wording
- * for the same reason.
+ * (above). It was three until #122 retired the oldest-touch tile; the
+ * arithmetic never was about widget count, and collapsing the two that remain
+ * to fit a slide count would delete a measured decision.
+ * `test/dashboard.test.ts` pins the >30d tile's "subset" wording for the same
+ * reason.
  *
  * Neither of the two charts already here was retired to make room. "Not
  * moving, by unit" and "Coming up" answer questions the deck's two do not —
@@ -267,34 +271,73 @@ export const DutyHealthDashboard = Dashboard.create({
      * cannot be added up by eye the way two stacked bars invite.
      *
      * `orange` rather than `danger`: deeper attention, not a failure verdict.
+     *
+     * It holds the rest of the top row since #122 retired the tile that used
+     * to sit at `x: 9` (the removal note is below). **`h` came down from 4 to
+     * 3 in the same edit, and that is forced rather than taste**: this screen's
+     * rule is that no other NUMBER may compete with the headline, and
+     * `test/dashboard.test.ts` spells it as a strict area comparison
+     * (`w * h`). At the full width the card asked for, `h: 4` would make this
+     * tile 6 × 4 — EQUAL to the headline, which fails that pin. Shorter is
+     * also the truer reading: this is the subset tile, not a second headline.
      */
     {
       id: 'not_moving_30d',
       title: 'Not moving over 30 days',
-      description: 'A subset of the tile beside it, not an addition to it.',
+      description:
+        'A subset of the tile beside it, not an addition to it. The single worst case is the '
+        + 'first row of the Not moving list, which is ordered by last touch.',
       type: 'metric',
       dataset: 'duly_stagnation',
       values: ['untouched_over_30d'],
       colorVariant: 'orange',
-      layout: { x: 6, y: 0, w: 3, h: 4 },
+      layout: { x: 6, y: 0, w: 6, h: 3 },
     },
 
     /**
-     * 3. The worst single case, as a DATE. `oldest_last_update_at` is a `min`
-     * over a timestamp — it names a day, never a magnitude and never a
-     * person, which is what makes "what is the worst thing here" answerable
-     * on a screen that ranks nobody.
+     * 3. REMOVED (#122) — the "Oldest untouched task" tile, which bound
+     * `duly_stagnation.oldest_last_update_at` at `{ x: 9, y: 0, w: 3, h: 4 }`.
+     *
+     * It asked the right question — "what is the worst single case" — and
+     * answered it with an INSTANT, which is the one thing a metric tile cannot
+     * turn into a number a manager reads at a glance. What the card wanted
+     * instead was "days since the oldest touch", and that is **not expressible
+     * in the dataset layer**. Measured on this app rather than assumed, on
+     * `@objectstack/spec` / `@objectstack/cli` 17.3.0:
+     *
+     *  - `AggregationFunction` is `count | sum | avg | min | max |
+     *    count_distinct` — no date-difference aggregate, so no measure can
+     *    subtract an instant from now.
+     *  - A derived measure is `{ op, of }` where `op` is `ratio | sum |
+     *    difference | product` and `of` is `z.array(SnakeCaseIdentifierSchema)`
+     *    — OTHER MEASURE NAMES only. There is no literal operand and no `now`
+     *    measure to name, so `today − min(last_update_at)` has nothing to
+     *    write on the left of the minus sign.
+     *  - Even measure-to-measure arithmetic over instants is dead. A temporary
+     *    `{ op: 'difference', of: ['newest_last_update_at',
+     *    'oldest_last_update_at'] }` was added, booted and queried through
+     *    `POST /api/v1/analytics/dataset/query`, and answered `null`: the
+     *    executor's `computeDerived` coerces every operand with `Number()`,
+     *    and `Number('2026-07-04T07:00:00.000Z')` is `NaN`. The same response
+     *    carried `oldest_last_update_at: "2026-07-04T07:00:00.000Z"` under a
+     *    `fields[]` entry typed `number`.
+     *
+     * The remaining way to get a days number would be a stored column
+     * recomputed every midnight — `AGENTS.md` rule 5's banned shape, and the
+     * card refuses it by name. So the card's own fallback is what ships: the
+     * tile goes, `not_moving_30d` takes the row, and the worst single case
+     * stays reachable in `src/views/task.view.ts`'s `stalled` view, which
+     * already sorts `last_update_at` ascending and shows that column — the
+     * first row IS the answer, with the task and the owner beside it, which a
+     * bare date on a tile never had.
+     *
+     * ⚠ The MEASURE stays in `src/datasets/stagnation.dataset.ts`. It is a
+     * legitimate semantic-layer value (a table column, a report, an API read)
+     * and the dataset already ships measures no widget binds; what is banned
+     * is binding an instant to a METRIC tile, and `test/dashboard.test.ts`
+     * pins that as a property of the barrel so the tile cannot come back by
+     * hand.
      */
-    {
-      id: 'oldest_touch',
-      title: 'Oldest untouched task',
-      description: 'The last time anything moved on the stalest open task — a date, not a score.',
-      type: 'metric',
-      dataset: 'duly_stagnation',
-      values: ['oldest_last_update_at'],
-      colorVariant: 'default',
-      layout: { x: 9, y: 0, w: 3, h: 4 },
-    },
 
     /**
      * 3b. The on-time rate — the number the product is asked for by name.
