@@ -46,9 +46,37 @@ type AnyRec = Record<string, unknown>;
 interface NodeLike { id: string; type: string; config?: AnyRec }
 interface FlowLike { name: string; nodes: NodeLike[] }
 
+/**
+ * Every node in a flow, INCLUDING the ones inside ADR-0031 container regions
+ * (`loop.config.body`, `try_catch.config.try` / `.catch`).
+ *
+ * The recursion is not decoration. `duly_assignment_fanout`'s failure handler
+ * is a `notify` node inside a `try_catch` catch region (#123), and a walk that
+ * only read `flow.nodes` skipped it — so the "names a template that EXISTS"
+ * assertion below silently stopped covering the one notify node whose template
+ * was newest. A miss there dead-letters the delivery permanently while the run
+ * still reports success, which is precisely the failure this file exists for.
+ * `FLOW_REGION_CONFIG_KEYS` is the platform's own list of these slots; it is
+ * spelled out here rather than imported to keep this file's walk readable
+ * beside `test/flow-predicates.test.ts`, which uses the spec helper.
+ */
+const REGION_SLOTS = ['body', 'try', 'catch'] as const;
+
+const allNodesOf = (nodes: NodeLike[] | undefined): NodeLike[] => {
+  const out: NodeLike[] = [];
+  for (const node of nodes ?? []) {
+    out.push(node);
+    for (const slot of REGION_SLOTS) {
+      const region = node.config?.[slot] as { nodes?: NodeLike[] } | undefined;
+      if (region?.nodes) out.push(...allNodesOf(region.nodes));
+    }
+  }
+  return out;
+};
+
 const notifyNodes = (): { flow: string; node: NodeLike }[] =>
   (dulyFlows as unknown as FlowLike[]).flatMap((f) =>
-    f.nodes.filter((n) => n.type === 'notify').map((node) => ({ flow: f.name, node })),
+    allNodesOf(f.nodes).filter((n) => n.type === 'notify').map((node) => ({ flow: f.name, node })),
   );
 
 /** Every `(name, locale)` row in the barrel, keyed by name. */
@@ -123,7 +151,9 @@ describe('the email-template barrel', () => {
     const key = (r: AnyRec) => `${String(r.name)}@${String(r.locale)}`;
     const onStack = ((stack as AnyRec).emailTemplates ?? []) as AnyRec[];
     expect(onStack.map(key)).toEqual((dulyEmailTemplates as unknown as AnyRec[]).map(key));
-    expect(onStack.length).toBe(6);
+    // 6 before #123: three reminder bundles x two locales. The fan-out failure
+    // handler adds a fourth bundle, also x two locales.
+    expect(onStack.length).toBe(8);
   });
 
   it('is a named ARRAY of rows that each carry a name', () => {
@@ -152,7 +182,9 @@ describe('the email-template barrel', () => {
       ).toBe(true);
       seen.push(name);
     }
-    expect(seen.length).toBe(3);
+    // Three reminder sweeps plus the fan-out failure handler (#123), which
+    // only counts here because `notifyNodes()` recurses into container regions.
+    expect(seen.length).toBe(4);
   });
 
   it('every referenced bundle has an `en` row — the source language (AGENTS.md §8)', () => {
