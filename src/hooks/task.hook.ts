@@ -100,7 +100,12 @@ import type { Hook, HookContext } from '@objectstack/spec/data';
  *  - Only the stamping direction is guarded. A batch moving rows OUT of done
  *    writes `completed_at = null`, and null is the correct value for every row
  *    being moved out of done, including one that was never completed. That
- *    rewrite is genuinely row-invariant, so it is allowed.
+ *    rewrite is genuinely row-invariant, so it is allowed — and it is written
+ *    for EVERY matched row, not only the rows whose pre-image was done. That
+ *    detail is load-bearing rather than tidy: keying it on the pre-image makes
+ *    the hook emit a different key set per row, which 17.3.0 refuses outright
+ *    with `MultiUpdateHookKeyDivergenceError`. The branch is therefore gated on
+ *    the PAYLOAD's status, the one value every matched row shares.
  *  - A batch in which EVERY row is already done is refused too, even though
  *    nothing would leak. The hook cannot see the batch — `dispatch.index` is a
  *    position, not a total — and a rule stated on the row is one a caller can
@@ -360,7 +365,7 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
     }
     input.completed_at = now;
     input.completed_late = late;
-  } else if (wasDone && !isDone) {
+  } else if ('status' in input && !isDone) {
     // Reopened, skipped or cancelled — the completion is undone, so the
     // timestamp goes with it, or the record keeps a completion that no longer
     // happened. The verdict goes with it for the same reason: a completion
@@ -368,6 +373,34 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
     // row-invariant — `null` is correct for every row being moved out of done,
     // including one that was never completed — so this direction stays
     // allowed on the shared-payload path.
+    //
+    // ── Why the test is on the PAYLOAD's status, not on `wasDone` ─────────
+    // The obvious spelling of this branch is `wasDone && !isDone`, and it is
+    // the one that breaks. `wasDone` reads THIS row's pre-image, so on a
+    // predicate write reopening a mixed batch the nulls are written for the
+    // rows that were done and not for the rows that were not — the hook
+    // produces a DIFFERENT KEY SET per row, which is precisely what a shared
+    // payload cannot express. The platform refuses the whole update:
+    //
+    //   MultiUpdateHookKeyDivergenceError: Refusing a multi-record update on
+    //   'duly_task': its 'beforeUpdate' handlers wrote 'completed_at',
+    //   'completed_late' for some of the 2 matched records and not for others
+    //
+    // Measured on `@objectstack/objectql` 17.3.0, which added that guard;
+    // on 17.2.0 the same divergence went through unremarked. Writing the
+    // nulls for EVERY matched row fixes it at the cause rather than working
+    // around the guard: the row that was never done already holds null, so
+    // the write is a no-op on it, and the key set stops depending on the row.
+    //
+    // `'status' in input` is what makes that true. `isDone` falls back to the
+    // stored status when the payload carries none, so testing `!isDone` alone
+    // would re-open the same divergence one shape over — an administrative
+    // bulk write with no `status` (a re-owner, a business-unit backfill) would
+    // write the nulls on the not-done rows and skip the done ones. Gated on
+    // the payload, `isDone` is read off the ONE shared payload and is therefore
+    // identical for every matched row, which is the property the guard wants.
+    // A write that does not carry `status` is not a completion transition and
+    // still touches neither column, exactly as before.
     input.completed_at = null;
     input.completed_late = null;
   }
