@@ -155,7 +155,9 @@ jobs:
             echo "#### \`pnpm $1\` — last $2 lines"
             echo
             echo '~~~~text'
-            sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$LOGS/$1.log" | tail -n "$2" | cut -c1-600
+            # Drop ANSI colour and the runner's own ::error annotations (vitest
+            # writes one per failed file), which are noise outside the log.
+            sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$LOGS/$1.log" | grep -v '^::' | tail -n "$2" | cut -c1-600
             echo '~~~~'
           }
           {
@@ -179,7 +181,7 @@ jobs:
             fi
           } > "$LOGS/body.full.md"
           head -c 60000 "$LOGS/body.full.md" > "$LOGS/body.md"
-          cat "$LOGS/body.md" >> "$GITHUB_STEP_SUMMARY"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$LOGS/body.md"
 
       - name: Open or refresh the draft upgrade PR
         if: steps.gates.outputs.green == 'true'
