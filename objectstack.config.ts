@@ -158,8 +158,9 @@ export default defineStack({
   permissions: dulyPermissionSets,
   sharingRules: dulySharingRules,
 
-  // Duly is sold worldwide; English is the source language and every authored
-  // label is expected to have a bundle entry. See src/translations/.
+  // A template is installed wherever its users are, so English is the source
+  // language and every authored label is expected to have a bundle entry. See
+  // src/translations/.
   i18n: {
     defaultLocale: 'en',
     supportedLocales: ['en', 'zh-CN'],
