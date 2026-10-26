@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
 import { PlatformObjectsPlugin } from '@objectstack/platform-objects/plugin';
 import { SharingServicePlugin } from '@objectstack/plugin-sharing';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import { PEOPLE } from '../src/data/demo-org.js';
 import { businessUnitMemberSeed, userSeed } from '../src/data/org.seed.js';
@@ -13,20 +14,15 @@ import { businessUnitMemberSeed, userSeed } from '../src/data/org.seed.js';
  * that proves it.
  *
  * ── Why this file exists apart from `test/seed.test.ts` ───────────────────
- * Every other suite boots the bare `createStandaloneStack` kernel, which
- * mounts exactly three plugins — datasource, metadata, objectql. Neither
- * `@objectstack/platform-objects` (which declares `sys_user` and
- * `sys_business_unit_member`) nor `@objectstack/plugin-sharing` (which owns
- * the projection) is in it, so in those suites the platform tables are
- * schemaless memory collections and nothing computes anything: the seed's
- * natural keys are written through verbatim and read back unchanged.
- *
- * That is fine for what those suites assert, and useless for this one. A real
- * `objectstack dev` boot mounts BOTH — `serve` auto-registers
- * `PlatformObjectsPlugin`, and `sharing` is in
- * `PLATFORM_ALWAYS_ON_CAPABILITIES` so `SharingServicePlugin` is mounted
- * whether or not the app names it in `requires`. This suite mounts the same
- * two, because the value under test is one only they produce.
+ * `seed.test.ts` loads the same org seed into the same plugins — plugin-auth's
+ * identity objects for `sys_user`, `SharingServicePlugin` for the
+ * business-unit tables (from @objectstack 18 the engine refuses a table nobody
+ * declared, so through 17.x it got by with schemaless memory collections). But
+ * it reads the seed back as written. This suite asserts the value the sharing
+ * plugin COMPUTES from it, and boots what a real `objectstack dev` boot does
+ * around that: `serve` auto-registers `PlatformObjectsPlugin`, and `sharing` is
+ * in `PLATFORM_ALWAYS_ON_CAPABILITIES` so `SharingServicePlugin` is mounted
+ * whether or not the app names it in `requires`.
  *
  * ── The assertion that decides whether the fix is real ────────────────────
  * The defect (#74) was that the seed wrote `sys_user.primary_business_unit_id`
@@ -78,7 +74,8 @@ beforeAll(async () => {
   const stack = (await import('../objectstack.config.js')).default as unknown as Record<string, unknown>;
 
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Point the artifact lookup at a path that cannot exist, or a local
     // `pnpm build` leaves `dist/objectstack.json` where the kernel loads
@@ -87,6 +84,12 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
   // The two the bare standalone stack leaves out, in the order `serve` mounts
   // them: the object declarations first, then the plugin whose hooks act on
   // them.

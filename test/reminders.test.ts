@@ -260,7 +260,8 @@ describe('reminder sweeps — volume discipline', () => {
       const notifies = nodesOf(f, 'notify');
       expect(notifies.length, `flow '${f.name}' should send exactly one notification`).toBe(1);
       const cfg = notifies[0]!.config ?? {};
-      expect(cfg.recipients, `flow '${f.name}'`).toBe('{record.owner}');
+      // A CEL value envelope: spec 18 retired the `{…}` template dialect.
+      expect(cfg.recipients, `flow '${f.name}'`).toEqual({ dialect: 'cel', source: 'record.owner' });
       expect(JSON.stringify(cfg), `flow '${f.name}' mentions a manager`).not.toMatch(/manager/i);
     }
   });
@@ -271,7 +272,7 @@ describe('reminder sweeps — volume discipline', () => {
     for (const f of flows) {
       const cfg = nodesOf(f, 'notify')[0]!.config ?? {};
       expect(cfg.sourceObject, `flow '${f.name}'`).toBe(Task.name);
-      expect(cfg.sourceId, `flow '${f.name}'`).toBe('{record.id}');
+      expect(cfg.sourceId, `flow '${f.name}'`).toEqual({ dialect: 'cel', source: 'record.id' });
     }
   });
 

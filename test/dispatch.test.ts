@@ -2,6 +2,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 import { Duty, Task } from '../src/objects/index.js';
@@ -29,6 +30,7 @@ import {
   type DispatchDuty,
 } from '../src/jobs/dispatch.plan.js';
 import { dueDateFor, periodKeyFor, periodsBetween, visibleFromFor } from '../src/functions/period.js';
+import { ensureUsers } from './support/users.js';
 
 /**
  * The dispatch spine.
@@ -80,11 +82,16 @@ describe('wiring', () => {
     // `collectBundleFunctions` reads `defineStack({ functions })` and takes
     // `.handler` off each entry. A name that misses is logged and skipped —
     // the job stays registered and never runs, with no author-time gate.
+    // `handler` is optional on `JobSchema` since `body` exists (a job declares
+    // one of `body`, `handler` or `pull`), so the name is asserted before it
+    // is used as a key.
+    const handlerName = DispatchJob.handler;
+    expect(handlerName).toBe(DISPATCH_HANDLER_NAME);
+    if (handlerName === undefined) return;
     const functions = (stack as { functions?: Record<string, unknown> }).functions ?? {};
-    const entry = functions[DispatchJob.handler] as { handler?: unknown } | undefined;
-    expect(entry, `no function named '${DispatchJob.handler}' — the job would never execute`).toBeDefined();
+    const entry = functions[handlerName] as { handler?: unknown } | undefined;
+    expect(entry, `no function named '${handlerName}' — the job would never execute`).toBeDefined();
     expect(typeof entry?.handler).toBe('function');
-    expect(DispatchJob.handler).toBe(DISPATCH_HANDLER_NAME);
   });
 
   it('declares the handler as a writer, because it writes', () => {
@@ -615,10 +622,17 @@ beforeAll(async () => {
   });
   const k = new ObjectKernel();
   for (const plugin of plugins) await k.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await k.use(createIdentityObjectsPlugin());
   await k.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await k.bootstrap();
   kernel = k as unknown as typeof kernel;
   data = k.getService('data') as typeof data;
+  await ensureUsers(data, [OWNER, 'user_dup']);
 }, 180_000);
 
 afterAll(async () => {
@@ -646,11 +660,13 @@ afterEach(async () => {
 });
 
 let seq = 0;
+/** Who owns every seeded duty: incidental to what is tested, and minted at boot. */
+const OWNER = 'user_owner';
 const seedDuty = async (over: AnyRow = {}, options?: AnyRow): Promise<string> => {
   const created = await data.insert('duly_duty', {
     name: `Duty ${++seq}`,
     form: 'recurring',
-    owner: `user_${seq}`,
+    owner: OWNER,
     source: 'catalog',
     status: 'active',
     frequency: 'monthly',

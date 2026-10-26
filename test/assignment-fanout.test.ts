@@ -7,6 +7,7 @@ import { AutomationServicePlugin } from '@objectstack/service-automation';
 import { JobServicePlugin } from '@objectstack/service-job';
 import { MessagingServicePlugin } from '@objectstack/service-messaging';
 import { EmailServicePlugin } from '@objectstack/plugin-email';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 import { AssignmentFanout } from '../src/flows/assignment.flow.js';
@@ -53,6 +54,14 @@ interface EdgeLike {
   id: string; source: string; target: string; isDefault?: boolean;
   condition?: string | { dialect?: string; source?: string };
 }
+
+/**
+ * A value slot as the flow writes it: a CEL envelope. `@objectstack/spec` 18
+ * retired the `{…}` template dialect from every value slot (a plain string is
+ * now the literal text it spells), so the assertions below compare envelopes,
+ * not strings.
+ */
+const cel = (source: string) => ({ dialect: 'cel', source });
 
 const nodes = AssignmentFanout.nodes as unknown as NodeLike[];
 const edges = AssignmentFanout.edges as unknown as EdgeLike[];
@@ -197,9 +206,9 @@ describe('assignment fan-out — N assignees, N independent tasks', () => {
   it('loops over the assignment\'s assignees', () => {
     const cfg = node('fan_out').config ?? {};
     expect(node('fan_out').type).toBe('loop');
-    // A `flow-template` slot: single-brace interpolation of the whole string
-    // returns the raw array. `assignees` is multi-valued; `assigner` is not.
-    expect(cfg.collection).toBe('{record.assignees}');
+    // The expression evaluates to the raw array. `assignees` is multi-valued;
+    // `assigner` is not.
+    expect(cfg.collection).toEqual(cel('record.assignees'));
     expect(Assignment.fields.assignees.multiple).toBe(true);
     expect(cfg.iteratorVariable).toBe('fanout_assignee');
   });
@@ -209,9 +218,9 @@ describe('assignment fan-out — N assignees, N independent tasks', () => {
     expect(create, 'the loop body must create a task').toBeDefined();
     const fields = (create!.config?.fields ?? {}) as AnyRec;
     expect(create!.config?.objectName).toBe(Task.name);
-    expect(fields.owner).toBe('{fanout_assignee}');
-    expect(fields.subject).toBe('{record.subject}');
-    expect(fields.assignment).toBe('{record.id}');
+    expect(fields.owner).toEqual(cel('fanout_assignee'));
+    expect(fields.subject).toEqual(cel('record.subject'));
+    expect(fields.assignment).toEqual(cel('record.id'));
     expect(fields.source).toBe('assigned');
     expect(fields.status).toBe('open');
   });
@@ -219,14 +228,18 @@ describe('assignment fan-out — N assignees, N independent tasks', () => {
   it('denormalises the business unit from the assignee, not the assigner', () => {
     const create = loopBody().nodes.find((n) => n.type === 'create_record')!;
     const fields = (create.config?.fields ?? {}) as AnyRec;
-    expect(fields.business_unit).toBe('{fanout_assignee_user.primary_business_unit_id}');
+    // Read off the assignee's row, guarded: a lookup that missed leaves the
+    // variable at its declared null, and CEL refuses a field read through it.
+    const source = (fields.business_unit as { source?: string } | undefined)?.source ?? '';
+    expect(source).toContain('vars.fanout_assignee_user.primary_business_unit_id');
+    expect(source).not.toContain('assigner');
   });
 
   it('an assignment has no lead time: visible_from tracks due_date', () => {
     for (const create of allNodes().filter((n) => n.type === 'create_record')) {
       const fields = (create.config?.fields ?? {}) as AnyRec;
-      expect(fields.visible_from, `${create.id}`).toBe(fields.due_date);
-      expect(fields.due_date, `${create.id}`).toBe('{record.due_date}');
+      expect(fields.visible_from, `${create.id}`).toEqual(fields.due_date);
+      expect(fields.due_date, `${create.id}`).toEqual(cel('record.due_date'));
     }
   });
 
@@ -242,7 +255,10 @@ describe('assignment fan-out — N assignees, N independent tasks', () => {
   it('every created task has exactly one owner', () => {
     for (const create of allNodes().filter((n) => n.type === 'create_record')) {
       const fields = (create.config?.fields ?? {}) as AnyRec;
-      expect(typeof fields.owner, `${create.id}`).toBe('string');
+      // One CEL path to one scalar id — not a list literal, not an array.
+      const owner = fields.owner as { dialect?: string; source?: string } | undefined;
+      expect(owner?.dialect, `${create.id}`).toBe('cel');
+      expect(owner?.source, `${create.id}`).toMatch(/^[a-z_][a-z_.]*$/);
       expect(Array.isArray(fields.owner), `${create.id}`).toBe(false);
     }
   });
@@ -274,8 +290,8 @@ describe('assignment fan-out — idempotency is explicit and PER OWNER', () => {
     const guard = loopBody().nodes.find((n) => n.type === 'get_record' && n.config?.objectName === Task.name)!;
     const filter = (guard.config?.filter ?? {}) as AnyRec;
     expect(Object.keys(filter).sort()).toEqual(['assignment', 'owner']);
-    expect(filter.assignment).toBe('{record.id}');
-    expect(filter.owner).toBe('{fanout_assignee}');
+    expect(filter.assignment).toEqual(cel('record.id'));
+    expect(filter.owner).toEqual(cel('fanout_assignee'));
   });
 
   it('the create is reachable only through the guard predicate', () => {
@@ -346,14 +362,14 @@ describe('assignment fan-out — the assigner task is opt-in', () => {
     expect(guard.type).toBe('get_record');
     const filter = (guard.config?.filter ?? {}) as AnyRec;
     expect(Object.keys(filter).sort()).toEqual(['assignment', 'owner']);
-    expect(filter.owner).toBe('{record.assigner}');
+    expect(filter.owner).toEqual(cel('record.assigner'));
 
     const gate = edges.find((e) => e.source === 'find_assigner_task' && e.target === 'find_assigner_unit');
     const source = typeof gate?.condition === 'string' ? gate.condition : gate?.condition?.source;
     expect(source).toBe('isBlank(vars.existing_assigner_task)');
 
     const create = (node('create_assigner_task').config?.fields ?? {}) as AnyRec;
-    expect(create.owner).toBe('{record.assigner}');
+    expect(create.owner).toEqual(cel('record.assigner'));
     expect(create.source).toBe('assigned');
   });
 });
@@ -387,7 +403,7 @@ describe('assignment fan-out — invariants a refactor would undo', () => {
     // translation bundle. A literal subject here would be untranslatable.
     for (const create of allNodes().filter((n) => n.type === 'create_record')) {
       const fields = (create.config?.fields ?? {}) as AnyRec;
-      expect(fields.subject, `${create.id}`).toBe('{record.subject}');
+      expect(fields.subject, `${create.id}`).toEqual(cel('record.subject'));
     }
   });
 });
@@ -422,13 +438,13 @@ describe('assignment fan-out — a bad row costs one task, not the fan-out', () 
     const handler = catchBody().nodes;
     expect(handler.map((n) => n.type)).toEqual(['notify']);
     const config = (handler[0].config ?? {}) as AnyRec;
-    expect(config.recipients).toBe('{record.assigner}');
+    expect(config.recipients).toEqual(cel('record.assigner'));
     const templateData = (config.templateData ?? {}) as AnyRec;
     // `fanout_assignee` is re-bound by the loop before every iteration.
     // `fanout_assignee_user` is NOT: a region that throws at `fanout_find_unit`
     // leaves it holding the PREVIOUS assignee's row, so a handler reading a
     // name from it would calmly name the wrong colleague.
-    expect(templateData.assignee).toBe('{fanout_assignee}');
+    expect(templateData.assignee).toEqual(cel('fanout_assignee'));
     expect(JSON.stringify(templateData)).not.toContain('fanout_assignee_user');
   });
 
@@ -504,15 +520,17 @@ describe('assignment fan-out — one bad row, driven through the real engine', (
 
   beforeAll(async () => {
     const { plugins } = await createStandaloneStack({
-      // Memory, not sqlite: nothing here rests on a unique index (a fan-out
-      // task writes neither `duty` nor `period_key`, so the dispatch identity
-      // index cannot constrain these rows — see the idempotency block above).
-      // What this suite DOES need is `sys_user`, which the bare standalone
-      // stack does not declare — hence PlatformObjectsPlugin below. Measured:
-      // on `databaseDriver: 'sqlite'` the `sys_user` read inside the loop is
-      // refused by the driver, and every iteration fails for a reason that has
-      // nothing to do with this card.
-      databaseDriver: 'memory',
+      // SQLite's own in-memory database: from @objectstack 18 the in-memory
+      // (mingo) driver is no longer a boot store — `createStandaloneStack`
+      // refuses it, because it refuses every tenant-scoped read. Nothing here
+      // rests on a unique index (a fan-out task writes neither `duty` nor
+      // `period_key`, so the dispatch identity index cannot constrain these
+      // rows — see the idempotency block above). What this suite DOES need is
+      // `sys_user`, which the bare standalone stack does not declare: through
+      // 17.x PlatformObjectsPlugin declared it, from 18 plugin-auth does —
+      // hence the identity objects below.
+      databaseDriver: 'sqlite',
+      databaseUrl: ':memory:',
       skipSeedData: true,
       // Same reason as every other suite here: left to its default this
       // resolves `<cwd>/dist/objectstack.json`, and a local `pnpm build` would
@@ -521,6 +539,14 @@ describe('assignment fan-out — one bad row, driven through the real engine', (
     });
     kernel = new ObjectKernel();
     for (const plugin of plugins) await kernel.use(plugin);
+    // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+    // `sys_organization`) and, with them, the Default Organization a real
+    // `single` install creates at boot: from @objectstack 18 every
+    // tenant-scoped table carries `organization_id` NOT NULL, and a system
+    // write is stamped with that organization (ADR-0131 D3/D9).
+    await kernel.use(createIdentityObjectsPlugin());
+    // No longer what declares `sys_user` (see above); kept because `serve`
+    // mounts it on every real boot.
     await kernel.use(new PlatformObjectsPlugin());
     await kernel.use(new AppPlugin(stack as any, undefined, { skipSeedData: true }));
     await kernel.use(new JobServicePlugin());
@@ -539,7 +565,7 @@ describe('assignment fan-out — one bad row, driven through the real engine', (
     const mkUser = async (name: string): Promise<string> => {
       const created = await data.insert(
         'sys_user',
-        { name, username: name, email: `${name}@example.test` },
+        { name, email: `${name}@example.test` },
         { context: { isSystem: true } },
       );
       const row = (Array.isArray(created) ? created[0] : created) as AnyRec;
@@ -552,11 +578,7 @@ describe('assignment fan-out — one bad row, driven through the real engine', (
     const created = await data.insert('duly_assignment', {
       subject: SUBJECT,
       assigner: boss,
-      // Three people, and the middle row is bad — a blank entry, the "missing
-      // owner" shape from the card. The position is the point: `carol` comes
-      // AFTER the failure, so a task of hers is proof the loop kept going
-      // rather than proof it never had to.
-      assignees: [alice, '', carol],
+      assignees: [alice, carol],
       due_date: '2026-10-01',
       status: 'dispatched',
       needs_collection: false,
@@ -565,7 +587,19 @@ describe('assignment fan-out — one bad row, driven through the real engine', (
     assignmentId = String(assignment.id);
 
     result = await automation.execute('duly_assignment_fanout', {
-      record: assignment,
+      // Three people, and the middle row is bad — a blank entry, the "missing
+      // owner" shape from the card. The position is the point: `carol` comes
+      // AFTER the failure, so a task of hers is proof the loop kept going
+      // rather than proof it never had to.
+      //
+      // The blank rides on the trigger context rather than on the stored row
+      // because from @objectstack 18 the assignment write refuses it ("invalid
+      // user value … expected string to have >=1 characters"). A row saved
+      // under 17.x can still carry one, and that row is the case this guards;
+      // everything after the start node is the real engine. (A removed
+      // account is NOT a substitute bad row: the flow runs as system, a system
+      // write skips the reference check, and the task is created.)
+      record: { ...assignment, assignees: [alice, '', carol] },
       object: 'duly_assignment',
       event: 'afterInsert',
     });

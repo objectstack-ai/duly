@@ -3,6 +3,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, HttpDispatcher, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
 import type { HttpDispatcherResult, HttpProtocolContext } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
+import { SecurityPlugin } from '@objectstack/plugin-security';
+import { SharingServicePlugin } from '@objectstack/plugin-sharing';
 
 import stack from '../objectstack.config.js';
 import { registerDulyActionHandlers } from '../src/actions/register-handlers.js';
@@ -13,6 +16,7 @@ import {
   CATALOG_SYNC_ACTION,
 } from '../src/actions/catalog.handlers.js';
 import type { CatalogApplyResult, CatalogSyncResult } from '../src/actions/catalog.handlers.js';
+import { ensureUsers } from './support/users.js';
 
 /**
  * #79 — the catalog actions driven through the REAL action route, with the
@@ -38,8 +42,15 @@ import type { CatalogApplyResult, CatalogSyncResult } from '../src/actions/catal
  * So the rule this suite exists to enforce is: **no facade is written here.**
  * The request goes to `HttpDispatcher.handleActions`, the runtime constructs
  * `ctx.engine` itself, and the only shape assertion in the file is what comes
- * back out of the database. If the handler ever goes back to the envelope, the
- * counts below fall to zero and this suite is what says so.
+ * back out of the database.
+ *
+ * The contract then moved under the handler, and this suite is why that was a
+ * non-event: from @objectstack 17.5 the facade takes the engine's own query
+ * envelope (#19223 withdrew the bare filter), and 18.1's
+ * `assertActionEngineFindEnvelope` refuses any key the envelope does not carry.
+ * The handler went back to `{ where: { … } }` with the upgrade. If it ever
+ * regresses to a bare filter, every call below answers an error instead of 200
+ * — loud now, where the 17.2 mismatch was silent.
  *
  * ── What layer this is, precisely ─────────────────────────────────────────
  * `handleActions(path, …)` is the `/actions` domain handler itself — the exact
@@ -63,7 +74,8 @@ let dispatcher: HttpDispatcher;
 
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Must not resolve to a real path: a local `pnpm build` would make this
     // suite report on the last BUILD instead of on `src/`. See the sibling
@@ -72,9 +84,27 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
+  // The anchor read's two platform objects, from the plugins that own them on
+  // a real boot: `sys_user_position` is SecurityPlugin's (this app `requires`
+  // `hierarchy-security`), `sys_business_unit` is SharingServicePlugin's
+  // (`sharing` is always on). Through 17.x the memory driver answered a read of
+  // an undeclared table with whatever had been written to it; from 18 the
+  // engine refuses a name its registry does not hold.
+  await kernel.use(new SecurityPlugin());
+  await kernel.use(new SharingServicePlugin());
   await kernel.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await kernel.bootstrap();
   data = kernel.getService('data');
+  await ensureUsers(data, [
+    'u_anchored', 'u_denied', 'u_fa1', 'u_fa2', 'u_fi1', 'u_fn1', 'u_fn2',
+    'u_fr1', 'u_fs1', 'u_fs2', 'u_ft1', 'u_unanchored',
+  ]);
 
   // Through the REAL registration function, so a handler dropped from
   // `registerDulyActionHandlers` surfaces here as the 404 the console gets.
@@ -115,8 +145,16 @@ async function run<T>(path: string, params: AnyRow): Promise<T> {
   return response?.body?.data as T;
 }
 
+/**
+ * The suite's own reads and fixture writes, made as platform plumbing. With
+ * SecurityPlugin mounted a context-less call is refused for carrying no
+ * principal, and none of these is the call under test: that is always the
+ * action route, whose facade builds its own context.
+ */
+const SYSTEM = { isSystem: true } as const;
+
 const dutiesOf = async (owner: string): Promise<AnyRow[]> =>
-  data.find('duly_duty', { where: { owner } });
+  data.find('duly_duty', { where: { owner } }, { context: SYSTEM });
 
 let seq = 0;
 const insertItem = async (over: AnyRow): Promise<AnyRow> =>
@@ -129,7 +167,7 @@ const insertItem = async (over: AnyRow): Promise<AnyRow> =>
     lead_days: 7,
     grace_days: 0,
     ...over,
-  });
+  }, { context: SYSTEM });
 
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -174,8 +212,12 @@ describe('duly_catalog_apply through the runtime\'s own facade (#79)', () => {
     // tolerated and did not turn into a refusal.
     const position = 'facade_anchor';
     await insertItem({ position_code: position });
-    const unit = await data.insert('sys_business_unit', { name: 'Plant A' });
-    await data.insert('sys_user_position', { user_id: 'u_anchored', business_unit_id: unit.id });
+    const unit = await data.insert('sys_business_unit', { name: 'Plant A' }, { context: SYSTEM });
+    await data.insert(
+      'sys_user_position',
+      { user_id: 'u_anchored', position, business_unit_id: unit.id },
+      { context: SYSTEM },
+    );
 
     const result = await run<CatalogApplyResult>(`/${CATALOG_APPLY_ACTION}`, {
       position_code: position,
@@ -254,7 +296,7 @@ describe('duly_catalog_sync through the runtime\'s own facade (#79)', () => {
     expect(clean.unchanged).toBe(2);
     expect(clean.updated).toBe(0);
 
-    await data.update('duly_catalog_item', { grace_days: 4 }, { where: { id: item.id } });
+    await data.update('duly_catalog_item', { grace_days: 4 }, { where: { id: item.id }, context: SYSTEM });
 
     const replayed = await run<CatalogSyncResult>(`/${CATALOG_SYNC_ACTION}`, {
       position_code: position,
@@ -289,8 +331,8 @@ describe('duly_catalog_sync through the runtime\'s own facade (#79)', () => {
       users: ['u_fn2'],
     });
 
-    await data.update('duly_catalog_item', { lead_days: 1 }, { where: { id: mineItem.id } });
-    await data.update('duly_catalog_item', { lead_days: 2 }, { where: { id: theirsItem.id } });
+    await data.update('duly_catalog_item', { lead_days: 1 }, { where: { id: mineItem.id }, context: SYSTEM });
+    await data.update('duly_catalog_item', { lead_days: 2 }, { where: { id: theirsItem.id }, context: SYSTEM });
 
     const result = await run<CatalogSyncResult>(`/${CATALOG_SYNC_ACTION}`, { position_code: mine });
     expect(result.scanned).toBe(1);
@@ -314,7 +356,7 @@ describe('duly_catalog_sync through the runtime\'s own facade (#79)', () => {
       users: ['u_fr1'],
     });
 
-    await data.update('duly_catalog_item', { active: false }, { where: { id: item.id } });
+    await data.update('duly_catalog_item', { active: false }, { where: { id: item.id }, context: SYSTEM });
 
     const result = await run<CatalogSyncResult>(`/${CATALOG_SYNC_ACTION}`, {});
     const retired = result.retired.filter((r) => r.owner === 'u_fr1');

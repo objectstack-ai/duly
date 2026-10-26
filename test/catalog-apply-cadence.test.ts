@@ -2,6 +2,9 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
+import { SecurityPlugin } from '@objectstack/plugin-security';
+import { EngineQueryOptionsSchema } from '@objectstack/spec/data';
 
 import stack from '../objectstack.config.js';
 import { registerDulyActionHandlers } from '../src/actions/register-handlers.js';
@@ -11,6 +14,7 @@ import {
   GLOBAL_ACTION_OBJECT,
 } from '../src/actions/catalog.handlers.js';
 import type { CatalogApplyResult } from '../src/actions/catalog.handlers.js';
+import { ensureUsers } from './support/users.js';
 
 /**
  * #65 — what the catalog APPLY path does with a cadence value.
@@ -38,7 +42,8 @@ let data: any;
 
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Must not resolve to a real path: a local `pnpm build` would make this
     // suite report on the last BUILD instead of on `src/`. See the sibling
@@ -47,9 +52,21 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
+  // `sys_user_position`, which the apply's business-unit anchor reads, is
+  // SecurityPlugin's — mounted on every real boot of this app, which `requires`
+  // `hierarchy-security`. Through 17.x the memory driver answered a read of an
+  // undeclared table with an empty list; from 18 the engine refuses the name.
+  await kernel.use(new SecurityPlugin());
   await kernel.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await kernel.bootstrap();
   data = kernel.getService('data');
+  await ensureUsers(data, ['u_b1', 'u_b2', 'u_p1', 'u_p2', 'u_s1']);
 
   // Through the REAL registration function, so a handler dropped from
   // `registerDulyActionHandlers` surfaces here as the 404 the console gets.
@@ -71,17 +88,19 @@ interface Facade {
 
 /**
  * The facade the RUNTIME builds, reproduced line for line —
- * `buildActionEngineFacade` in @objectstack/runtime 17.2.0:
+ * `buildActionEngineFacade` in @objectstack/runtime 18.1.0:
  *
+ *     const context = { ...executionContext, isSystem: true };
  *     async find(object, query) {
- *       const where = query && Object.keys(query).length ? { where: query } : {};
- *       const rows = await ql.find(object, { ...where, context });
+ *       assertActionEngineFindEnvelope(object, query);
+ *       const rows = await ql.find(object, { ...query ?? {}, context });
  *
- * `find(object, query)` therefore takes a BARE FILTER and wraps it here. This
- * file used to carry TWO facades — this one honouring the handler's own
- * `where` envelope, and a second reproducing the runtime — with a tripwire
- * pinning the gap between them (#79). The handler now passes flat filters, so
- * there is one convention and one facade.
+ * `find(object, query)` takes the engine's own query ENVELOPE (since 17.5,
+ * #19223) and refuses a key the envelope does not carry. Through 17.4 it took
+ * a BARE FILTER and wrapped it itself, which is the shape this double used to
+ * reproduce; the handler moved back to `{ where: { … } }` with the upgrade.
+ * The refusal is reproduced against the spec's own key set rather than a list
+ * copied here, so the double cannot drift from the schema the runtime reads.
  *
  * It is still a double, which is all it can be: the second test below has to
  * put a row in front of the handler that `duly_catalog_item`'s own rules
@@ -94,22 +113,26 @@ interface Facade {
  * straight to the handler (unfiltered — the handler re-applies its own
  * `active` filter).
  */
+const FACADE_CONTEXT = { userId: 'admin_1', isSystem: true } as const;
+const ENVELOPE_KEYS = new Set(Object.keys(EngineQueryOptionsSchema.shape));
+
 function handlerFacade(catalogItems?: AnyRow[]): Facade {
   return {
     insert: async (object, values) => {
-      const row = await data.insert(object, values);
-      return { id: row?.id };
+      const row = await data.insert(object, values, { context: FACADE_CONTEXT });
+      return { id: row?.id ?? values.id };
     },
     update: async (object, id, values) => {
-      await data.update(object, values, { where: { id } });
+      await data.update(object, values, { where: { id }, context: FACADE_CONTEXT });
     },
     delete: async (object, id) => {
-      await data.delete(object, { where: { id } });
+      await data.delete(object, { where: { id }, context: FACADE_CONTEXT });
     },
     find: async (object, query) => {
       if (catalogItems && object === 'duly_catalog_item') return catalogItems.map((r) => ({ ...r }));
-      const where = query && Object.keys(query).length ? { where: query } : {};
-      return data.find(object, { ...where });
+      const stray = Object.keys(query ?? {}).filter((key) => !ENVELOPE_KEYS.has(key));
+      if (stray.length > 0) throw new Error(`find('${object}'): keys the query envelope does not carry: ${stray.join(', ')}`);
+      return data.find(object, { ...(query ?? {}), context: FACADE_CONTEXT });
     },
   };
 }
@@ -128,12 +151,19 @@ async function apply(
   })) as CatalogApplyResult;
 }
 
+/**
+ * The suite's own reads and fixture writes, as platform plumbing: with
+ * SecurityPlugin mounted a context-less call carries no principal and is
+ * refused. None of them is the call under test.
+ */
+const SYSTEM = { isSystem: true } as const;
+
 const dutiesOf = async (owner: string): Promise<AnyRow[]> =>
-  data.find('duly_duty', { where: { owner } });
+  data.find('duly_duty', { where: { owner } }, { context: SYSTEM });
 
 let seq = 0;
 const insertItem = async (over: AnyRow): Promise<AnyRow> =>
-  data.insert('duly_catalog_item', { name: `Item ${++seq}`, ...over });
+  data.insert('duly_catalog_item', { name: `Item ${++seq}`, ...over }, { context: SYSTEM });
 
 // ────────────────────────────────────────────────────────────────────────────
 

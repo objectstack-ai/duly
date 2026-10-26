@@ -2,12 +2,14 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 import { Task } from '../src/objects/index.js';
 import { dulyActions } from '../src/actions/index.js';
 import { TaskViews } from '../src/views/task.view.js';
 import { registerDulyActionHandlers } from '../src/actions/register-handlers.js';
+import { ensureUsers } from './support/users.js';
 import {
   ACTIONABLE_STATUSES,
   COMPLETE_PATCH,
@@ -41,7 +43,8 @@ let kernel: any;
 
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Point the artifact lookup at a path that cannot exist. Left to its
     // default it resolves `<cwd>/dist/objectstack.json`, and a local
@@ -53,9 +56,16 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
   await kernel.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await kernel.bootstrap();
   data = kernel.getService('data');
+  await ensureUsers(data, ['user_alice']);
 
   // `onEnable` is invoked by the CLI boot path, not by `new AppPlugin(...)`,
   // so the handlers are wired here through the REAL registration function.
@@ -288,12 +298,19 @@ describe('payload', () => {
     }
   });
 
-  it('complete offers the platform Undo affordance', () => {
-    // `undoable` is the runtime's own one-click reversal: it snapshots the
-    // record's prior field values and offers Undo on the success toast. It is
-    // what makes a no-confirmation tick defensible at the moment of the
-    // mistake; `duly_task_undo` covers the mistake noticed after the toast.
-    expect(declared(TASK_COMPLETE_ACTION)?.undoable).toBe(true);
+  it('the one-click reversal is the undo row action, on exactly the rows complete produces', () => {
+    // `undoable` — the success toast's Undo — is captured on two action shapes
+    // only, `operation: 'update'` and `type: 'api'`. On this `script` action it
+    // never produced a toast, and @objectstack/spec 17.5 refuses the flag
+    // there ("has no runtime that can fulfil it"). So the reversal that makes a
+    // no-confirmation tick defensible is `duly_task_undo`, and what is pinned
+    // here is that it stays one click away: a row action, shown on every row a
+    // tick leaves behind.
+    expect(declared(TASK_COMPLETE_ACTION)?.undoable).toBeUndefined();
+    const undo = declared(TASK_UNDO_ACTION);
+    expect(undo.locations).toEqual(declared(TASK_COMPLETE_ACTION).locations);
+    expect(undo.confirmText).toBeUndefined();
+    expect((undo.visible as { source?: string } | undefined)?.source).toBe('record.status == "done"');
   });
 });
 

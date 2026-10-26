@@ -37,20 +37,19 @@ import { ADMIN, PEOPLE, UNITS } from './demo-org.js';
  *
  * References BETWEEN the platform objects — `sys_user.manager_id`,
  * `sys_business_unit.manager_user_id`, `parent_business_unit_id`, and the
- * junction's `user_id` / `business_unit_id` — only resolve where the platform
- * objects are actually registered. Under `objectstack dev` they are (`serve`
- * mounts `PlatformObjectsPlugin`, and `sharing` is in
- * `PLATFORM_ALWAYS_ON_CAPABILITIES` so `SharingServicePlugin` is mounted too),
- * so the org chart, the manager chain and the membership rows all link up.
- * Under the bare `createStandaloneStack` kernel most vitest suites boot, they
- * are not registered at all: the loader finds no field definitions for
- * `sys_user`, builds no reference list for it, and writes the natural key
- * through verbatim. That is why `test/seed.test.ts` asserts the manager chain
- * from THIS module rather than from the seeded rows — the fixture is the
- * contract; what a reference column resolves to is the runtime's business.
- * `test/business-unit-membership.test.ts` is the suite that boots the two
- * platform plugins on purpose, because the value it reads back is one only
- * they compute.
+ * junction's `user_id` / `business_unit_id` — resolve because the objects are
+ * registered by the plugins that own them: `sys_user` by plugin-auth, the two
+ * business-unit tables by `SharingServicePlugin` (`sharing` is in
+ * `PLATFORM_ALWAYS_ON_CAPABILITIES`, so `serve` mounts it whatever `requires`
+ * says). From @objectstack 18 that holds in the test kernels too: the engine
+ * refuses a write to an object its registry does not hold, so every suite that
+ * loads this seed mounts the same owners. Through 17.x the bare kernel's memory
+ * driver took these rows schemaless and wrote the natural keys through
+ * verbatim. `test/seed.test.ts` still asserts the manager chain from THIS
+ * module rather than from the seeded rows — the fixture is the contract; what a
+ * reference column resolves to is the runtime's business.
+ * `test/business-unit-membership.test.ts` is the suite that asserts the value
+ * the platform computes from them.
  */
 
 /** Three levels: one company, three sites, two teams under one of them. */
