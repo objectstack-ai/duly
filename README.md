@@ -1,40 +1,32 @@
 # Duly
 
-**Recurring obligation and duty management — the standard ObjectStack template app.**
+**Recurring duties for the people who owe them — the standard ObjectStack template app.**
 
-Duly 是 ObjectStack 的标准模板应用，用来管理周期性履职：每个岗位按固定周期欠下的
-那些事——月报、季度检查、年度评审、每周对账。今天这些事多半记在一张 Excel 表里，
-靠一个人记着，提醒和「做完了」散落在微信群里，出了问题才被发现。Duly 替代的就是
-这张表加这个群：履职只定义一次，按期自动派发，一键完成，逐级汇总，管理者不用向任
-何人要进度。六十秒跑起来：
+Every operating role owes a set of things on a repeating clock: a monthly
+return, a quarterly inspection, an annual review, a weekly reconciliation.
+Today most of them live in a spreadsheet, remembered by one person, with the
+reminders and the "done" messages scattered through a chat group, and they are
+discovered late. Duly replaces that spreadsheet and that group. Duties are
+defined once against a role, dispatched automatically each period, completed in
+one click, and rolled up so every level of management sees the state of play
+without asking anyone for a status report.
 
-1. 克隆这个仓库，`pnpm install`
-2. `pnpm demo:zh` —— 带着一个中文示例组织启动，每个视图第一屏就有内容
-3. 把示例目录换成你自己的：`rm -rf .objectstack/data`，`pnpm dev`，然后用下文
-   「Import your existing list」里的 Import 按钮导入你那张表
+Duly is the duty layer, and it is owned by the operating roles themselves. It
+sits **beside** an EHS or QHSE suite rather than replacing it: the suite stays
+the system of record for incidents, chemicals, permits and environmental data,
+and Duly answers only who owes which recurring obligation, in which period, and
+whether it was done on time. It is a template: install it, load your own
+catalog, and run it without us. Built on
+[ObjectStack](https://github.com/objectstack-ai/objectstack) — metadata-driven,
+Apache-2.0, self-hostable, and an MCP server out of the box. The
+[positioning](docs/product/positioning.md) page says what it is and what it
+will not become.
 
-Duly is the standard ObjectStack template app for recurring obligations: every
-role in an organisation owes a set of things on a repeating clock — a monthly
-return, a quarterly inspection, an annual review, a weekly reconciliation. Today
-most of them live in a spreadsheet, remembered by one person, with the reminders
-and the "done" messages scattered through a chat group, and are discovered late.
-Duly replaces that spreadsheet and that group: duties are defined once against a
-role, dispatched automatically each period, completed in one click, and rolled up
-so every level of management sees the state of play without asking for a status
-report. Sixty seconds to a running app:
-
-1. Clone this repository and `pnpm install`
-2. `pnpm demo:zh` — starts with a worked example organisation in Chinese, every
-   view populated on the first screen (`pnpm demo` for the same example in
-   English)
-3. Replace the example catalog with your own: `rm -rf .objectstack/data`,
-   `pnpm dev`, then import your spreadsheet through the Import button described
-   under *Import your existing list* below
-
-Built on [ObjectStack](https://github.com/objectstack-ai/objectstack) — metadata-driven,
-Apache-2.0, self-hostable, and an MCP server out of the box. Beside an EHS or
-QHSE suite, Duly is the duty layer, not a second system of record; the
-[positioning](docs/product/positioning.md) page says what that means.
+> **中文简介。** Duly 是 ObjectStack 的标准模板应用，管理每个岗位按固定周期欠下的
+> 事——月报、季度检查、年度评审、每周对账。它替代的是「一张 Excel 表加一个微信群」：
+> 履职只定义一次，按期自动派发，一键完成，逐级汇总，管理者不用向任何人要进度。
+> 它是履职层，由业务岗位自己持有；与 EHS/QHSE 系统并列而非替代——事故、化学品、
+> 许可和环境数据仍以那套系统为准。用 `pnpm demo:zh` 看一个中文示例组织。
 
 ---
 
@@ -66,54 +58,26 @@ The Console is at `http://localhost:3000/_console/`, the REST API at
 `http://localhost:3000/api/v1`, and the app is itself an MCP server at
 `/api/v1/mcp`. Sign in as `admin@objectos.ai` / `admin123`.
 
-### Two ways to start it
+`pnpm dev` starts **empty**: the objects, views, automations and permission
+sets are all there, and the only record is the account you signed in with. That
+is also what a real deployment starts from. The
+[template-readiness checklist](docs/template-checklist.md) records what a fresh
+clone was measured to boot with.
 
-Duly ships empty. Evaluating it *for your own organisation* and evaluating *the
-idea* are different things, so they are different commands:
-
-| Command | What you get |
-|:---|:---|
-| `pnpm dev` | An **empty Duly**. The objects, views and automations are all there; the records are yours to add — define your first duty against a role and watch it dispatch. This is also what a real deployment starts from. |
-| `pnpm demo` | The same app **preloaded with a worked example**: Ardenline Group, a fictional manufacturer — three sites, twelve people over a three-level org chart, a catalog of duties, and six months of history behind them, so every view has something in it on the first screen. |
-| `pnpm demo:zh` | The same worked example **in Chinese** — 安岭集团, its people, its duty catalog and its history, all in zh-CN, for a demo where the records read the same language as the interface. Identical in every other respect: same objects, same row counts, same history. The account you sign in with is renamed 演示管理员 to match. |
-
-`pnpm demo` prepares the database and then starts the server; it is one
-command and it works on a clean checkout. Everything it writes is ordinary
-data, so you can edit or delete any of it.
-
-The two demos are the **same fixture in two languages**, not two datasets:
-one org chart, one duty catalog, one history planner, with the display strings
-resolved through `src/data/demo-zh.ts`. Machine values — unit codes, period
-keys, statuses, timezones — are identical in both, which is what keeps a
-Chinese demo from being a second demo that quietly drifts. The language is
-chosen at compile time by `DULY_DEMO_LOCALE`, so switch between them on a
-database you have already seeded and you will get **both** organisations in
-it; `rm -rf .objectstack/data` first.
-
-To go back to an empty app, delete the local database and start again:
+To start again from nothing, delete the local database:
 
 ```bash
 rm -rf .objectstack/data
 pnpm dev
 ```
 
-Nothing about the fictional organisation is real: every address is on an
-RFC 2606 reserved domain, and no real company, person, site or regulation is
-named anywhere in it. The rule holds in Chinese — 安岭集团 is not a company,
-and every reference the catalog cites is an invented internal document
-(《集团环境标准 GE-09》第1条), never a national or industry standard.
+## Load your own catalog
 
-Every metadata directory is pre-wired into `objectstack.config.ts`, empty ones
-included: add your entry to the named array in your own `src/<type>/index.ts` and
-leave the config alone. It is the one file parallel branches collide on.
-
-## Import your existing list
-
-Every customer already has the list — a spreadsheet per role, usually. Getting
-it in is the platform's **Import** button on each object list, not anything
-Duly wrote: upload, confirm the mapping, import. The CSVs in
-[`samples/`](samples) are shaped to go straight through it, and they describe
-the same fictional manufacturer as `pnpm demo`.
+Your list already exists — a spreadsheet per role, usually. Getting it in is
+the platform's **Import** button on each object list, not anything Duly wrote:
+upload, confirm the mapping, import. The CSVs in [`samples/`](samples) are
+shaped to go straight through it; use them as the template for your own
+columns.
 
 | Sample | Import it on | Rows |
 |:---|:---|:---|
@@ -122,22 +86,13 @@ the same fictional manufacturer as `pnpm demo`.
 | [`samples/catalog-items.csv`](samples/catalog-items.csv) | Duly → Setup → Role catalog | 21 |
 | [`samples/duties.csv`](samples/duties.csv) | Duly → Setup → All duties | 19 |
 
-### Three steps
+Import them **in that order**. A duty's owner, business unit and catalog item
+are looked up **by name**, so the rows they point at have to exist first.
 
-1. **Put your people and units in first.** A duty's owner and business unit are
-   looked up **by name**, so the rows have to exist before the duty file can
-   land. In a real deployment they arrive from your directory; on a fresh
-   `pnpm dev` database, import `business-units.csv` and then `people.csv`
-   through the same Import button.
-2. **Import the role catalog** — `catalog-items.csv` on Role catalog. This is
-   the list itself: what each position owes, how often, with how much grace.
-   No lookups, so it goes into an empty app as-is.
-3. **Import the duties** — `duties.csv` on All duties. This is the catalog
-   instantiated onto named people, and it is where the natural keys resolve.
-
-Each step is the same three screens — Upload → Mapping → Preview → import —
-and the count of created rows is reported at the end, with any refused row
-named and downloadable.
+**[Getting started →](docs/getting-started.md)** is the whole path in about
+ten minutes: install, sign in, import the four files, confirm and approve a
+duty, dispatch, and open the owner's week — with the two steps the platform
+cannot finish yet marked where you will meet them.
 
 ### What the columns have to say
 
@@ -145,10 +100,10 @@ named and downloadable.
   wizard auto-matches every one of them at high confidence. The **Download
   template** link on the Upload step gives you the same columns as labels
   instead; both are accepted.
-- **Lookups are written as names, not ids.** `owner` takes a person's name
-  (`Priya Raman`) or their email; `business_unit` takes the unit's **name**
-  (`Northgate Quality` — its code will not resolve); `catalog_item` takes the
-  catalog item's name. This is the same natural-key rule the seed loader uses.
+- **Lookups are written as names, not ids.** `owner` takes a person's name or
+  their email; `business_unit` takes the unit's **name** (its code will not
+  resolve); `catalog_item` takes the catalog item's name. This is the same
+  natural-key rule the seed loader uses.
 - **A name that matches nothing skips that row and says so**, with a
   *Download failed rows* file to fix and re-import. Nothing is linked to a
   best guess.
@@ -165,10 +120,56 @@ named and downloadable.
 
 `test/import-samples.test.ts` holds every sample header to the object's own
 schema, so renaming a field fails the build instead of quietly importing a
-blank column.
+blank column. **[The full walk, screen by screen, with what each step was
+measured to do →](docs/import/walkthrough.md)**
 
-**[The full walk, screen by screen, with what each step was measured to
-do →](docs/import/walkthrough.md)**
+## Try the demo
+
+To see the finished picture before you load anything, start with the worked
+example instead:
+
+| Command | What you get |
+|:---|:---|
+| `pnpm demo` | The same app **preloaded with a worked example**: a fictional manufacturer with three sites, twelve people over a three-level org chart, a catalog of duties, and six months of history behind them, so every view has something in it on the first screen. |
+| `pnpm demo:zh` | The same worked example **in Chinese**: its people, its duty catalog and its history all in zh-CN, so the records read the same language as the interface. Identical in every other respect: same objects, same row counts, same history. The account you sign in with is renamed 演示管理员 to match. |
+
+`pnpm demo` prepares the database and then starts the server; it is one
+command and it works on a clean checkout. Everything it writes is ordinary
+data, so you can edit or delete any of it.
+
+The two demos are the **same fixture in two languages**, not two datasets:
+one org chart, one duty catalog, one history planner, with the display strings
+resolved through `src/data/demo-zh.ts`. Machine values — unit codes, period
+keys, statuses, timezones — are identical in both. The language is chosen at
+compile time by `DULY_DEMO_LOCALE`, so switching between them on a database you
+have already seeded gives you **both** organisations in it;
+`rm -rf .objectstack/data` first.
+
+Nothing about the fictional organisation is real: every address is on an
+RFC 2606 reserved domain, and no real company, person, site or regulation is
+named anywhere in it, in either language. Every reference the catalog cites is
+an invented internal document, never a national or industry standard.
+
+## Customise
+
+Everything below the catalog is metadata, so it changes as a file in `src/`,
+not as a fork.
+
+| To change | Where |
+|:---|:---|
+| **The catalog** — what each position owes, how often, with how much lead and grace | Data, not code: the Role catalog and All duties lists, or a fresh import. Per-duty `lead_days` and `grace_days` are ordinary columns. |
+| **The one-tap progress phrases** | `progress` on `src/objects/task.object.ts`; their Chinese in `src/translations/zh-CN.ts` |
+| **The "not moving" thresholds** (> 14 and > 30 days untouched) | `src/datasets/stagnation.dataset.ts` and the dashboard that reads it, `src/dashboards/duty-health.dashboard.ts` |
+| **The languages** | `src/translations/` — English is the source; every authored label needs an `en` entry |
+| **Who sees what** | `src/security/permission-sets.ts` (`duly_member`, `duly_manager`, `duly_admin`) |
+
+Which of these an administrator can also change in Setup or Studio without
+touching code is being measured; the configurability matrix (#129) will be
+linked here when it lands.
+
+Every metadata directory is pre-wired into `objectstack.config.ts`, empty ones
+included: add your entry to the named array in your own `src/<type>/index.ts`
+and leave the config alone.
 
 ## Verify before you ship
 
@@ -176,6 +177,7 @@ do →](docs/import/walkthrough.md)**
 pnpm validate    # protocol schema + CEL predicates + widget bindings
 pnpm typecheck   # types against @objectstack/spec
 pnpm test
+pnpm build
 ```
 
 ObjectStack metadata fails **silently at runtime**, not at edit time. Never
@@ -194,16 +196,19 @@ src/hooks/               object lifecycle hooks (collected here, not from object
 src/functions/           pure callables a `script` flow node resolves by name
 src/datasets/  src/dashboards/   the semantic layer and what reads it
 src/security/            positions, permission sets, sharing rules
-src/mappings/  src/data/ catalog import and seed fixtures
+src/mappings/  src/data/ catalog import and the demo fixture (src/data/demo-*)
 src/translations/        en (source) · zh-CN
 scripts/                 pnpm demo — prepare the database, then start with the example loaded
 samples/                 CSVs for the platform's standard Import (see above)
+docs/                    getting started and the template-readiness checklist
 docs/product/            positioning, data model, design principles
 docs/import/             the recorded import walk, screen by screen
 ```
 
 ## Documentation
 
+- [Getting started](docs/getting-started.md) — your own list, in about ten minutes
+- [Template-readiness checklist](docs/template-checklist.md) — what a fresh clone was measured to do
 - [Positioning](docs/product/positioning.md) — who this is for and what it is not
 - [Data model](docs/product/data-model.md) — the five objects and why each exists
 - [Design principles](docs/product/design-principles.md) — the constraints above, argued

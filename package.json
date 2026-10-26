@@ -3,7 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Duly — recurring obligation and duty management on ObjectStack.",
+  "description": "Duly — the ObjectStack template app for recurring duties: define once, dispatch every period, see the state of play without asking.",
+  "keywords": [
+    "objectstack",
+    "template",
+    "recurring-duties",
+    "compliance-calendar",
+    "obligation-management"
+  ],
   "license": "Apache-2.0",
   "scripts": {
     "dev": "objectstack dev --compile",
