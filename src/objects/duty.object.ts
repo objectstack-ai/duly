@@ -309,9 +309,25 @@ export const Duty = ObjectSchema.create({
     review_status: Field.select({
       label: 'Review status',
       required: true,
+      // ── Each option's lifecycle `kind`, which the stepper draws ──────────
+      // `@objectstack/spec` 18 requires `kind` on every option of the field
+      // `stageField` names (below), and the record path reads it ahead of
+      // its spelling heuristic: `won` is the forward terminus, `lost` opens
+      // the separated group. None of these four values is spelled like a
+      // terminal token, so by spelling alone the path draws all four as one
+      // forward line — To confirm → To review → Approved → Returned, with
+      // Returned read as the step AFTER approval.
+      //
+      // The pipeline is to confirm → to review → approved (see `stageField`),
+      // so the two steps are `open` and the approval is `won`. `returned` is
+      // `lost`: it is the branch off that line, where a duty stops
+      // dispatching until it is corrected. `lost` is a drawing, not a dead
+      // end — nothing on the write path reads `kind`, and the way back
+      // (`returned → to_review`) is the `review_status_transitions` table's
+      // to grant, which it does.
       options: [
-        { label: 'To confirm', value: 'to_confirm', color: '#8C6512' },
-        { label: 'To review', value: 'to_review', color: '#2E7C8E' },
+        { label: 'To confirm', value: 'to_confirm', color: '#8C6512', kind: 'open' },
+        { label: 'To review', value: 'to_review', color: '#2E7C8E', kind: 'open' },
         // ── The two verdicts, and why they carry a predicate ──────────────
         // `visibleWhen` is the ONE authoring surface on this platform whose
         // predicate scope binds the caller (`current_user`) as well as the
@@ -348,8 +364,8 @@ export const Duty = ObjectSchema.create({
         // and admits the write. That is what lets the demo seed carry
         // `approved` rows, and it means this predicate is a rule about
         // PEOPLE, not a containment boundary for server code.
-        { label: 'Approved', value: 'approved', color: '#35674D', visibleWhen: P`record.owner != current_user.id` },
-        { label: 'Returned', value: 'returned', color: '#A33A2B', visibleWhen: P`record.owner != current_user.id` },
+        { label: 'Approved', value: 'approved', color: '#35674D', kind: 'won', visibleWhen: P`record.owner != current_user.id` },
+        { label: 'Returned', value: 'returned', color: '#A33A2B', kind: 'lost', visibleWhen: P`record.owner != current_user.id` },
       ],
       // Where a new duty enters the pipeline, decided by WHO PUT IT THERE.
       // The organisation's lists (`catalog`, `assigned`) need the owner to
