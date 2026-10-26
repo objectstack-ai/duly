@@ -50,16 +50,45 @@ review material from it in under a minute.*
   navigation shell — `mobileNavigation` was removed in spec 17.0.0)
 - Offline completion queue
 
-## M4 — Sellable as a product, worldwide *(post-v1)*
+## M4 — Install it, load your catalog, run it without us *(post-v1)*
 
 *Gate: a customer can install it, load their own catalog, and run it without us.*
 
-- i18n complete: `en` source, `zh-CN`, and the extraction gate in CI
-- Spreadsheet import mapping for an existing duty catalog
-- Seed/demo dataset that shows the product working on first boot
-- Container image, docker-compose, deployment and upgrade docs
-- MCP surface documented — "ask the system what is late" without a chat feature
-- Accessibility and dark-mode pass
+This is the milestone that makes Duly the standard ObjectStack template app
+rather than one organisation's deployment. Three items landed under the
+milestone's earlier title and stay landed: i18n with `en` as the source language
+and `zh-CN` hand-translated behind a coverage gate; the platform's standard
+Import for an existing duty catalog; and the demo dataset in two languages.
+What remains:
+
+- Repo is template-shaped: empty on `pnpm dev`, demo opt-in, no customer naming,
+  README quick start for "load your own catalog"
+- Industry catalog packs, importable in ten minutes, en + zh-CN, invented
+  references only: food-safety daily/weekly/monthly control, ISO 9001 internal
+  audit & calibration, EHS inspections
+- Release canary: a scheduled workflow runs the four gates against the newest
+  `@objectstack/*` and opens an issue on red
+- `create-objectstack` carries a `duly` (compliance calendar) template — lives
+  in the platform repository, not here
+- Deployment & upgrade docs and a container image; MCP surface documented;
+  accessibility & dark mode
+- Positioning and README rewritten for the new positioning (layering vs EHS
+  suites; template first)
+
+## Parked
+
+Ruled by the maintainer on 2026-10-26, in the epic that defines M4:
+
+> Direct sales, the customer's phase-2 QHSE module and phase-3 scoring are out;
+> per-customer IM connectors are out.
+
+> Phase-2 QHSE checklists · phase-3 supervision and scoring · work calendar ·
+> per-customer IM connectors · any ranking or league table
+
+No milestone carries these five — QHSE checklists, supervision and scoring, a
+work calendar, per-customer IM connectors, direct sales. Re-opening one is a
+maintainer ruling, not a card. Each has its one-line reason in
+[positioning](product/positioning.md#what-we-will-not-build).
 
 ## Explicitly out of scope
 

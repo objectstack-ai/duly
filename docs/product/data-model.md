@@ -49,9 +49,9 @@ three days before the last.
 **`lead_days`.** A task that appears on its due date is already late. Lead time is
 the difference between a system that reminds you and one that reports on you.
 
-**`timezone`.** Duly is sold worldwide. "The 5th of the month" needs to know
-whose month. Period boundaries resolve in the duty's own IANA zone, not the
-server's.
+**`timezone`.** Duly is a template, installed wherever its users are. "The 5th
+of the month" needs to know whose month. Period boundaries resolve in the
+duty's own IANA zone, not the server's.
 
 **`source` is the caliber field, and metrics read only this column.** `catalog`
 and `assigned` duties are governed — the organisation put them there, so an
