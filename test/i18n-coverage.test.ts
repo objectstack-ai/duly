@@ -293,11 +293,18 @@ describe('the bundles reach the stack', () => {
     // group in the bundles. Widening this list without extending the walk
     // would have turned the one assertion that noticed into the one that hid
     // it (#106).
+    //
+    // `picklist` arrived in 18 and went red the same way. Re-derived, nothing
+    // moves: this app declares no picklist — every option list here is a
+    // field's own, translated under `objects.<o>.fields.<f>.options` — and no
+    // `untranslatable` verdict in the walk rests on picklists being absent
+    // (they cover flows, jobs, hooks, positions, permission sets and
+    // `element:text`). So the pin widens with no verdict to revisit.
     expect(
       [...PLATFORM_TRANSLATABLE_TYPES].sort(),
       'the platform\'s translatable metadata types changed — re-derive the '
       + '`untranslatable` verdicts in src/translations/authored-text.ts against the new set',
-    ).toEqual(['action', 'app', 'dashboard', 'dataset', 'object', 'page', 'view']);
+    ).toEqual(['action', 'app', 'dashboard', 'dataset', 'object', 'page', 'picklist', 'view']);
   });
 });
 

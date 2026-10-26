@@ -234,10 +234,10 @@ const OPAQUE: Readonly<Record<string, string>> = {
   'dashboard.widgets[].options': 'renderer extras — sort key and direction',
   'dashboard.widgets[].filter': 'presentation-scope filter — field paths and date macros',
   'dataset.measures[].filter': 'measure filter — field paths, stored values and date macros',
-  'flow.nodes[].config.fields': 'record payload — field names and `{template}` reads',
+  'flow.nodes[].config.fields': 'record payload — field names and CEL reads',
   'flow.nodes[].config.templateData': 'email render payload — `{{placeholder}}` values '
     + 'read off the record; the SENTENCES around them live in the email-template rows',
-  'flow.nodes[].config.filter': 'record lookup filter — field names and `{template}` reads',
+  'flow.nodes[].config.filter': 'record lookup filter — field names and CEL reads',
   'flow.nodes[].config.schedule': 'cron schedule',
   'flow.nodes[].config.timeRelative': 'time-relative trigger window — field, object and filter',
   'job.schedule': 'cron schedule',
@@ -322,6 +322,10 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'object.fieldGroups[].collapse': machine('section collapse behaviour'),
   'object.fields{}.options[].value': machine('the stored option value — the option key itself'),
   'object.fields{}.options[].color': machine('option colour'),
+  // [@objectstack/spec 18] The lifecycle kind of a `stageField` option —
+  // `open` / `won` / `lost`, read by the record-path renderer to order the
+  // stages. A fixed vocabulary, never display text.
+  'object.fields{}.options[].kind': machine('stage lifecycle kind'),
   // Per-option `visibleWhen` (#107) — a CEL predicate over `record` and
   // `current_user`, evaluated by the form AND by the write path. Machine, like
   // every other expression envelope in this table.
@@ -410,7 +414,13 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
    * same slot.
    */
   'view.bulkActionDefs[].label': translate((c) => bulkActionKey(c, 'label')),
-  'view.bulkActionDefs[].confirmText': translate((c) => bulkActionKey(c, 'confirmText')),
+  // A TEMPLATE slot from @objectstack/spec 18 (#24798): the authored sentence
+  // is parsed into `{ dialect: 'template', source }` so it may carry holes
+  // (`{{ count }}`, a param by name). The bundle key did not move —
+  // `bulkActions.<def>.confirmText` is still the translation surface — and the
+  // sentence is `source`, one level below where the string used to sit.
+  'view.bulkActionDefs[].confirmText.source': translate((c) => bulkActionConfirmTextKey(c)),
+  'view.bulkActionDefs[].confirmText.dialect': machine('template dialect'),
   'view.bulkActionDefs[].confirmLabel': translate((c) => bulkActionKey(c, 'confirmLabel')),
   'view.bulkActionDefs[].params[].label': translate((c) => bulkActionParamKey(c, 'label')),
   'view.bulkActionDefs[].params[].placeholder': translate((c) => bulkActionParamKey(c, 'placeholder')),
@@ -621,11 +631,16 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'flow.nodes[].config.objectName': machine('bound object'),
   'flow.nodes[].config.outputVariable': machine('flow variable name'),
   'flow.nodes[].config.iteratorVariable': machine('loop variable name'),
-  'flow.nodes[].config.collection': machine('`{template}` read'),
-  'flow.nodes[].config.recipients': machine('`{template}` read'),
+  // Value slots are CEL envelopes from @objectstack/spec 18, which retired the
+  // `{…}` template dialect from them — an expression, never display text.
+  'flow.nodes[].config.collection.dialect': machine('expression dialect'),
+  'flow.nodes[].config.collection.source': machine('CEL source'),
+  'flow.nodes[].config.recipients.dialect': machine('expression dialect'),
+  'flow.nodes[].config.recipients.source': machine('CEL source'),
   'flow.nodes[].config.severity': machine('notification severity'),
   'flow.nodes[].config.topic': machine('notification topic key'),
-  'flow.nodes[].config.sourceId': machine('`{template}` read'),
+  'flow.nodes[].config.sourceId.dialect': machine('expression dialect'),
+  'flow.nodes[].config.sourceId.source': machine('CEL source'),
   'flow.nodes[].config.sourceObject': machine('bound object'),
   'flow.nodes[].config.triggerType': machine('trigger kind'),
   'flow.nodes[].config.condition.dialect': machine('expression dialect'),
@@ -700,6 +715,14 @@ const bulkActionBase = (ctx: KeyContext, defName: string | undefined): readonly 
 function bulkActionKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {
   const base = bulkActionBase(ctx, str(ctx.parent.name));
   return base ? [...base, leaf] : undefined;
+}
+
+/** `confirmText.source` sits inside the envelope, so the def is found by its index. */
+function bulkActionConfirmTextKey(ctx: KeyContext): readonly string[] | undefined {
+  const [defsKey, defIndex] = ctx.path;
+  if (defsKey !== 'bulkActionDefs') return undefined;
+  const base = bulkActionBase(ctx, bulkActionDefAt(ctx, defIndex));
+  return base ? [...base, 'confirmText'] : undefined;
 }
 
 function bulkActionParamKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {
