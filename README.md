@@ -181,6 +181,19 @@ pnpm test
 ObjectStack metadata fails **silently at runtime**, not at edit time. Never
 report a metadata change as done until `pnpm validate` passes.
 
+### Platform canary
+
+`.github/workflows/platform-canary.yml` runs these gates (plus `pnpm build`)
+every day against the newest `@objectstack` release. When the template passes
+on it, the canary opens a draft PR titled `Upgrade to @objectstack <version>`;
+read the gate output in its body, push a commit or close and reopen it to run
+CI, and merge. When the template fails, it opens one issue per version, titled
+`Platform canary: @objectstack <version> breaks the template`, with the tail of
+each failing gate. Most breaks are the platform retiring a key: run
+`pnpm validate` on a branch with the bump, follow the migration each message
+names, and land the fix together with the upgrade. To try a version by hand,
+run the workflow from the Actions tab and give it the version.
+
 ## Layout
 
 ```

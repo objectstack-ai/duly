@@ -1,0 +1,238 @@
+name: Platform canary
+
+# The template tracks the platform, and a platform release can turn the
+# template red without anyone touching it. Once a day this workflow asks npm for
+# the newest @objectstack/spec, and when it is newer than the version
+# package.json pins, it bumps every @objectstack/* range on a throwaway branch
+# and runs the same four gates as CI:
+#
+#   green → opens (or refreshes) a DRAFT PR "Upgrade to @objectstack <v>",
+#           labelled `platform-upgrade`, with the gate output in the body;
+#   red   → opens (or refreshes) ONE issue per version, "Platform canary:
+#           @objectstack <v> breaks the template", with each failing gate's tail.
+#
+# GITHUB_TOKEN only. It never pushes to the branch it runs on, never merges and
+# never enables auto-merge: a person reads the PR and merges it.
+#
+# Two GitHub facts shape what it can do:
+# - A PR opened with GITHUB_TOKEN does not start other workflows, so CI does
+#   not run on the canary's PR. The gate output in its body is the evidence;
+#   push a commit to the branch (or close and reopen the PR) to get CI.
+# - Opening the PR needs the repository setting "Allow GitHub Actions to create
+#   and approve pull requests" (Settings → Actions → General → Workflow
+#   permissions). When it is off, the run fails and says so.
+
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to try, e.g. 18.1.0 (empty: the newest published @objectstack/spec)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: platform-canary-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FORCED_VERSION: ${{ inputs.version }}
+      BASE: ${{ github.ref_name }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Compare the newest release with the pinned version
+        id: target
+        run: |
+          PINNED=$(node -p "require('./package.json').dependencies['@objectstack/spec'].replace(/^[^0-9]*/, '')")
+          TARGET="${FORCED_VERSION:-$(npm view @objectstack/spec dist-tags.latest)}"
+          if ! [[ "$TARGET" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$TARGET' is not a release version (X.Y.Z)."
+            exit 1
+          fi
+          NEWER=$(node -e '
+            const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number));
+            const d = a.map((n, i) => n - b[i]).find((n) => n !== 0) ?? 0;
+            console.log(d > 0);' "$TARGET" "$PINNED")
+          echo "pinned=$PINNED" >> "$GITHUB_OUTPUT"
+          echo "version=$TARGET" >> "$GITHUB_OUTPUT"
+          if [ "$NEWER" != true ]; then
+            echo "::notice::Already current: package.json pins @objectstack ^$PINNED; the version tried is $TARGET."
+            echo "Already current: package.json pins \`^$PINNED\`, the version tried is \`$TARGET\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A release publishes its packages one by one; trying it before the
+          # last one lands would report an install failure that is not real.
+          MISSING=$(node -p "const p = require('./package.json'); Object.keys({ ...p.dependencies, ...p.devDependencies }).filter((d) => d.startsWith('@objectstack/')).join(' ')" |
+            tr ' ' '\n' | while read -r PKG; do npm view "$PKG@$TARGET" version > /dev/null 2>&1 || echo "$PKG"; done)
+          if [ -n "$MISSING" ]; then
+            echo "::notice::$TARGET is not published for every package yet:" $MISSING
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Trying @objectstack $TARGET against the pinned ^$PINNED." >> "$GITHUB_STEP_SUMMARY"
+          echo "bump=true" >> "$GITHUB_OUTPUT"
+
+      - name: Bump @objectstack and run the four gates
+        id: gates
+        if: steps.target.outputs.bump == 'true'
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          LOGS="$RUNNER_TEMP/canary"
+          set +e
+          mkdir -p "$LOGS"
+          # Install the exact version first, then widen to ^VERSION: pnpm keeps a
+          # locked version that still satisfies the range, so the lockfile ends
+          # on exactly the release under test, not a later one in its line.
+          bump() {
+            node -e '
+              const fs = require("fs");
+              const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+              for (const deps of [pkg.dependencies, pkg.devDependencies])
+                for (const name of Object.keys(deps ?? {}))
+                  if (name.startsWith("@objectstack/")) deps[name] = process.argv[1];
+              fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");' "$1"
+          }
+          bump "$VERSION" && pnpm install --no-frozen-lockfile > "$LOGS/install.log" 2>&1 &&
+            bump "^$VERSION" && pnpm install --no-frozen-lockfile >> "$LOGS/install.log" 2>&1
+          INSTALL=$?
+          echo "install=$INSTALL" >> "$GITHUB_OUTPUT"
+          FAILED=""
+          [ "$INSTALL" -ne 0 ] && FAILED="install"
+          for GATE in validate typecheck test build; do
+            if [ "$INSTALL" -ne 0 ]; then echo "$GATE=skipped" >> "$GITHUB_OUTPUT"; continue; fi
+            pnpm "$GATE" > "$LOGS/$GATE.log" 2>&1
+            CODE=$?
+            echo "$GATE=$CODE" >> "$GITHUB_OUTPUT"
+            [ "$CODE" -ne 0 ] && FAILED="$FAILED $GATE"
+          done
+          echo "failed=$(echo $FAILED)" >> "$GITHUB_OUTPUT"
+          [ -z "$FAILED" ] && echo "green=true" >> "$GITHUB_OUTPUT" || echo "green=false" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Write the report
+        if: steps.target.outputs.bump == 'true'
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          PINNED: ${{ steps.target.outputs.pinned }}
+          GREEN: ${{ steps.gates.outputs.green }}
+          FAILED: ${{ steps.gates.outputs.failed }}
+          R_INSTALL: ${{ steps.gates.outputs.install }}
+          R_VALIDATE: ${{ steps.gates.outputs.validate }}
+          R_TYPECHECK: ${{ steps.gates.outputs.typecheck }}
+          R_TEST: ${{ steps.gates.outputs.test }}
+          R_BUILD: ${{ steps.gates.outputs.build }}
+        run: |
+          LOGS="$RUNNER_TEMP/canary"
+          tail_of() {
+            echo
+            echo "#### \`pnpm $1\` — last $2 lines"
+            echo
+            echo '~~~~text'
+            # Drop ANSI colour and the runner's own ::error annotations (vitest
+            # writes one per failed file), which are noise outside the log.
+            sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$LOGS/$1.log" | grep -v '^::' | tail -n "$2" | cut -c1-600
+            echo '~~~~'
+          }
+          {
+            echo "The [platform canary]($RUN_URL) bumped every \`@objectstack/*\` range from \`^$PINNED\` to \`^$VERSION\` on \`$BASE\` and ran the template's gates."
+            echo
+            echo "| gate | exit |"
+            echo "|:--|:--|"
+            echo "| \`pnpm install\` | $R_INSTALL |"
+            echo "| \`pnpm validate\` | $R_VALIDATE |"
+            echo "| \`pnpm typecheck\` | $R_TYPECHECK |"
+            echo "| \`pnpm test\` | $R_TEST |"
+            echo "| \`pnpm build\` | $R_BUILD |"
+            if [ "$GREEN" = true ]; then
+              echo
+              echo "CI has not run on this PR: it was opened with \`GITHUB_TOKEN\`, which does not start other workflows. The output below is the evidence; push a commit to the branch, or close and reopen the PR, to run CI."
+              for GATE in validate typecheck test build; do tail_of "$GATE" 15; done
+            else
+              echo
+              echo "Failing: \`$FAILED\`. What to do: see *Platform canary* in the README's verify section."
+              for GATE in $FAILED; do tail_of "$GATE" 60; done
+            fi
+          } > "$LOGS/body.full.md"
+          head -c 60000 "$LOGS/body.full.md" > "$LOGS/body.md"
+          tee -a "$GITHUB_STEP_SUMMARY" < "$LOGS/body.md"
+
+      - name: Open or refresh the draft upgrade PR
+        if: steps.gates.outputs.green == 'true'
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          LOGS="$RUNNER_TEMP/canary"
+          BOT='github-actions[bot]'
+          BOT_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+          HEAD="platform-canary/$VERSION"
+          [ "$BASE" != "$DEFAULT_BRANCH" ] && HEAD="$HEAD-on-${BASE//\//-}"
+          # Someone may have pushed a fix to the canary branch by hand; a
+          # force-push would erase it. Leave such a branch alone.
+          if git fetch --quiet origin "$HEAD" 2>/dev/null &&
+             [ "$(git log -1 --format=%ae FETCH_HEAD)" != "$BOT_EMAIL" ]; then
+            echo "::notice::$HEAD carries a commit by someone else; leaving it alone."
+            exit 0
+          fi
+          git switch -c "$HEAD"
+          git add package.json pnpm-lock.yaml
+          git -c user.name="$BOT" -c user.email="$BOT_EMAIL" commit --quiet -m "Upgrade to @objectstack $VERSION"
+          git push --force origin "$HEAD"
+          gh label create platform-upgrade --color 0E8A16 \
+            --description 'Opened by the platform canary: the template is green on a new @objectstack release' 2>/dev/null || true
+          PR=$(gh pr list --head "$HEAD" --base "$BASE" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --body-file "$LOGS/body.md"
+            echo "Refreshed #$PR." >> "$GITHUB_STEP_SUMMARY"
+          elif ! gh pr create --draft --base "$BASE" --head "$HEAD" --label platform-upgrade \
+                 --title "Upgrade to @objectstack $VERSION" --body-file "$LOGS/body.md" 2> "$LOGS/pr.err"; then
+            cat "$LOGS/pr.err"
+            if grep -q 'not permitted to create or approve pull requests' "$LOGS/pr.err"; then
+              echo "::error::The repository does not let GitHub Actions open PRs. A maintainer turns on Settings → Actions → General → Workflow permissions → 'Allow GitHub Actions to create and approve pull requests'. Branch $HEAD is pushed and green."
+            fi
+            exit 1
+          fi
+
+      - name: Open or refresh the breakage issue
+        if: steps.gates.outputs.green == 'false'
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          LOGS="$RUNNER_TEMP/canary"
+          TITLE="Platform canary: @objectstack $VERSION breaks the template"
+          for LABEL in pm:ready area:platform-ops; do gh label create "$LABEL" 2>/dev/null || true; done
+          # One issue per version, in any state: a closed one is a decision
+          # someone made, so it is refreshed but not reopened.
+          ISSUE=$(gh issue list --state all --limit 1000 --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$ISSUE" ]; then
+            gh issue edit "$ISSUE" --body-file "$LOGS/body.md"
+            echo "Refreshed #$ISSUE." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh issue create --title "$TITLE" --label pm:ready --label area:platform-ops --body-file "$LOGS/body.md"
+          fi
+          echo "::warning::@objectstack $VERSION breaks the template: $(grep -m1 '^Failing' "$LOGS/body.md")"
