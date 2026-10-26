@@ -13,7 +13,7 @@
   ],
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "objectstack dev --compile",
+    "dev": "OS_AUTOMATION_SCHEDULED_WORK_ENABLED=${OS_AUTOMATION_SCHEDULED_WORK_ENABLED-true} objectstack dev --compile",
     "demo": "node scripts/demo.mjs",
     "demo:zh": "DULY_DEMO_LOCALE=zh-CN node scripts/demo.mjs",
     "start": "objectstack start",

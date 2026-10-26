@@ -90,3 +90,34 @@ describe('package.json ships the entry point the README documents', () => {
     expect(read('README.md')).toContain('pnpm demo:zh');
   });
 });
+
+describe('scheduled work is armed in dev and demo, and left to the deployer in start', () => {
+  // Duly IS scheduled work — the nightly dispatcher and the three reminder
+  // sweeps — and from @objectstack 18 the platform arms none of it unless
+  // OS_AUTOMATION_SCHEDULED_WORK_ENABLED is truthy. Each spelling below fails
+  // silently when edited: the app boots, and nothing is ever dispatched.
+  it('pnpm dev defaults it on, and a value the caller set wins', () => {
+    // `${VAR-true}`, not `${VAR:-true}`: an explicitly empty value is the
+    // caller's "off" and must stay off.
+    expect(packageJson.scripts?.dev).toBe(
+      'OS_AUTOMATION_SCHEDULED_WORK_ENABLED=${OS_AUTOMATION_SCHEDULED_WORK_ENABLED-true} objectstack dev --compile',
+    );
+  });
+
+  it('pnpm demo sets it only when unset, before either boot', () => {
+    expect(demoScript).toContain("const SCHEDULED_WORK_ENV_VAR = 'OS_AUTOMATION_SCHEDULED_WORK_ENABLED';");
+    expect(demoScript).toContain(
+      "if (process.env[SCHEDULED_WORK_ENV_VAR] === undefined) process.env[SCHEDULED_WORK_ENV_VAR] = 'true';",
+    );
+    // Ahead of the first spawn, so the priming boot and the demo boot both
+    // inherit it through `process.env`.
+    expect(demoScript.indexOf('process.env[SCHEDULED_WORK_ENV_VAR] =')).toBeLessThan(
+      demoScript.indexOf("spawn('objectstack'"),
+    );
+  });
+
+  it('pnpm start leaves it to the deployer, and the README says so', () => {
+    expect(packageJson.scripts?.start).toBe('objectstack start');
+    expect(read('README.md')).toContain('OS_AUTOMATION_SCHEDULED_WORK_ENABLED=true');
+  });
+});

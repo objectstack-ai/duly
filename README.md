@@ -64,6 +64,11 @@ is also what a real deployment starts from. The
 [template-readiness checklist](docs/template-checklist.md) records what a fresh
 clone was measured to boot with.
 
+`pnpm dev` and `pnpm demo` switch on the platform's scheduled work, which is
+off by default, but `pnpm start` leaves it to you: a deployment must set
+`OS_AUTOMATION_SCHEDULED_WORK_ENABLED=true`, or no duty is ever dispatched and
+no reminder is ever sent.
+
 To start again from nothing, delete the local database:
 
 ```bash
