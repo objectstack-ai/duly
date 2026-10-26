@@ -1,6 +1,6 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
-import { P } from '@objectstack/spec';
+import { F, P } from '@objectstack/spec';
 import { defineFlow } from '@objectstack/spec';
 
 /**
@@ -105,7 +105,7 @@ import { defineFlow } from '@objectstack/spec';
  * is still `dispatched`, and the notification would then be re-sent on every
  * re-entry. The inbox is the assigner-visible surface that costs no such loop.
  *
- * **The handler reads `{fanout_assignee}` and nothing else about the person.**
+ * **The handler reads `fanout_assignee` and nothing else about the person.**
  * The iterator variable is re-bound by the loop before every iteration, so it
  * is the one value guaranteed to describe THIS item. `fanout_assignee_user` is
  * not: a region that throws at `fanout_find_unit` leaves it holding the
@@ -171,11 +171,13 @@ export const AssignmentFanout = defineFlow({
       type: 'loop',
       label: 'One task per assignee',
       config: {
-        // `flow-template` slot: single-brace interpolation, NOT bare CEL. A
-        // whole-string single token returns the raw value, so this resolves to
-        // the array itself — `Field.user({ multiple: true })` stores an array
-        // of `sys_user` ids.
-        collection: '{record.assignees}',
+        // A CEL value envelope. `@objectstack/spec` 18 retired the `{…}`
+        // template dialect from every value slot: a plain string here is now
+        // the literal text it spells. The expression evaluates to the array
+        // itself — `Field.user({ multiple: true })` stores an array of
+        // `sys_user` ids — and `assignees` is required, so it is never
+        // absent on a record that reaches this node.
+        collection: F`record.assignees`,
         iteratorVariable: 'fanout_assignee',
         // The body is ONE node: the try_catch container. Everything that can
         // fail for one person lives inside its `try`, so the blast radius of a
@@ -202,7 +204,7 @@ export const AssignmentFanout = defineFlow({
                         // Per OWNER, not per assignment. `limit` omitted →
                         // findOne → the variable is set to the row or to null,
                         // never to [].
-                        filter: { assignment: '{record.id}', owner: '{fanout_assignee}' },
+                        filter: { assignment: F`record.id`, owner: F`fanout_assignee` },
                         fields: ['id'],
                         outputVariable: 'existing_task',
                       },
@@ -213,7 +215,7 @@ export const AssignmentFanout = defineFlow({
                       label: "Read the assignee's business unit",
                       config: {
                         objectName: 'sys_user',
-                        filter: { id: '{fanout_assignee}' },
+                        filter: { id: F`fanout_assignee` },
                         fields: ['id', 'primary_business_unit_id'],
                         outputVariable: 'fanout_assignee_user',
                       },
@@ -225,17 +227,24 @@ export const AssignmentFanout = defineFlow({
                       config: {
                         objectName: 'duly_task',
                         fields: {
-                          subject: '{record.subject}',
-                          owner: '{fanout_assignee}',
+                          subject: F`record.subject`,
+                          owner: F`fanout_assignee`,
                           // Denormalised at dispatch so a later transfer does
                           // not rewrite history (see duly_task.business_unit).
-                          business_unit: '{fanout_assignee_user.primary_business_unit_id}',
-                          assignment: '{record.id}',
+                          // Guarded, because the lookup above can miss: a
+                          // blank or unknown assignee leaves
+                          // `fanout_assignee_user` at its declared `null`, and
+                          // CEL refuses a field read through a null root where
+                          // the old template wrote nothing. The guard writes
+                          // `null` instead, so the create fails on the field
+                          // that is really wrong (`owner`) rather than here.
+                          business_unit: F`vars.fanout_assignee_user != null && has(vars.fanout_assignee_user.primary_business_unit_id) ? vars.fanout_assignee_user.primary_business_unit_id : null`,
+                          assignment: F`record.id`,
                           source: 'assigned',
-                          due_date: '{record.due_date}',
+                          due_date: F`record.due_date`,
                           // An assignment has no lead time to spread, so the
                           // task is visible from the day it is due.
-                          visible_from: '{record.due_date}',
+                          visible_from: F`record.due_date`,
                           status: 'open',
                           // `period_key` is NOT written. An assignment has no
                           // period, and the dispatch identity index does not
@@ -271,26 +280,27 @@ export const AssignmentFanout = defineFlow({
                       type: 'notify',
                       label: 'Tell the assigner this person got no task',
                       config: {
-                        recipients: '{record.assigner}',
+                        recipients: F`record.assigner`,
                         // The localizable content path (AGENTS.md §8) — the
                         // words live in src/email-templates/, never inline.
                         template: 'duly.assignment_fanout_failed',
                         templateData: {
-                          subject: '{record.subject}',
+                          subject: F`record.subject`,
                           // The iterator, not `fanout_assignee_user`: see the
                           // header on why a stale row would name the wrong
                           // colleague.
-                          assignee: '{fanout_assignee}',
+                          assignee: F`fanout_assignee`,
                           // `$error.message` is the engine's own sentence and
                           // it names the node that failed, e.g. "Node
                           // 'fanout_create_task' failed: create_record
-                          // (duly_task) failed: Owner is required".
-                          reason: '{$error.message}',
+                          // (duly_task) failed: Owner is required". `$` is
+                          // not a CEL identifier, so it is read through `vars`.
+                          reason: F`vars["$error"].message`,
                         },
                         severity: 'warning',
                         topic: 'duly.assignment_fanout_failed',
                         sourceObject: 'duly_assignment',
-                        sourceId: '{record.id}',
+                        sourceId: F`record.id`,
                       },
                     },
                   ],
@@ -310,7 +320,7 @@ export const AssignmentFanout = defineFlow({
       label: 'Does the assigner already have a task?',
       config: {
         objectName: 'duly_task',
-        filter: { assignment: '{record.id}', owner: '{record.assigner}' },
+        filter: { assignment: F`record.id`, owner: F`record.assigner` },
         fields: ['id'],
         outputVariable: 'existing_assigner_task',
       },
@@ -321,7 +331,7 @@ export const AssignmentFanout = defineFlow({
       label: "Read the assigner's business unit",
       config: {
         objectName: 'sys_user',
-        filter: { id: '{record.assigner}' },
+        filter: { id: F`record.assigner` },
         fields: ['id', 'primary_business_unit_id'],
         outputVariable: 'assigner_user',
       },
@@ -336,16 +346,17 @@ export const AssignmentFanout = defineFlow({
           // The assignment's own subject. No literal display text is authored
           // here: English is the source language and every authored label
           // belongs in a translation bundle, never inlined in a flow.
-          subject: '{record.subject}',
-          owner: '{record.assigner}',
-          business_unit: '{assigner_user.primary_business_unit_id}',
-          assignment: '{record.id}',
+          subject: F`record.subject`,
+          owner: F`record.assigner`,
+          // Guarded for the same reason as the assignee task's.
+          business_unit: F`vars.assigner_user != null && has(vars.assigner_user.primary_business_unit_id) ? vars.assigner_user.primary_business_unit_id : null`,
+          assignment: F`record.id`,
           // Still assignment-sourced: this row came out of an assignment, and
           // `source` is the column metrics read. `self` is for work somebody
           // declared for themselves, which this is not.
           source: 'assigned',
-          due_date: '{record.due_date}',
-          visible_from: '{record.due_date}',
+          due_date: F`record.due_date`,
+          visible_from: F`record.due_date`,
           status: 'open',
         },
       },

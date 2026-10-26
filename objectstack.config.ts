@@ -55,7 +55,7 @@ export default defineStack({
     // Protocol compatibility range (ADR-0087 D1): an incompatible runtime
     // refuses this package at the boundary with the exact migration command
     // instead of failing deep in a schema parse.
-    engines: { protocol: '^17' },
+    engines: { protocol: '^18' },
   },
 
   // `automation` backs flow and job execution, and materialises declarative

@@ -71,7 +71,6 @@ const FANOUT_FAILURE_VARIABLES = [
 export const AssignmentFanoutFailedEn = defineEmailTemplateDefinition({
   name: 'duly.assignment_fanout_failed',
   label: 'Assignment fan-out could not reach one assignee',
-  category: 'notification',
   locale: 'en',
   subject: 'No task was created for one assignee: {{{subject}}}',
   bodyHtml:
@@ -90,7 +89,6 @@ export const AssignmentFanoutFailedEn = defineEmailTemplateDefinition({
 export const AssignmentFanoutFailedZhCN = defineEmailTemplateDefinition({
   name: 'duly.assignment_fanout_failed',
   label: '指派分发未能覆盖某位成员',
-  category: 'notification',
   locale: 'zh-CN',
   subject: '有一位成员没有生成任务：{{{subject}}}',
   bodyHtml:

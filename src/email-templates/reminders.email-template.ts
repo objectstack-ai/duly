@@ -79,7 +79,6 @@ const REMINDER_VARIABLES = [
 export const TaskLeadTimeReminderEn = defineEmailTemplateDefinition({
   name: 'duly.task_lead_time',
   label: 'Task lead-time reminder',
-  category: 'notification',
   locale: 'en',
   subject: SUBJECT_LINE,
   bodyHtml: '<p>This is now on your list. Due {{due_date}}.</p>',
@@ -91,7 +90,6 @@ export const TaskLeadTimeReminderEn = defineEmailTemplateDefinition({
 export const TaskLeadTimeReminderZhCN = defineEmailTemplateDefinition({
   name: 'duly.task_lead_time',
   label: '任务提前提醒',
-  category: 'notification',
   locale: 'zh-CN',
   subject: SUBJECT_LINE,
   bodyHtml: '<p>这项任务已进入你的待办列表，截止日期 {{due_date}}。</p>',
@@ -105,7 +103,6 @@ export const TaskLeadTimeReminderZhCN = defineEmailTemplateDefinition({
 export const TaskDueSoonReminderEn = defineEmailTemplateDefinition({
   name: 'duly.task_due_soon',
   label: 'Task due-soon reminder',
-  category: 'notification',
   locale: 'en',
   subject: SUBJECT_LINE,
   bodyHtml: '<p>Due in 2 days, on {{due_date}}.</p>',
@@ -117,7 +114,6 @@ export const TaskDueSoonReminderEn = defineEmailTemplateDefinition({
 export const TaskDueSoonReminderZhCN = defineEmailTemplateDefinition({
   name: 'duly.task_due_soon',
   label: '任务即将到期提醒',
-  category: 'notification',
   locale: 'zh-CN',
   subject: SUBJECT_LINE,
   bodyHtml: '<p>还有 2 天到期，截止日期 {{due_date}}。</p>',
@@ -131,7 +127,6 @@ export const TaskDueSoonReminderZhCN = defineEmailTemplateDefinition({
 export const TaskOverdueEscalationEn = defineEmailTemplateDefinition({
   name: 'duly.task_overdue',
   label: 'Task overdue escalation — owner',
-  category: 'notification',
   locale: 'en',
   subject: SUBJECT_LINE,
   bodyHtml: '<p>Past due since {{due_date}}.</p>',
@@ -144,7 +139,6 @@ export const TaskOverdueEscalationEn = defineEmailTemplateDefinition({
 export const TaskOverdueEscalationZhCN = defineEmailTemplateDefinition({
   name: 'duly.task_overdue',
   label: '任务逾期升级提醒 — 负责人',
-  category: 'notification',
   locale: 'zh-CN',
   subject: SUBJECT_LINE,
   bodyHtml: '<p>自 {{due_date}} 起已逾期。</p>',

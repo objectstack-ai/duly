@@ -105,7 +105,7 @@ describe('wiring', () => {
 
   it('threads a retry policy and a timeout to the adapter', () => {
     expect(DispatchJob.retryPolicy?.maxRetries).toBeGreaterThan(0);
-    expect(DispatchJob.timeout).toBeGreaterThan(0);
+    expect(DispatchJob.timeoutMs).toBeGreaterThan(0);
   });
 });
 

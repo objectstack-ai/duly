@@ -74,12 +74,12 @@ export const TaskCompleteAction = defineAction({
   // must fail this one. Granted by the `duly_member` set, and so by every set
   // that inherits it.
   requiredPermissions: ['duly.task.update_status'],
-  // The platform's own one-click reversal: the runtime snapshots the record's
-  // prior field values and offers Undo on the success toast. It covers the
-  // mistake noticed IMMEDIATELY; `duly_task_undo` below covers the one noticed
-  // after the toast is gone. Both exist because the toast is transient and the
-  // promise this action makes ("an accidental tick costs one click") is not.
-  undoable: true,
+  // No `undoable`. The success toast's Undo is captured on exactly two action
+  // shapes, `operation: 'update'` and `type: 'api'`, and on a `script` action
+  // the flag never produced one — `@objectstack/spec` 17.5 started refusing
+  // it for that reason. So the one-click reversal this action promises ("an
+  // accidental tick costs one click") is `duly_task_undo` below, and always
+  // was: a row action, not a transient toast.
   refreshAfter: true,
   successMessage: 'Done.',
 });
@@ -151,7 +151,7 @@ export const TaskSkipAction = defineAction({
       helpText: 'Stored on the task. Short is fine; blank is not.',
     },
   ],
-  undoable: true,
+  // No `undoable`, for the reason given on complete above.
   refreshAfter: true,
   successMessage: 'Skipped.',
 });

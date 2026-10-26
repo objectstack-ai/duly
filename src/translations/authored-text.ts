@@ -230,7 +230,7 @@ const OPAQUE: Readonly<Record<string, string>> = {
   'app.branding': 'brand colours',
   'dashboard.header': 'header display flags',
   'dashboard.widgets[].layout': 'grid geometry',
-  'dashboard.widgets[].chartConfig': 'chart type, colours and display flags',
+  'dashboard.widgets[].chartConfig': 'colours and display flags — the chart family is the widget\'s own `type`',
   'dashboard.widgets[].options': 'renderer extras — sort key and direction',
   'dashboard.widgets[].filter': 'presentation-scope filter — field paths and date macros',
   'dataset.measures[].filter': 'measure filter — field paths, stored values and date macros',
