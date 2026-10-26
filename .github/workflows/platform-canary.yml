@@ -25,8 +25,6 @@ name: Platform canary
 on:
   schedule:
     - cron: '23 2 * * *'
-  push:
-    branches: [claude/project-thread-fr21kk]  # TEMPORARY dry-run trigger, removed before review
   workflow_dispatch:
     inputs:
       version:
