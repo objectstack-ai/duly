@@ -1,19 +1,40 @@
 # Duly
 
-**Recurring obligation and duty management.**
+**Recurring obligation and duty management — the standard ObjectStack template app.**
 
-Every role in an organisation owes a set of things on a repeating clock — a
-monthly return, a quarterly inspection, an annual review, a weekly reconciliation.
-Most of them are tracked in a spreadsheet, remembered by one person, and
-discovered late.
+Duly 是 ObjectStack 的标准模板应用，用来管理周期性履职：每个岗位按固定周期欠下的
+那些事——月报、季度检查、年度评审、每周对账。今天这些事多半记在一张 Excel 表里，
+靠一个人记着，提醒和「做完了」散落在微信群里，出了问题才被发现。Duly 替代的就是
+这张表加这个群：履职只定义一次，按期自动派发，一键完成，逐级汇总，管理者不用向任
+何人要进度。六十秒跑起来：
 
-Duly turns that spreadsheet into a system: duties are defined once against a
+1. 克隆这个仓库，`pnpm install`
+2. `pnpm demo:zh` —— 带着一个中文示例组织启动，每个视图第一屏就有内容
+3. 把示例目录换成你自己的：`rm -rf .objectstack/data`，`pnpm dev`，然后用下文
+   「Import your existing list」里的 Import 按钮导入你那张表
+
+Duly is the standard ObjectStack template app for recurring obligations: every
+role in an organisation owes a set of things on a repeating clock — a monthly
+return, a quarterly inspection, an annual review, a weekly reconciliation. Today
+most of them live in a spreadsheet, remembered by one person, with the reminders
+and the "done" messages scattered through a chat group, and are discovered late.
+Duly replaces that spreadsheet and that group: duties are defined once against a
 role, dispatched automatically each period, completed in one click, and rolled up
 so every level of management sees the state of play without asking for a status
-report.
+report. Sixty seconds to a running app:
+
+1. Clone this repository and `pnpm install`
+2. `pnpm demo:zh` — starts with a worked example organisation in Chinese, every
+   view populated on the first screen (`pnpm demo` for the same example in
+   English)
+3. Replace the example catalog with your own: `rm -rf .objectstack/data`,
+   `pnpm dev`, then import your spreadsheet through the Import button described
+   under *Import your existing list* below
 
 Built on [ObjectStack](https://github.com/objectstack-ai/objectstack) — metadata-driven,
-Apache-2.0, self-hostable, and an MCP server out of the box.
+Apache-2.0, self-hostable, and an MCP server out of the box. Beside an EHS or
+QHSE suite, Duly is the duty layer, not a second system of record; the
+[positioning](docs/product/positioning.md) page says what that means.
 
 ---
 
@@ -187,7 +208,7 @@ docs/import/             the recorded import walk, screen by screen
 - [Data model](docs/product/data-model.md) — the five objects and why each exists
 - [Design principles](docs/product/design-principles.md) — the constraints above, argued
 - [Importing an existing list](docs/import/walkthrough.md) — the standard Import, walked and measured
-- [Roadmap](docs/roadmap.md) — milestones M0–M4
+- [Roadmap](docs/roadmap.md) — capability gates, ending at the template gate: install it, load your catalog, run it without us
 
 ## License
 
