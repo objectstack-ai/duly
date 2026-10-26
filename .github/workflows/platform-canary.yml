@@ -25,6 +25,8 @@ name: Platform canary
 on:
   schedule:
     - cron: '23 2 * * *'
+  push:
+    branches: [claude/project-thread-fr21kk]  # TEMPORARY dry-run trigger, removed before review
   workflow_dispatch:
     inputs:
       version:
@@ -47,7 +49,7 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      FORCED_VERSION: ${{ inputs.version }}
+      FORCED_VERSION: ${{ inputs.version || '17.3.0' }}  # TEMPORARY dry run: already-current path
       BASE: ${{ github.ref_name }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
