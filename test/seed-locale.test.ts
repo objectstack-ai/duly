@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
 import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
+import { SecurityPlugin } from '@objectstack/plugin-security';
 import { SharingServicePlugin } from '@objectstack/plugin-sharing';
 
 /**
@@ -109,6 +110,10 @@ const boot = async (locale: string): Promise<Booted> => {
   // because `sharing` is always on. Through 17.x the memory driver took rows
   // for a table nobody declared; from 18 the engine refuses the name.
   await kernel.use(new SharingServicePlugin());
+  // `sys_user_permission_set`, where the demo grants its sign-in account the
+  // Duly sets (#152), is SecurityPlugin's — mounted on every real boot. One
+  // unregistered object fails the whole seed loader, not just its own rows.
+  await kernel.use(new SecurityPlugin());
   await kernel.use(new AppPlugin(stack as any, undefined, { skipSeedData: false }));
   await kernel.bootstrap();
 

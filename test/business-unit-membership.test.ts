@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
 import { PlatformObjectsPlugin } from '@objectstack/platform-objects/plugin';
+import { SecurityPlugin } from '@objectstack/plugin-security';
 import { SharingServicePlugin } from '@objectstack/plugin-sharing';
 import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
@@ -95,6 +96,10 @@ beforeAll(async () => {
   // them.
   await kernel.use(new PlatformObjectsPlugin());
   await kernel.use(new SharingServicePlugin());
+  // `sys_user_permission_set`, where the demo grants its sign-in account the
+  // Duly sets (#152), is SecurityPlugin's — mounted on every real boot. One
+  // unregistered object fails the whole seed loader, not just its own rows.
+  await kernel.use(new SecurityPlugin());
   await kernel.use(new AppPlugin(stack as any, undefined, { skipSeedData: false }));
   await kernel.bootstrap();
   data = kernel.getService('data');
