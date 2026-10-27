@@ -163,7 +163,18 @@ export const Task = ObjectSchema.create({
       description: 'Empty for one-off tasks, which have no period.',
     }),
 
-    due_date: Field.date({ label: 'Due', group: 'basics' }),
+    // A deadline, declared (spec 18): `dueLike` is what makes the console
+    // render relative, red-when-past wording. Nothing is inferred from the
+    // field name any more, so without it an overdue task reads as a plain
+    // date. `settledWhen` names the three terminal statuses — the deadline
+    // stops counting once the task has an outcome, so a task done late does
+    // not stay red forever. `open` and `in_progress` are the only live states.
+    due_date: Field.date({
+      label: 'Due',
+      group: 'basics',
+      dueLike: true,
+      settledWhen: P`record.status in ['done', 'skipped', 'cancelled']`,
+    }),
 
     visible_from: Field.date({
       label: 'Shows up on',
