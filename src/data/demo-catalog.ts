@@ -432,10 +432,11 @@ export interface DemoDuty {
  */
 const DUTIES_EN: readonly DemoDuty[] = [
   // ── The account `objectstack dev` logs you in as ──────────────────────
-  // Deliberately given a real week: a monthly pair that keeps My week
-  // populated, a quarter that has already run three times, the semi-annual
-  // audit that goes stale, one standing duty, and one self-declared duty so
-  // the caliber split is visible on the evaluator's OWN screen.
+  // Deliberately given a real week: a monthly pair, a quarter that has
+  // already run three times, the semi-annual audit that goes stale, one
+  // standing duty, a self-declared duty that was returned so the caliber
+  // split is visible on the evaluator's OWN screen, and a weekly walk that
+  // keeps My week populated on every day of the year.
   { name: 'Emissions return — Northgate', item: 'Emissions return', owner: ADMIN, source: 'catalog' },
   { name: 'Waste transfer log review — Northgate', item: 'Waste transfer log review', owner: ADMIN, source: 'catalog' },
   { name: 'Permit condition review — Northgate', item: 'Permit condition review', owner: ADMIN, source: 'catalog' },
@@ -457,6 +458,20 @@ const DUTIES_EN: readonly DemoDuty[] = [
     // persuasive thing this card has to show.
     review: 'returned',
     reviewNote: 'Reading the bulletins is not the duty — the duty is recording what changed and who has to act. Rewrite the acceptance bar and send it back.',
+  },
+  {
+    name: 'Weekly bund and outfall walk',
+    item: null,
+    owner: ADMIN,
+    source: 'self',
+    // Two weeks' notice on a weekly duty, so this week's walk and next week's
+    // are both on the list every day. That is what holds My week at three or
+    // more: the late emissions return is always there, but the monthly pair,
+    // the quarter and the audit all have days between their lead windows, and
+    // in January and July they fall between them together. Fewer than 13 days
+    // and some days carry one walk, not two. `test/demo-calendar.test.ts`
+    // sweeps a year of days.
+    own: { form: 'recurring', frequency: 'weekly', dueAnchor: 'period_end', dueOffsetDays: -2, leadDays: 13, graceDays: 0, description: 'Look at every bund and the outfall chamber, and log what you saw even when nothing was wrong.' },
   },
 
   // ── Northgate Quality ─────────────────────────────────────────────────

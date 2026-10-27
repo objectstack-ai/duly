@@ -398,6 +398,7 @@ describe('the English demo is byte-for-byte what it was', () => {
       'Track my own training hours',
       'Waste transfer log review — Northgate',
       'Waste transfer log review — Riverside',
+      'Weekly bund and outfall walk',
     ]);
   });
 
