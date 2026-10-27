@@ -812,5 +812,38 @@ export const dulyChinese = defineTranslationBundle({
         },
       },
     },
+
+    // ── 岗位与权限集 — 控制台的岗位、权限集选择器列出的就是这些 ──────────
+    // 从 18.2.0 起平台为这两类元数据注册了翻译器，按名称寻址
+    // （`positions.<名称>`、`permissions.<名称>`）。「主管」沿用全文的用词。
+    positions: {
+      duly_member: {
+        label: '团队成员',
+        description: '拥有职责并记工作日志的每个人。每一位 Duly 用户都持有它，主管和管理员也不例外。',
+      },
+      duly_manager: {
+        label: '主管',
+        description: '有下属或负责某个部门。可以查看他们的任务和职责，只能写指派；状态仍由做这件工作的人自己填。',
+      },
+      duly_admin: {
+        label: 'Duly 管理员',
+        description: '维护岗位职责库并负责推行上线。不是超级用户：任何地方都没有“查看全部 / 修改全部”，对个人工作日志也没有更宽的读取范围。',
+      },
+    },
+
+    permissions: {
+      duly_member: {
+        label: 'Duly — 团队成员',
+        description: '拥有职责、处理任务、记个人工作日志。一切都只限于持有者自己的记录。',
+      },
+      duly_manager: {
+        label: 'Duly — 主管',
+        description: '团队成员的全部权限，外加本部门及以下任务与职责的读取权限，以及发起指派的能力。不写任何别人的状态。',
+      },
+      duly_admin: {
+        label: 'Duly — 管理员',
+        description: '主管的全部权限，外加对岗位职责库的完全控制，以及全组织范围的职责读取权限。没有“查看全部 / 修改全部”，对个人工作日志也没有更宽的读取范围。',
+      },
+    },
   },
 });

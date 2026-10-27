@@ -39,13 +39,13 @@ import { TRANSLATABLE_METADATA_TYPES } from '@objectstack/spec/system';
  * ── What is translatable is the PLATFORM's answer, not ours ──────────────
  * `TRANSLATABLE_METADATA_TYPES` is imported from `@objectstack/spec/system`,
  * where it is documented as "derived from the dispatch table — never restate
- * it". Measured on 17.3.0 it is exactly
- * `{ view, action, object, app, dashboard, dataset, page }`. Every other
- * metadata type this app ships — flow, job, hook, permission set, position,
- * sharing rule — has no translator and no bundle group, so its display text is
- * `untranslatable` by the platform's own declaration rather than by our
- * judgement. `test/i18n-coverage.test.ts` pins the set, so a platform change
- * cannot pass silently.
+ * it". Measured on 18.2.0 it is exactly
+ * `{ view, action, object, app, dashboard, dataset, page, picklist, position,
+ * permission, report }`. Every other metadata type this app ships — flow, job,
+ * hook, sharing rule — has no translator and no bundle group, so its display
+ * text is `untranslatable` by the platform's own declaration rather than by
+ * our judgement. `test/i18n-coverage.test.ts` pins the set, so a platform
+ * change cannot pass silently.
  *
  * ── That pin did its job, which is why this file changed (#106) ──────────
  * `dataset` is in the set above because objectstack#14381 put it there. The
@@ -62,8 +62,11 @@ import { TRANSLATABLE_METADATA_TYPES } from '@objectstack/spec/system';
  * Each verdict below records where its key is resolved, because in two of the
  * three cases it is NOT the document translator a reader would reach for
  * first. The exemption list is now the designer- and operator-facing text
- * only: flows, jobs, hooks, positions, permission sets, and the one
- * `element:text` `content` slot the page face still has no key for.
+ * only: flows, jobs, hooks, and the one `element:text` `content` slot the page
+ * face still has no key for. Positions and permission sets left it on the
+ * 18.2.0 bump, the same way: the pin went red, and their labels and
+ * descriptions are now `translate`, under `positions.<name>` and
+ * `permissions.<name>`.
  *
  * ── Measured behaviour the key builders below depend on ──────────────────
  * Run against `@objectstack/spec` 17.2.0's own resolvers, not assumed:
@@ -542,7 +545,10 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'action.label': translate((c) => actionKey(c, 'label')),
   'action.description': translate((c) => actionKey(c, 'description')),
   'action.confirmText': translate((c) => actionKey(c, 'confirmText')),
-  'action.successMessage': translate((c) => actionKey(c, 'successMessage')),
+  // A template slot from 18.2, like a bulk action's `confirmText`: the sentence
+  // sits at `.source` and keeps the action's own `successMessage` key.
+  'action.successMessage.source': translate((c) => actionKey(c, 'successMessage')),
+  'action.successMessage.dialect': machine('template dialect'),
   'action.params[].label': translate((c) => actionParamKey(c, 'label')),
   'action.params[].helpText': translate((c) => actionParamKey(c, 'helpText')),
   'action.params[].placeholder': translate((c) => actionParamKey(c, 'placeholder')),
@@ -667,14 +673,17 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'hook.label': untranslatable(ADMIN_WHY('hook')),
   'hook.description': untranslatable(ADMIN_WHY('hook')),
 
-  // ── security — operator-facing, no translator, no bundle group ────────
+  // ── security — the console's position and permission-set pickers ─────
+  // Translatable from 18.2: the platform registers a translator for both
+  // types, keyed `positions.<name>` and `permissions.<name>`, because the
+  // console's `position-ref` and `permission-ref` pickers list them.
   'position.name': machine('position name'),
-  'position.label': untranslatable(ADMIN_WHY('position')),
-  'position.description': untranslatable(ADMIN_WHY('position')),
+  'position.label': translate((c) => securityCatalogKey('positions', c, 'label')),
+  'position.description': translate((c) => securityCatalogKey('positions', c, 'description')),
   'permissionSet.name': machine('permission set name'),
   'permissionSet.systemPermissions[]': machine('capability names'),
-  'permissionSet.label': untranslatable(ADMIN_WHY('permission set')),
-  'permissionSet.description': untranslatable(ADMIN_WHY('permission set')),
+  'permissionSet.label': translate((c) => securityCatalogKey('permissions', c, 'label')),
+  'permissionSet.description': translate((c) => securityCatalogKey('permissions', c, 'description')),
 };
 
 function FLOW_WHY(): string {
@@ -731,6 +740,11 @@ function bulkActionParamKey(ctx: KeyContext, leaf: string): readonly string[] | 
   const base = bulkActionBase(ctx, bulkActionDefAt(ctx, defIndex));
   const param = str(ctx.parent.name);
   return base && param ? [...base, 'params', param, leaf] : undefined;
+}
+
+/** A position or permission set, by its `name`, in the group the platform's translator reads. */
+function securityCatalogKey(group: 'positions' | 'permissions', ctx: KeyContext, leaf: string): readonly string[] | undefined {
+  return id(ctx) ? [group, id(ctx)!, leaf] : undefined;
 }
 
 function actionKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {

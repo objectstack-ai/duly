@@ -1,7 +1,7 @@
 # Configurability — what a customer can change without code
 
 **Verdict.** On `@objectstack/*` **17.3.0** (what this repo's lockfile installed
-when this was measured; it now installs 18.1.0, which has not been re-measured
+when this was measured; it now installs 18.2.0, which has not been re-measured
 here), a customer's administrator
 can run Duly's *content* alone: load, edit and retire catalog items, set every
 duty's frequency, anchor, offset, lead and grace, build the business-unit tree

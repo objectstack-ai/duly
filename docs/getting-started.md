@@ -102,7 +102,7 @@ platform's scheduled work on for you, but a deployment started with
 `pnpm start` must set `OS_AUTOMATION_SCHEDULED_WORK_ENABLED=true`, or no duty
 is ever dispatched and no reminder is ever sent.
 
-> **There is no run-now today.** `@objectstack/*` 18.1.0 offers no CLI command,
+> **There is no run-now today.** `@objectstack/*` 18.2.0 offers no CLI command,
 > REST route or Console button that runs a job on demand (the job service has
 > no HTTP surface, and the `sys_job` catalogue is read-only), so on a fresh
 > install the first tasks appear after the next 01:00 UTC run, with `pnpm dev`
