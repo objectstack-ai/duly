@@ -212,10 +212,15 @@ const STALLED_LATE = t('Calibration verification — Lab 1');
  * Open, NOT yet due, and untouched since dispatch. The **Not moving** view
  * doing the job it exists for.
  *
- * Both are long-lead obligations — a half-year audit noticed five months out,
- * a yearly induction refresh noticed four months out — which is the only shape
- * in which stagnation can fire before lateness can. A short-lead monthly task
- * cannot be three weeks stale and still in date.
+ * Both are long-lead obligations — a half-year audit noticed more than six
+ * months out, a yearly induction refresh noticed four months out — which is
+ * the only shape in which stagnation can fire before lateness can. A
+ * short-lead monthly task cannot be three weeks stale and still in date.
+ *
+ * The audit's lead is longer than its half-year, so one audit is always stale
+ * and in date. The refresh joins it from July to November. With Lab 1's late
+ * row that is 2 or 3 rows on every day, which `test/demo-calendar.test.ts`
+ * holds for a year of days.
  */
 const STALLED_IN_FLIGHT: readonly string[] = [
   'Site environmental audit — Northgate',

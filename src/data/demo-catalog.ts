@@ -119,8 +119,12 @@ const CATALOG_ITEMS_EN: readonly DemoCatalogItem[] = [
     dueOffsetDays: 0,
     // A long lead on purpose: half a year of work needs half a year of notice,
     // and it is what makes a task visible — and therefore capable of going
-    // STALE — months before it is late. See `demo-history.ts`.
-    leadDays: 150,
+    // STALE — months before it is late. Longer than the half-year itself, so
+    // the next audit is on the list before this one is due, and the audit
+    // being worked has always been open for more than a fortnight. That is
+    // what keeps one in-date row in "Not moving" on every day of the year;
+    // at 150 days it dropped out every January and July. See `demo-history.ts`.
+    leadDays: 200,
     graceDays: 10,
     description: 'Full walk-round audit against the group environmental standard, with findings and owners.',
     reference: 'Group Assurance Plan AP-3 §6',
@@ -246,7 +250,11 @@ const CATALOG_ITEMS_EN: readonly DemoCatalogItem[] = [
     frequency: 'monthly',
     dueAnchor: 'period_start',
     dueOffsetDays: 6,
-    leadDays: 7,
+    // Two weeks, because Lab 1's late occurrence is the row that is late AND
+    // untouched since dispatch (`demo-history.ts`), and "untouched for 14
+    // days" is only possible once it has existed for 14 days. At 7 it
+    // dropped out of "Not moving" for the first week after every due date.
+    leadDays: 14,
     graceDays: 2,
     description: 'Verify each instrument against its reference standard and record the deviation, in range or not.',
     reference: 'Quality Manual QM-31 §4',
