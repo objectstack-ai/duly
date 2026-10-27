@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppPlugin, ObjectKernel, SeedLoaderService, createStandaloneStack } from '@objectstack/runtime';
 import { SeedLoaderRequestSchema } from '@objectstack/spec/data';
 import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
+import { SecurityPlugin } from '@objectstack/plugin-security';
 import { SharingServicePlugin } from '@objectstack/plugin-sharing';
 
 import { FREQUENCIES, periodBounds, periodKeyFor, type Frequency } from '../src/functions/period.js';
@@ -121,6 +122,10 @@ beforeAll(async () => {
   // because `sharing` is always on. Through 17.x the memory driver took rows
   // for a table nobody declared; from 18 the engine refuses the name.
   await kernel.use(new SharingServicePlugin());
+  // `sys_user_permission_set`, where the demo grants its sign-in account the
+  // Duly sets (#152), is SecurityPlugin's — mounted on every real boot. One
+  // unregistered object fails the whole seed loader, not just its own rows.
+  await kernel.use(new SecurityPlugin());
   // skipSeedData FALSE, and `stack` unmodified — the app's own `dulySeeds`,
   // resolved by the opt-in gate above, going through the platform's own loader
   // is exactly what is under test. Nothing here substitutes the demo array in

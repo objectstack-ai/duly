@@ -19,7 +19,7 @@ import { assignmentSeed } from './assignment.seed.js';
 import { catalogSeed } from './catalog.seed.js';
 import { dutySeed } from './duty.seed.js';
 import { logEntrySeed } from './log-entry.seed.js';
-import { businessUnitMemberSeed, businessUnitSeed, userSeed } from './org.seed.js';
+import { adminPermissionSetSeed, businessUnitMemberSeed, businessUnitSeed, userSeed } from './org.seed.js';
 import {
   taskAdHocSeed,
   taskAdHocTouchSeed,
@@ -28,6 +28,7 @@ import {
 } from './task.seed.js';
 
 export {
+  adminPermissionSetSeed,
   assignmentSeed,
   businessUnitMemberSeed,
   businessUnitSeed,
@@ -89,6 +90,10 @@ export const demoSeeds: Seed[] = [
   businessUnitSeed,
   userSeed,
   businessUnitMemberSeed,
+  // The demo account's Duly permission sets (#152). After `userSeed`, which
+  // its `user_id` resolves against; without it the account you sign in as
+  // sees no Complete, Skip or Undo on its own tasks.
+  adminPermissionSetSeed,
 
   // 2. What roles owe, and who owes it.
   catalogSeed,
