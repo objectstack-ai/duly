@@ -269,7 +269,7 @@ export const MemberPage = definePage({
           type: 'element:text',
           properties: {
             content: { en: 'Right now', 'zh-CN': '当下' },
-            variant: 'heading',
+            variant: 'h2',
           },
         },
         {
@@ -362,7 +362,7 @@ export const MemberPage = definePage({
           type: 'element:text',
           properties: {
             content: { en: 'This period', 'zh-CN': '本周期' },
-            variant: 'heading',
+            variant: 'h2',
           },
         },
         {
@@ -417,7 +417,7 @@ export const MemberPage = definePage({
           type: 'element:text',
           properties: {
             content: { en: 'Standing duties', 'zh-CN': '常设职责' },
-            variant: 'heading',
+            variant: 'h2',
           },
         },
         {
@@ -460,7 +460,7 @@ export const MemberPage = definePage({
           type: 'element:text',
           properties: {
             content: { en: 'Recent activity', 'zh-CN': '最近动态' },
-            variant: 'heading',
+            variant: 'h2',
           },
         },
         {
@@ -489,7 +489,7 @@ export const MemberPage = definePage({
           type: 'element:text',
           properties: {
             content: { en: 'Assigned to them', 'zh-CN': '他人指派' },
-            variant: 'heading',
+            variant: 'h2',
           },
         },
         {

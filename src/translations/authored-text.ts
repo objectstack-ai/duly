@@ -39,13 +39,13 @@ import { TRANSLATABLE_METADATA_TYPES } from '@objectstack/spec/system';
  * ── What is translatable is the PLATFORM's answer, not ours ──────────────
  * `TRANSLATABLE_METADATA_TYPES` is imported from `@objectstack/spec/system`,
  * where it is documented as "derived from the dispatch table — never restate
- * it". Measured on 17.3.0 it is exactly
- * `{ view, action, object, app, dashboard, dataset, page }`. Every other
- * metadata type this app ships — flow, job, hook, permission set, position,
- * sharing rule — has no translator and no bundle group, so its display text is
- * `untranslatable` by the platform's own declaration rather than by our
- * judgement. `test/i18n-coverage.test.ts` pins the set, so a platform change
- * cannot pass silently.
+ * it". Measured on 18.2.0 it is exactly
+ * `{ view, action, object, app, dashboard, dataset, page, picklist, position,
+ * permission, report }`. Every other metadata type this app ships — flow, job,
+ * hook, sharing rule — has no translator and no bundle group, so its display
+ * text is `untranslatable` by the platform's own declaration rather than by
+ * our judgement. `test/i18n-coverage.test.ts` pins the set, so a platform
+ * change cannot pass silently.
  *
  * ── That pin did its job, which is why this file changed (#106) ──────────
  * `dataset` is in the set above because objectstack#14381 put it there. The
@@ -62,8 +62,11 @@ import { TRANSLATABLE_METADATA_TYPES } from '@objectstack/spec/system';
  * Each verdict below records where its key is resolved, because in two of the
  * three cases it is NOT the document translator a reader would reach for
  * first. The exemption list is now the designer- and operator-facing text
- * only: flows, jobs, hooks, positions, permission sets, and the one
- * `element:text` `content` slot the page face still has no key for.
+ * only: flows, jobs, hooks, and the one `element:text` `content` slot the page
+ * face still has no key for. Positions and permission sets left it on the
+ * 18.2.0 bump, the same way: the pin went red, and their labels and
+ * descriptions are now `translate`, under `positions.<name>` and
+ * `permissions.<name>`.
  *
  * ── Measured behaviour the key builders below depend on ──────────────────
  * Run against `@objectstack/spec` 17.2.0's own resolvers, not assumed:
@@ -230,14 +233,14 @@ const OPAQUE: Readonly<Record<string, string>> = {
   'app.branding': 'brand colours',
   'dashboard.header': 'header display flags',
   'dashboard.widgets[].layout': 'grid geometry',
-  'dashboard.widgets[].chartConfig': 'chart type, colours and display flags',
+  'dashboard.widgets[].chartConfig': 'colours and display flags — the chart family is the widget\'s own `type`',
   'dashboard.widgets[].options': 'renderer extras — sort key and direction',
   'dashboard.widgets[].filter': 'presentation-scope filter — field paths and date macros',
   'dataset.measures[].filter': 'measure filter — field paths, stored values and date macros',
-  'flow.nodes[].config.fields': 'record payload — field names and `{template}` reads',
+  'flow.nodes[].config.fields': 'record payload — field names and CEL reads',
   'flow.nodes[].config.templateData': 'email render payload — `{{placeholder}}` values '
     + 'read off the record; the SENTENCES around them live in the email-template rows',
-  'flow.nodes[].config.filter': 'record lookup filter — field names and `{template}` reads',
+  'flow.nodes[].config.filter': 'record lookup filter — field names and CEL reads',
   'flow.nodes[].config.schedule': 'cron schedule',
   'flow.nodes[].config.timeRelative': 'time-relative trigger window — field, object and filter',
   'job.schedule': 'cron schedule',
@@ -322,6 +325,10 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'object.fieldGroups[].collapse': machine('section collapse behaviour'),
   'object.fields{}.options[].value': machine('the stored option value — the option key itself'),
   'object.fields{}.options[].color': machine('option colour'),
+  // [@objectstack/spec 18] The lifecycle kind of a `stageField` option —
+  // `open` / `won` / `lost`, read by the record-path renderer to order the
+  // stages. A fixed vocabulary, never display text.
+  'object.fields{}.options[].kind': machine('stage lifecycle kind'),
   // Per-option `visibleWhen` (#107) — a CEL predicate over `record` and
   // `current_user`, evaluated by the form AND by the write path. Machine, like
   // every other expression envelope in this table.
@@ -410,7 +417,13 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
    * same slot.
    */
   'view.bulkActionDefs[].label': translate((c) => bulkActionKey(c, 'label')),
-  'view.bulkActionDefs[].confirmText': translate((c) => bulkActionKey(c, 'confirmText')),
+  // A TEMPLATE slot from @objectstack/spec 18 (#24798): the authored sentence
+  // is parsed into `{ dialect: 'template', source }` so it may carry holes
+  // (`{{ count }}`, a param by name). The bundle key did not move —
+  // `bulkActions.<def>.confirmText` is still the translation surface — and the
+  // sentence is `source`, one level below where the string used to sit.
+  'view.bulkActionDefs[].confirmText.source': translate((c) => bulkActionConfirmTextKey(c)),
+  'view.bulkActionDefs[].confirmText.dialect': machine('template dialect'),
   'view.bulkActionDefs[].confirmLabel': translate((c) => bulkActionKey(c, 'confirmLabel')),
   'view.bulkActionDefs[].params[].label': translate((c) => bulkActionParamKey(c, 'label')),
   'view.bulkActionDefs[].params[].placeholder': translate((c) => bulkActionParamKey(c, 'placeholder')),
@@ -532,7 +545,10 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'action.label': translate((c) => actionKey(c, 'label')),
   'action.description': translate((c) => actionKey(c, 'description')),
   'action.confirmText': translate((c) => actionKey(c, 'confirmText')),
-  'action.successMessage': translate((c) => actionKey(c, 'successMessage')),
+  // A template slot from 18.2, like a bulk action's `confirmText`: the sentence
+  // sits at `.source` and keeps the action's own `successMessage` key.
+  'action.successMessage.source': translate((c) => actionKey(c, 'successMessage')),
+  'action.successMessage.dialect': machine('template dialect'),
   'action.params[].label': translate((c) => actionParamKey(c, 'label')),
   'action.params[].helpText': translate((c) => actionParamKey(c, 'helpText')),
   'action.params[].placeholder': translate((c) => actionParamKey(c, 'placeholder')),
@@ -621,11 +637,16 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'flow.nodes[].config.objectName': machine('bound object'),
   'flow.nodes[].config.outputVariable': machine('flow variable name'),
   'flow.nodes[].config.iteratorVariable': machine('loop variable name'),
-  'flow.nodes[].config.collection': machine('`{template}` read'),
-  'flow.nodes[].config.recipients': machine('`{template}` read'),
+  // Value slots are CEL envelopes from @objectstack/spec 18, which retired the
+  // `{…}` template dialect from them — an expression, never display text.
+  'flow.nodes[].config.collection.dialect': machine('expression dialect'),
+  'flow.nodes[].config.collection.source': machine('CEL source'),
+  'flow.nodes[].config.recipients.dialect': machine('expression dialect'),
+  'flow.nodes[].config.recipients.source': machine('CEL source'),
   'flow.nodes[].config.severity': machine('notification severity'),
   'flow.nodes[].config.topic': machine('notification topic key'),
-  'flow.nodes[].config.sourceId': machine('`{template}` read'),
+  'flow.nodes[].config.sourceId.dialect': machine('expression dialect'),
+  'flow.nodes[].config.sourceId.source': machine('CEL source'),
   'flow.nodes[].config.sourceObject': machine('bound object'),
   'flow.nodes[].config.triggerType': machine('trigger kind'),
   'flow.nodes[].config.condition.dialect': machine('expression dialect'),
@@ -652,14 +673,17 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'hook.label': untranslatable(ADMIN_WHY('hook')),
   'hook.description': untranslatable(ADMIN_WHY('hook')),
 
-  // ── security — operator-facing, no translator, no bundle group ────────
+  // ── security — the console's position and permission-set pickers ─────
+  // Translatable from 18.2: the platform registers a translator for both
+  // types, keyed `positions.<name>` and `permissions.<name>`, because the
+  // console's `position-ref` and `permission-ref` pickers list them.
   'position.name': machine('position name'),
-  'position.label': untranslatable(ADMIN_WHY('position')),
-  'position.description': untranslatable(ADMIN_WHY('position')),
+  'position.label': translate((c) => securityCatalogKey('positions', c, 'label')),
+  'position.description': translate((c) => securityCatalogKey('positions', c, 'description')),
   'permissionSet.name': machine('permission set name'),
   'permissionSet.systemPermissions[]': machine('capability names'),
-  'permissionSet.label': untranslatable(ADMIN_WHY('permission set')),
-  'permissionSet.description': untranslatable(ADMIN_WHY('permission set')),
+  'permissionSet.label': translate((c) => securityCatalogKey('permissions', c, 'label')),
+  'permissionSet.description': translate((c) => securityCatalogKey('permissions', c, 'description')),
 };
 
 function FLOW_WHY(): string {
@@ -702,12 +726,25 @@ function bulkActionKey(ctx: KeyContext, leaf: string): readonly string[] | undef
   return base ? [...base, leaf] : undefined;
 }
 
+/** `confirmText.source` sits inside the envelope, so the def is found by its index. */
+function bulkActionConfirmTextKey(ctx: KeyContext): readonly string[] | undefined {
+  const [defsKey, defIndex] = ctx.path;
+  if (defsKey !== 'bulkActionDefs') return undefined;
+  const base = bulkActionBase(ctx, bulkActionDefAt(ctx, defIndex));
+  return base ? [...base, 'confirmText'] : undefined;
+}
+
 function bulkActionParamKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {
   const [defsKey, defIndex, paramsKey] = ctx.path;
   if (defsKey !== 'bulkActionDefs' || paramsKey !== 'params') return undefined;
   const base = bulkActionBase(ctx, bulkActionDefAt(ctx, defIndex));
   const param = str(ctx.parent.name);
   return base && param ? [...base, 'params', param, leaf] : undefined;
+}
+
+/** A position or permission set, by its `name`, in the group the platform's translator reads. */
+function securityCatalogKey(group: 'positions' | 'permissions', ctx: KeyContext, leaf: string): readonly string[] | undefined {
+  return id(ctx) ? [group, id(ctx)!, leaf] : undefined;
 }
 
 function actionKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {

@@ -46,12 +46,31 @@
 // `--compile` the second boot here would serve the artifact the priming boot
 // just built — the one with no seed — and `pnpm demo` would print success and
 // show an empty app. `pnpm dev` passes it for the mirror-image reason.
+//
+// ── Why this switches scheduled work on ───────────────────────────────────
+//
+// Duly IS scheduled work: the nightly `duly_dispatch` job and the three
+// reminder sweeps are the product. From `@objectstack/*` 18 the platform arms
+// package-authored scheduled work only when
+// `OS_AUTOMATION_SCHEDULED_WORK_ENABLED` is truthy, and it is off by default,
+// so a demo booted without it has a dispatcher that never runs and reminders
+// that are never sent, and says so only as one line in the startup summary.
+// It is set here, once, so both boots below inherit it, and ONLY when the
+// caller has not set it: an explicit value, `false` included, is the caller's
+// decision and wins. Set it in the shell rather than in `.env`: `os dev`
+// loads `.env` without overriding a variable that is already set, so a `.env`
+// value loses to this default. `pnpm dev` arms it the same way, with an
+// inline default; `pnpm start` does not, because on a deployment whether
+// clock-driven work runs is the deployer's call.
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 
 const DEMO_SEED_ENV_VAR = 'DULY_DEMO_SEED';
 const DEMO_LOCALE_ENV_VAR = 'DULY_DEMO_LOCALE';
+const SCHEDULED_WORK_ENV_VAR = 'OS_AUTOMATION_SCHEDULED_WORK_ENABLED';
+
+if (process.env[SCHEDULED_WORK_ENV_VAR] === undefined) process.env[SCHEDULED_WORK_ENV_VAR] = 'true';
 
 /**
  * `sys_user.name` the account you log in as carries, per locale.

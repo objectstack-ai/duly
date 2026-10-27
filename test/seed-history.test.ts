@@ -2,6 +2,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 
@@ -39,14 +40,15 @@ import stack from '../objectstack.config.js';
  * by `completed_at_required_when_done`, and their `last_update_at` is still
  * dropped by the readonly strip.
  *
- * ── Which LAYER enforces, which is not where you would guess ─────────────
- * On UPDATE the readonly strip runs inside ObjectQL and is exempted by
- * `isSystem`. On INSERT there is no engine-level strip at all: it lives in
- * `MetadataProtocolService.createData` — the API boundary that `@objectstack/rest`
- * (and so REST, OpenAPI and MCP) writes through. `engine.insert` applies none of
- * it. The refusal below is therefore a property of the BOUNDARY, and the last
- * test in this file pins that seam so nobody reads an engine-level test as the
- * guarantee. Filed upstream — see `test('the insert-path strip is a BOUNDARY …')`.
+ * ── Which LAYER enforces ─────────────────────────────────────────────────
+ * Both verbs, inside ObjectQL, exempted by `isSystem`. Through @objectstack
+ * 17.3 the INSERT strip lived only at the API boundary
+ * (`MetadataProtocolService.createData`), so `engine.insert` from in-process
+ * code kept a caller's readonly value — filed as objectstack#14147 and pinned
+ * here as a tripwire. 17.4 moved the create-side strip into the engine, the
+ * tripwire went red with the 18 upgrade, and it was deleted as its own comment
+ * asked. The refusals below go through `protocol.createData` because that is
+ * the door a person's write arrives by; an engine-level test now reads the same.
  */
 
 // ── The seed fixture: relative instants, so "stalled" stays true forever ────
@@ -83,7 +85,7 @@ const userSeed = {
   externalId: 'name',
   mode: 'insert',
   records: [
-    { name: 'seed_user_alice', username: 'seed_user_alice', email: 'alice@example.invalid', is_active: true },
+    { name: 'seed_user_alice', email: 'alice@example.invalid' },
   ],
 };
 
@@ -143,7 +145,8 @@ const read = async (id: string) =>
 
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Same guard as test/task-hook.test.ts: point the artifact lookup at a path
     // that cannot exist, or a local `pnpm build` leaves `dist/objectstack.json`
@@ -153,6 +156,12 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
   // skipSeedData FALSE — the real declarative seeder runs, which is the whole
   // path under test. The datasets are supplied here rather than through
   // `src/data/` so that this suite owns its own fixture and does not collide
@@ -324,43 +333,5 @@ describe('an ordinary caller still may not', () => {
       { object: 'duly_task', fields: ['last_update_at'], reason: 'readonly' },
     ]);
     expect((await read(created.id)).last_update_at).toBe(before);
-  });
-});
-
-// ───────────────────────────────────────────────────────────────────────────
-// Which layer actually enforces — a tripwire on a filed platform defect
-// ───────────────────────────────────────────────────────────────────────────
-describe('the insert-path strip is a BOUNDARY guard, not an engine guard', () => {
-  /**
-   * Measured on @objectstack/runtime 17.2.0, and NOT what the platform's own
-   * prose implies. ObjectQL's `assertReferencesResolve` describes
-   * `stripReadonlyForInsert` as one of "every other write-path guard in this
-   * engine", but that function lives in `@objectstack/metadata-protocol` and is
-   * called only from `MetadataProtocolService.createData` / `cloneData`.
-   * `engine.insert` applies NO readonly strip. On UPDATE the strip is genuinely
-   * in the engine and is `isSystem`-gated — the asymmetry is the finding.
-   *
-   * The reachable consequence in this app: the automation engine's
-   * `create_record` executor writes through `data.insert`, and it even wires up
-   * `onFieldsDropped` to report readonly drops — a channel nothing can fire on
-   * this path. A flow not running as system can therefore seed a readonly
-   * column with no refusal and no warning.
-   *
-   * This test pins the CURRENT behaviour so the seam is visible. When the
-   * platform closes it this goes red, which is the intended signal: delete this
-   * test and drop the caveat from AGENTS.md. It is not an assertion that the
-   * behaviour is correct.
-   */
-  it('engine.insert keeps a non-system caller\'s readonly value (filed upstream)', async () => {
-    const row = await data.insert(
-      'duly_task',
-      adhoc({ subject: 'engine direct done', status: 'done', completed_at: COMPLETED_ON }),
-    );
-    const stored = await read(row.id);
-    expect(stored.status).toBe('done');
-    expect(
-      stored.completed_at,
-      'if this is no longer the forged value, the platform has closed the seam — see the comment above',
-    ).toBe(COMPLETED_ON);
   });
 });

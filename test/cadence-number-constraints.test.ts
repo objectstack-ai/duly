@@ -2,11 +2,13 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 import { CatalogItem, Duty } from '../src/objects/index.js';
 import { FREQUENCIES } from '../src/functions/period.js';
 import { planDispatch, type DispatchDuty } from '../src/jobs/dispatch.plan.js';
+import { ensureUsers } from './support/users.js';
 
 /**
  * #82 — `due_offset_days`, `lead_days` and `grace_days` accepted values the
@@ -63,13 +65,15 @@ interface FieldFault {
 
 let kernel: { getService(name: string): unknown; shutdown?(): Promise<void> } | undefined;
 let data: {
+  find(o: string, q?: AnyRow, x?: AnyRow): Promise<AnyRow[]>;
   insert(o: string, d: AnyRow, x?: AnyRow): Promise<AnyRow>;
   update(o: string, d: AnyRow, x?: AnyRow): Promise<unknown>;
 };
 
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Must not resolve to a real path — see cadence-conditional-defaults.test.ts:
     // a local `pnpm build` would make the suite report on the last BUILD.
@@ -77,10 +81,17 @@ beforeAll(async () => {
   });
   const k = new ObjectKernel();
   for (const plugin of plugins) await k.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await k.use(createIdentityObjectsPlugin());
   await k.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await k.bootstrap();
   kernel = k as unknown as typeof kernel;
   data = k.getService('data') as typeof data;
+  await ensureUsers(data, [OWNER]);
 }, 180_000);
 
 afterAll(async () => {
@@ -114,9 +125,12 @@ async function refusal(promise: Promise<unknown>): Promise<{ code: unknown; mess
 
 let seq = 0;
 
+/** Who owns every duty here: incidental to what is tested, and minted at boot. */
+const OWNER = 'user_owner';
+
 const dutyRow = (over: AnyRow): AnyRow => ({
   name: `Duty ${++seq}`,
-  owner: `user_${seq}`,
+  owner: OWNER,
   source: 'self',
   status: 'active',
   form: 'recurring',

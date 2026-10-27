@@ -2,15 +2,17 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 import { dulyHooks } from '../src/hooks/index.js';
 import { planDispatch } from '../src/jobs/dispatch.plan.js';
+import { ensureUsers } from './support/users.js';
 
 /**
  * `duly_task` lifecycle stamps.
  *
- * These run against a REAL booted ObjectQL engine (in-memory driver) with the
+ * These run against a REAL booted ObjectQL engine (SQLite, in memory) with the
  * app's own `objectstack.config.ts` as the bundle, rather than against a
  * hand-made hook context. That matters for two reasons:
  *
@@ -44,9 +46,33 @@ const newTask = async (over: Record<string, unknown> = {}) =>
 
 const read = async (id: string) => data.findOne('duly_task', { where: { id } });
 
+/**
+ * A task as the DISPATCHER writes it — or the seed, or an import: in system
+ * context, the one in which the readonly columns it carries (`late_after`,
+ * `completed_at`) are stored rather than stripped. `src/jobs/dispatch.job.ts`
+ * inserts under `{ isSystem: true }` for exactly this reason.
+ *
+ * `newTask` above is a MEMBER's create. Since @objectstack 17.4 the static
+ * `readonly` strip runs on `engine.insert` itself, not only at the REST door,
+ * so a member who sends `late_after` has it taken and the hook's zero-grace
+ * fallback stamps the row instead — pinned below ("cannot be seeded by a
+ * caller's create"). Through 17.3 a context-less insert kept the column, which
+ * is why these fixtures used to read as member creates.
+ */
+const SYSTEM = { isSystem: true } as const;
+const dispatchedTask = async (over: Record<string, unknown> = {}) =>
+  data.insert('duly_task', {
+    subject: 'Return the safety inspection',
+    owner: 'user_alice',
+    source: 'catalog',
+    status: 'open',
+    ...over,
+  }, { context: SYSTEM });
+
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Point the artifact lookup at a path that cannot exist. Left to its
     // default it resolves `<cwd>/dist/objectstack.json`, and when a local
@@ -61,9 +87,16 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
   await kernel.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await kernel.bootstrap();
   data = kernel.getService('data');
+  await ensureUsers(data, ['user_alice', 'user_bob']);
 }, 120_000);
 
 afterAll(async () => {
@@ -772,7 +805,7 @@ describe('late_after — the deadline the row is born with', () => {
   it('keeps the deadline the dispatcher stamped, grace and all', async () => {
     // The planner's value must survive the insert leg untouched, or every task
     // in the system would silently be judged at zero grace.
-    const task = await newTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
+    const task = await dispatchedTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
     expect(task.late_after).toBe('2026-05-11');
   });
 
@@ -803,16 +836,25 @@ describe('late_after — the deadline the row is born with', () => {
     // Write-once, in its smallest form: `late_after` is what the row was born
     // with. Anything else and a task's compliance deadline could be moved by
     // an ordinary edit, with no trace.
-    const task = await newTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
+    const task = await dispatchedTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
     await data.update('duly_task', { id: task.id, due_date: '2026-09-30' });
     expect((await read(task.id)).late_after).toBe('2026-05-11');
   });
 
   it('is not writable by a caller', async () => {
-    const task = await newTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
+    const task = await dispatchedTask({ due_date: '2026-05-04', late_after: '2026-05-11' });
     await data.update('duly_task', { id: task.id, late_after: '2099-01-01' });
     expect((await read(task.id)).late_after, 'readonly, and the hook is its only writer')
       .toBe('2026-05-11');
+  });
+
+  it('cannot be seeded by a caller\'s create either', async () => {
+    // The insert-side half of the same rule. A member creating their own task
+    // does not get to name its deadline: the column is taken from a non-system
+    // create and the zero-grace fallback stamps it, so a far-future
+    // `late_after` cannot be used to keep a row out of the Late lens.
+    const task = await newTask({ due_date: '2026-05-04', late_after: '2099-01-01' });
+    expect(task.late_after, 'the due date, at zero grace — not the value the caller sent').toBe('2026-05-04');
   });
 });
 
@@ -883,7 +925,11 @@ describe('WRITE-ONCE — editing a duty\'s grace never rewrites history', () => 
     const { draft } = await dispatchedTaskFor(duty.id, GRACE_AT_DISPATCH);
     expect(draft!.late_after).toBe('2026-08-08');
 
-    const task = await data.insert('duly_task', { ...draft, subject: draft!.subject, owner: 'user_alice' });
+    const task = await data.insert(
+      'duly_task',
+      { ...draft, subject: draft!.subject, owner: 'user_alice' },
+      { context: SYSTEM },
+    );
 
     // The correction an admin makes on Monday morning.
     const widened = await data.update('duly_duty', { id: duty.id, grace_days: 21 });
@@ -907,7 +953,7 @@ describe('WRITE-ONCE — editing a duty\'s grace never rewrites history', () => 
       subject: 'completed after its grace ran out',
       owner: 'user_alice',
       late_after: dayFromToday(-2),
-    });
+    }, { context: SYSTEM });
     const done = await data.update('duly_task', { id: task.id, status: 'done' });
     expect(done.completed_late, 'completed two days past its grace').toBe(true);
 
@@ -923,7 +969,7 @@ describe('WRITE-ONCE — editing a duty\'s grace never rewrites history', () => 
 
 describe('completed_late — the verdict, stamped with completed_at', () => {
   it('is false for a completion inside the grace window', async () => {
-    const task = await newTask({ due_date: dayFromToday(-3), late_after: dayFromToday(2) });
+    const task = await dispatchedTask({ due_date: dayFromToday(-3), late_after: dayFromToday(2) });
     const done = await data.update('duly_task', { id: task.id, status: 'done' });
     expect(done.completed_late, 'past due but inside its grace — the whole point of grace').toBe(false);
   });
@@ -932,13 +978,13 @@ describe('completed_late — the verdict, stamped with completed_at', () => {
     // `late_after` is the last day still inside the window: grace is granted in
     // whole days, so a task completed at any hour of that day is on time. Off
     // by one here and every duty grants a day less grace than it says.
-    const task = await newTask({ due_date: dayFromToday(-5), late_after: dayFromToday(0) });
+    const task = await dispatchedTask({ due_date: dayFromToday(-5), late_after: dayFromToday(0) });
     const done = await data.update('duly_task', { id: task.id, status: 'done' });
     expect(done.completed_late).toBe(false);
   });
 
   it('is true the day after the window closes', async () => {
-    const task = await newTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-1) });
+    const task = await dispatchedTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-1) });
     const done = await data.update('duly_task', { id: task.id, status: 'done' });
     expect(done.completed_late).toBe(true);
   });
@@ -960,7 +1006,7 @@ describe('completed_late — the verdict, stamped with completed_at', () => {
       { subject: 'verdict: due, inside grace', due_date: dayFromToday(-1), late_after: dayFromToday(1) },
       { subject: 'verdict: due, past grace', due_date: dayFromToday(-9), late_after: dayFromToday(-4) },
     ]) {
-      const task = await newTask(over);
+      const task = await dispatchedTask(over);
       const done = await data.update('duly_task', { id: task.id, status: 'done' });
       expect(typeof done.completed_late, `${over.subject}`).toBe('boolean');
     }
@@ -970,7 +1016,7 @@ describe('completed_late — the verdict, stamped with completed_at', () => {
     // These rows never make a completion transition, so the beforeUpdate leg
     // never sees them. Without the insert leg the whole seeded six months would
     // read as verdict-less and the demo's on-time rate would be empty.
-    const late = await newTask({
+    const late = await dispatchedTask({
       subject: 'seeded, and late',
       status: 'done',
       due_date: '2026-05-01',
@@ -979,7 +1025,7 @@ describe('completed_late — the verdict, stamped with completed_at', () => {
     });
     expect(late.completed_late).toBe(true);
 
-    const onTime = await newTask({
+    const onTime = await dispatchedTask({
       subject: 'seeded, and on time',
       status: 'done',
       due_date: '2026-05-01',
@@ -990,7 +1036,7 @@ describe('completed_late — the verdict, stamped with completed_at', () => {
   });
 
   it('is cleared when a task is reopened — a completion that did not happen has no verdict', async () => {
-    const task = await newTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-4) });
+    const task = await dispatchedTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-4) });
     await data.update('duly_task', { id: task.id, status: 'done' });
     expect((await read(task.id)).completed_late).toBe(true);
 
@@ -1004,7 +1050,7 @@ describe('completed_late — the verdict, stamped with completed_at', () => {
     // Same reason `completed_at` is not re-stamped: a re-save is a state, not a
     // transition. Re-judging here would silently turn every on-time record late
     // the moment someone edits a note after the deadline.
-    const task = await newTask({ due_date: dayFromToday(-2), late_after: dayFromToday(0) });
+    const task = await dispatchedTask({ due_date: dayFromToday(-2), late_after: dayFromToday(0) });
     await data.update('duly_task', { id: task.id, status: 'done' });
     expect((await read(task.id)).completed_late).toBe(false);
 
@@ -1018,7 +1064,7 @@ describe('completed_late — the verdict, stamped with completed_at', () => {
   });
 
   it('is not writable by a caller', async () => {
-    const task = await newTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-4) });
+    const task = await dispatchedTask({ due_date: dayFromToday(-9), late_after: dayFromToday(-4) });
     const done = await data.update('duly_task', { id: task.id, status: 'done', completed_late: false });
     expect(done.completed_late, 'the caller does not get to choose this either').toBe(true);
   });
@@ -1047,7 +1093,7 @@ describe('completed_late on a predicate write — one payload, N rows', () => {
   };
 
   const openTask = (subject: string, lateAfterDays: number) =>
-    newTask({ subject, due_date: dayFromToday(lateAfterDays - 1), late_after: dayFromToday(lateAfterDays) });
+    dispatchedTask({ subject, due_date: dayFromToday(lateAfterDays - 1), late_after: dayFromToday(lateAfterDays) });
 
   it('refuses a bulk completion that contains a late row, naming it', async () => {
     // THE assertion. Without it, whichever dispatch runs last decides the

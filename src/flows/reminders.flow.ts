@@ -1,6 +1,6 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
-import { expression } from '@objectstack/spec';
+import { F, expression } from '@objectstack/spec';
 import { defineFlow } from '@objectstack/spec';
 
 /**
@@ -25,7 +25,7 @@ import { defineFlow } from '@objectstack/spec';
  * Two properties come with that choice, and both are load-bearing here:
  *
  * 1. **The sweep launches the flow once per matching record**, with the record
- *    in the automation context — so `{record.x}` templates and the start
+ *    in the automation context — so `record.x` value expressions and the start
  *    condition work exactly as they do for a record-change flow. That is right
  *    for an owner-facing reminder (one message, one task, one owner) and it is
  *    precisely WRONG for a digest, which is the gap noted below.
@@ -147,9 +147,9 @@ import { defineFlow } from '@objectstack/spec';
  * error, not a precedence rule — so re-adding a string here is refused at the
  * gate rather than silently winning over the bundle.
  *
- * `template` is read RAW (no `{token}` interpolation): it is a static metadata
- * cross-reference. `templateData` VALUES are interpolated per run, which is
- * how `{record.subject}` still reaches the rendered text. A name that matches
+ * `template` is read RAW: it is a static metadata cross-reference.
+ * `templateData` VALUES are CEL value envelopes evaluated per run, which is
+ * how `record.subject` still reaches the rendered text. A name that matches
  * no row is the one silent failure this swap introduces — the inbox channel
  * classifies `TEMPLATE_NOT_FOUND` as PERMANENT, so the delivery dead-letters
  * and the run still reports success. `test/email-templates.test.ts` pins every
@@ -271,8 +271,10 @@ const DAYS_PAST_DUE = 'daysBetween(record.due_date, today())';
  * One constant for all three because the three bundles declare the SAME two
  * variables; a per-flow copy would let one drift into passing a hole its
  * template does not read (rendered as nothing, silently) or omitting one it
- * does. The keys are the template's variable names; the values are flow
- * templates resolved per run against the swept record.
+ * does. The keys are the template's variable names; the values are CEL value
+ * envelopes evaluated per run against the swept record. (`@objectstack/spec`
+ * 18 retired the `{…}` template dialect from value slots: a plain string there
+ * is now the literal text it spells.)
  *
  * `due_date` is deliberately passed raw rather than pre-formatted: the
  * rendering side owns presentation per locale, and a value formatted here
@@ -280,8 +282,8 @@ const DAYS_PAST_DUE = 'daysBetween(record.due_date, today())';
  * the property this whole card exists to remove.
  */
 const TASK_TEMPLATE_DATA = {
-  subject: '{record.subject}',
-  due_date: '{record.due_date}',
+  subject: F`record.subject`,
+  due_date: F`record.due_date`,
 } as const;
 
 // ─── 1 · Lead-time reminder — the task appears on the owner's list ───────
@@ -343,7 +345,7 @@ export const LeadTimeReminder = defineFlow({
       label: 'Read the governing duty',
       config: {
         objectName: 'duly_duty',
-        filter: { id: '{record.duty}' },
+        filter: { id: F`record.duty` },
         fields: [...DUTY_GATE_FIELDS],
         outputVariable: 'duty_record',
       },
@@ -353,7 +355,7 @@ export const LeadTimeReminder = defineFlow({
       type: 'notify',
       label: 'Tell the owner',
       config: {
-        recipients: '{record.owner}',
+        recipients: F`record.owner`,
         // The localizable content path. `template` names the bundle in
         // src/email-templates/; `templateData` is its render context and IS
         // interpolated per run, so the record still supplies the values.
@@ -364,7 +366,7 @@ export const LeadTimeReminder = defineFlow({
         // The pair only takes effect together; a half-specified target is
         // dropped so the inbox never renders a dead link.
         sourceObject: 'duly_task',
-        sourceId: '{record.id}',
+        sourceId: F`record.id`,
       },
     },
     { id: 'end', type: 'end', label: 'Done' },
@@ -448,7 +450,7 @@ export const DueSoonReminder = defineFlow({
       label: 'Read the governing duty',
       config: {
         objectName: 'duly_duty',
-        filter: { id: '{record.duty}' },
+        filter: { id: F`record.duty` },
         fields: [...DUTY_GATE_FIELDS],
         outputVariable: 'duty_record',
       },
@@ -458,13 +460,13 @@ export const DueSoonReminder = defineFlow({
       type: 'notify',
       label: 'Tell the owner',
       config: {
-        recipients: '{record.owner}',
+        recipients: F`record.owner`,
         template: 'duly.task_due_soon',
         templateData: TASK_TEMPLATE_DATA,
         severity: 'info',
         topic: 'duly.task_due_soon',
         sourceObject: 'duly_task',
-        sourceId: '{record.id}',
+        sourceId: F`record.id`,
       },
     },
     { id: 'end', type: 'end', label: 'Done' },
@@ -558,7 +560,7 @@ export const OverdueOwnerEscalation = defineFlow({
       label: 'Read the governing duty',
       config: {
         objectName: 'duly_duty',
-        filter: { id: '{record.duty}' },
+        filter: { id: F`record.duty` },
         fields: [...DUTY_GATE_FIELDS],
         outputVariable: 'duty_record',
       },
@@ -568,13 +570,13 @@ export const OverdueOwnerEscalation = defineFlow({
       type: 'notify',
       label: 'Tell the owner it is late',
       config: {
-        recipients: '{record.owner}',
+        recipients: F`record.owner`,
         template: 'duly.task_overdue',
         templateData: TASK_TEMPLATE_DATA,
         severity: 'warning',
         topic: 'duly.task_overdue',
         sourceObject: 'duly_task',
-        sourceId: '{record.id}',
+        sourceId: F`record.id`,
       },
     },
     { id: 'end', type: 'end', label: 'Done' },

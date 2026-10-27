@@ -1,16 +1,18 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
 import { AutomationServicePlugin } from '@objectstack/service-automation';
 import { JobServicePlugin } from '@objectstack/service-job';
 import { MessagingServicePlugin } from '@objectstack/service-messaging';
-import { EmailServicePlugin } from '@objectstack/plugin-email';
+import { EmailServicePlugin, createRegistryEmailTemplateLoader } from '@objectstack/plugin-email';
 import { TimeRelativeTriggerPlugin } from '@objectstack/trigger-schedule';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 import { dulyEmailTemplates } from '../src/email-templates/index.js';
 import { dulyFlows } from '../src/flows/index.js';
+import { ensureUsers } from './support/users.js';
 
 /**
  * The reminder sweeps' notification text, as `sys_email_template` bundles.
@@ -115,8 +117,15 @@ const waitFor = async <T>(probe: () => Promise<T | undefined>, label: string, ms
 };
 
 beforeAll(async () => {
+  // From @objectstack 18 package-authored scheduled work — this app's three
+  // reminder sweeps and its dispatch job — arms only on a deployment that opts
+  // in, and is off by default in every posture: without this the sweep's job
+  // is never registered and `job.trigger` below answers "not found". The suite
+  // drives the real sweep, so it boots a deployment that has opted in.
+  vi.stubEnv('OS_AUTOMATION_SCHEDULED_WORK_ENABLED', 'true');
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Same reason as test/task-hook.test.ts: left to its default this resolves
     // `<cwd>/dist/objectstack.json`, and a local `pnpm build` would make the
@@ -125,6 +134,12 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
   await kernel.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await kernel.use(new JobServicePlugin());
   await kernel.use(new AutomationServicePlugin());
@@ -135,10 +150,12 @@ beforeAll(async () => {
   data = kernel.getService('data');
   email = kernel.getService('email');
   job = kernel.getService('job');
+  await ensureUsers(data, [OWNER]);
 }, 180_000);
 
 afterAll(async () => {
   await kernel?.shutdown?.();
+  vi.unstubAllEnvs();
 });
 
 // ── Wiring: the barrel, and the reference from the flows ──────────────────
@@ -212,14 +229,18 @@ describe('the email-template barrel', () => {
 
 // ── The bundles reached the store the delivery path reads ────────────────
 
-describe('the declared bundles materialize into sys_email_template', () => {
-  it('every authored row is a row in the table', async () => {
+describe('the declared bundles reach the store the delivery path reads', () => {
+  it('every authored row resolves through the mailer\'s own template loader', async () => {
+    // Through 17.x the declared bundles were copied into `sys_email_template`
+    // rows and the mailer read those. From @objectstack 18 nothing is copied:
+    // `sendTemplate` / `renderTemplate` read `email_template` metadata by
+    // `(name, locale)` through `createRegistryEmailTemplateLoader`, which is
+    // the loader `EmailServicePlugin` installs — so that is what is asked here.
+    const loader = createRegistryEmailTemplateLoader(() => ({ protocol: kernel.getService('protocol') }));
     for (const authored of dulyEmailTemplates as unknown as AnyRec[]) {
-      const row = await data.findOne('sys_email_template', {
-        where: { name: authored.name, locale: authored.locale },
-      });
+      const row = await loader.load(String(authored.name), String(authored.locale));
       expect(row, `${String(authored.name)} @ ${String(authored.locale)}`).toBeTruthy();
-      expect(row.subject).toBe(authored.subject);
+      expect(row!.subject).toBe(authored.subject);
     }
   });
 });

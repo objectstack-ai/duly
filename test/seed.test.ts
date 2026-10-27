@@ -3,6 +3,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AppPlugin, ObjectKernel, SeedLoaderService, createStandaloneStack } from '@objectstack/runtime';
 import { SeedLoaderRequestSchema } from '@objectstack/spec/data';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
+import { SharingServicePlugin } from '@objectstack/plugin-sharing';
 
 import { FREQUENCIES, periodBounds, periodKeyFor, type Frequency } from '../src/functions/period.js';
 import { ADMIN, PEOPLE, UNITS } from '../src/data/demo-org.js';
@@ -96,7 +98,8 @@ beforeAll(async () => {
   ).toBeGreaterThan(0);
 
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // Same guard as `test/task-hook.test.ts` and `test/seed-history.test.ts`:
     // point the artifact lookup at a path that cannot exist, or a local
@@ -107,6 +110,17 @@ beforeAll(async () => {
   });
   kernel = new ObjectKernel();
   for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
+  // `sys_business_unit` and `sys_business_unit_member`, which the demo's org
+  // seed writes, are SharingServicePlugin's — mounted on every real boot,
+  // because `sharing` is always on. Through 17.x the memory driver took rows
+  // for a table nobody declared; from 18 the engine refuses the name.
+  await kernel.use(new SharingServicePlugin());
   // skipSeedData FALSE, and `stack` unmodified — the app's own `dulySeeds`,
   // resolved by the opt-in gate above, going through the platform's own loader
   // is exactly what is under test. Nothing here substitutes the demo array in

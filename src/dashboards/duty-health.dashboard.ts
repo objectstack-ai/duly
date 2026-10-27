@@ -427,7 +427,6 @@ export const DutyHealthDashboard = Dashboard.create({
       dimensions: ['business_unit'],
       values: ['untouched_over_14d'],
       chartConfig: {
-        type: 'horizontal-bar',
         colors: ['#B07C17'],
         showLegend: false,
         showDataLabels: false,
@@ -464,7 +463,6 @@ export const DutyHealthDashboard = Dashboard.create({
         due_date: { $gte: '{today}', $lte: '{14_days_from_now}' },
       },
       chartConfig: {
-        type: 'bar',
         colors: ['#2E7C8E'],
         showLegend: false,
         showDataLabels: false,
@@ -502,7 +500,6 @@ export const DutyHealthDashboard = Dashboard.create({
       dimensions: ['business_unit'],
       values: ['tasks_overdue'],
       chartConfig: {
-        type: 'horizontal-bar',
         colors: ['#B07C17'],
         showLegend: false,
         showDataLabels: false,
@@ -544,7 +541,6 @@ export const DutyHealthDashboard = Dashboard.create({
       dimensions: ['form'],
       values: ['duties_in_register'],
       chartConfig: {
-        type: 'pie',
         colors: ['#2E7C8E', '#8C6512', '#576B73'],
         showLegend: true,
         showDataLabels: false,

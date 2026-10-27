@@ -2,11 +2,13 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 import { dulyFunctions } from '../src/functions/index.js';
 import { isResolvableTimeZone, periodKeyFor } from '../src/functions/period.js';
 import { DutyTimezoneGuard, dulyHooks } from '../src/hooks/index.js';
+import { ensureUsers } from './support/users.js';
 
 /**
  * #24 — `duly_duty.timezone` accepted any string, and the typo surfaced at
@@ -29,6 +31,7 @@ type AnyRow = Record<string, unknown>;
 
 let kernel: { getService(name: string): unknown; shutdown?(): Promise<void> } | undefined;
 let data: {
+  find(o: string, q?: AnyRow, x?: AnyRow): Promise<AnyRow[]>;
   findOne(o: string, q?: AnyRow, x?: AnyRow): Promise<AnyRow | undefined>;
   insert(o: string, d: AnyRow, x?: AnyRow): Promise<AnyRow>;
   update(o: string, d: AnyRow, x?: AnyRow): Promise<unknown>;
@@ -36,7 +39,8 @@ let data: {
 
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // See task-hook.test.ts for why this must not resolve to a real path: a
     // local `pnpm build` would make the suite report on the last BUILD instead
@@ -45,10 +49,17 @@ beforeAll(async () => {
   });
   const k = new ObjectKernel();
   for (const plugin of plugins) await k.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await k.use(createIdentityObjectsPlugin());
   await k.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await k.bootstrap();
   kernel = k as unknown as typeof kernel;
   data = k.getService('data') as typeof data;
+  await ensureUsers(data, [OWNER]);
 }, 180_000);
 
 afterAll(async () => {
@@ -67,10 +78,13 @@ async function refusal(promise: Promise<unknown>): Promise<{ code: unknown; mess
 
 let seq = 0;
 
+/** Who owns every duty here: incidental to what is tested, and minted at boot. */
+const OWNER = 'user_owner';
+
 const insertDuty = async (over: AnyRow = {}): Promise<AnyRow> => {
   const created = await data.insert('duly_duty', {
     name: `Duty ${++seq}`,
-    owner: `user_${seq}`,
+    owner: OWNER,
     source: 'self',
     status: 'active',
     ...over,

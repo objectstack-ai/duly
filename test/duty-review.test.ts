@@ -2,9 +2,11 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
 import { Duty } from '../src/objects/index.js';
+import { ensureUsers } from './support/users.js';
 
 /**
  * #107 — confirmation and approval: the pipeline `duly_duty.review_status`
@@ -49,7 +51,8 @@ let data: {
 
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
-    databaseDriver: 'memory',
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
     skipSeedData: true,
     // See dispatch.test.ts: left to its default this resolves
     // `<cwd>/dist/objectstack.json`, and a local `pnpm build` would make the
@@ -58,10 +61,17 @@ beforeAll(async () => {
   });
   const k = new ObjectKernel();
   for (const plugin of plugins) await k.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await k.use(createIdentityObjectsPlugin());
   await k.use(new AppPlugin(stack, undefined, { skipSeedData: true }));
   await k.bootstrap();
   kernel = k as unknown as typeof kernel;
   data = k.getService('data') as typeof data;
+  await ensureUsers(data, [OWNER, REVIEWER]);
 }, 180_000);
 
 afterAll(async () => {

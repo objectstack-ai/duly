@@ -293,11 +293,27 @@ describe('the bundles reach the stack', () => {
     // group in the bundles. Widening this list without extending the walk
     // would have turned the one assertion that noticed into the one that hid
     // it (#106).
+    //
+    // `picklist` arrived in 18 and went red the same way. Re-derived, nothing
+    // moves: this app declares no picklist — every option list here is a
+    // field's own, translated under `objects.<o>.fields.<f>.options` — and no
+    // `untranslatable` verdict in the walk rests on picklists being absent
+    // (they cover flows, jobs, hooks, positions, permission sets and
+    // `element:text`). So the pin widens with no verdict to revisit.
+    //
+    // `position`, `permission` and `report` arrived in 18.2.0, and two of
+    // them DID hold verdicts up: a position's and a permission set's label and
+    // description were `untranslatable` because neither type had a
+    // translator. Re-derived: all four paths are `translate` now, keyed
+    // `positions.<name>` and `permissions.<name>`, and zh-CN carries them.
+    // This app declares no report, so `report` moves nothing.
     expect(
       [...PLATFORM_TRANSLATABLE_TYPES].sort(),
       'the platform\'s translatable metadata types changed — re-derive the '
       + '`untranslatable` verdicts in src/translations/authored-text.ts against the new set',
-    ).toEqual(['action', 'app', 'dashboard', 'dataset', 'object', 'page', 'view']);
+    ).toEqual([
+      'action', 'app', 'dashboard', 'dataset', 'object', 'page', 'permission', 'picklist', 'position', 'report', 'view',
+    ]);
   });
 });
 
@@ -320,6 +336,10 @@ describe('untranslatable display text is declared rather than dropped', () => {
     // operator-facing text plus the one page `content` slot — no END USER
     // screen is on this list any more, which is the property the three counts
     // below now pin at zero.
+    //
+    // Four more left on the 18.2.0 bump: `position.*` and `permissionSet.*`,
+    // label and description, once the platform registered a translator for
+    // both (see the translatable-types pin above).
     ).toEqual([
       'flow.description',
       'flow.edges[].label',
@@ -331,10 +351,6 @@ describe('untranslatable display text is declared rather than dropped', () => {
       'job.label',
       'page.regions[].components[].properties.content.en',
       'page.regions[].components[].properties.content.zh-CN',
-      'permissionSet.description',
-      'permissionSet.label',
-      'position.description',
-      'position.label',
     ]);
   });
 
@@ -538,9 +554,12 @@ describe('i18n coverage guard — the guard can fail (self-test on synthetic met
     // The empty stack matches no `untranslatable` path at all, so every
     // declared exemption is stale — which is exactly the failure this catches
     // when one authored string is deleted.
+    // Every one, not a count: the exemptions the real stack matches (pinned as
+    // an exact set above) are all of them, because the gate above holds the
+    // real stack's stale list at zero.
     const result = collectAuthoredText(emptyStack());
-    expect(result.staleExemptions.length, 'a stack with no authored text must make every exemption stale')
-      .toBeGreaterThan(10);
+    expect(result.staleExemptions, 'a stack with no authored text must make every exemption stale')
+      .toEqual([...new Set(walk.untranslatable.map((entry) => entry.path))].sort());
     // Was `object.validations[].message` until 17.3.0 gave it a key (#106).
     // A job's label has no translator and no bundle group at all, so it is the
     // stable pick for "an exemption that is still an exemption".

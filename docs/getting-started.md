@@ -97,13 +97,17 @@ done
 The dispatcher is the job `duly_dispatch`. It runs **every night at 01:00 UTC**
 and turns each approved, active, recurring duty into the tasks its period
 owes, in the duty's own timezone. Re-running it changes nothing; that is what
-the `(duty, owner, period_key)` index is for.
+the `(duty, owner, period_key)` index is for. `pnpm dev` switches the
+platform's scheduled work on for you, but a deployment started with
+`pnpm start` must set `OS_AUTOMATION_SCHEDULED_WORK_ENABLED=true`, or no duty
+is ever dispatched and no reminder is ever sent.
 
-> **There is no run-now today.** `@objectstack/*` 17.3.0 offers no CLI command,
-> REST route or Console button that runs a job on demand, so on a fresh install
-> the first tasks appear after the next 01:00 UTC run, with `pnpm dev` left
-> running. Until the platform gives jobs a run-now, `pnpm demo` is the way to
-> see a populated week straight away: its history is planned by the same
+> **There is no run-now today.** `@objectstack/*` 18.2.0 offers no CLI command,
+> REST route or Console button that runs a job on demand (the job service has
+> no HTTP surface, and the `sys_job` catalogue is read-only), so on a fresh
+> install the first tasks appear after the next 01:00 UTC run, with `pnpm dev`
+> left running. Until the platform gives jobs a run-now, `pnpm demo` is the way
+> to see a populated week straight away: its history is planned by the same
 > dispatcher code at build time.
 
 ## 8 · Open My week, as the owner

@@ -459,5 +459,5 @@ export const DispatchJob = defineJob({
   // Fifteen minutes. A dispatch pass is a paged read plus one insert per owed
   // task; an attempt still running after fifteen minutes has stopped making
   // progress, and abandoning it is safe for the same reason a retry is.
-  timeout: 900_000,
+  timeoutMs: 900_000,
 });

@@ -243,6 +243,9 @@ export const ZH_CN: Readonly<Record<string, string>> = {
   'Keep up with regulator bulletins': '跟进监管通报',
   "Read the month's bulletins and note anything that changes what the site owes.":
     '读完本月的通报，记下其中改变厂区义务的内容。',
+  'Weekly bund and outfall walk': '每周围堰与排口巡查',
+  'Look at every bund and the outfall chamber, and log what you saw even when nothing was wrong.':
+    '逐一查看各处围堰和排口井，即使一切正常也要记下所见。',
   'Monthly quality trend read': '每月质量趋势研读',
   "Half an hour with the month's nonconformances and calibration deviations, looking for the shape rather than the individual events.":
     '花半小时看本月的不合格与校准偏差，找的是整体走势，而不是单个事件。',

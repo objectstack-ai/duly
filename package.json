@@ -13,7 +13,7 @@
   ],
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "objectstack dev --compile",
+    "dev": "OS_AUTOMATION_SCHEDULED_WORK_ENABLED=${OS_AUTOMATION_SCHEDULED_WORK_ENABLED-true} objectstack dev --compile",
     "demo": "node scripts/demo.mjs",
     "demo:zh": "DULY_DEMO_LOCALE=zh-CN node scripts/demo.mjs",
     "start": "objectstack start",
@@ -24,22 +24,24 @@
     "verify": "pnpm validate && pnpm typecheck && pnpm test"
   },
   "dependencies": {
-    "@objectstack/spec": "^17.3.0",
-    "@objectstack/runtime": "^17.3.0",
-    "@objectstack/plugin-hono-server": "^17.3.0",
-    "@objectstack/connector-rest": "^17.3.0",
-    "@objectstack/connector-openapi": "^17.3.0",
-    "@objectstack/connector-mcp": "^17.3.0"
+    "@objectstack/spec": "^18.2.0",
+    "@objectstack/runtime": "^18.2.0",
+    "@objectstack/plugin-hono-server": "^18.2.0",
+    "@objectstack/connector-rest": "^18.2.0",
+    "@objectstack/connector-openapi": "^18.2.0",
+    "@objectstack/connector-mcp": "^18.2.0"
   },
   "devDependencies": {
-    "@objectstack/cli": "^17.3.0",
-    "@objectstack/platform-objects": "^17.3.0",
-    "@objectstack/plugin-email": "^17.3.0",
-    "@objectstack/plugin-sharing": "^17.3.0",
-    "@objectstack/service-automation": "^17.3.0",
-    "@objectstack/service-job": "^17.3.0",
-    "@objectstack/service-messaging": "^17.3.0",
-    "@objectstack/trigger-schedule": "^17.3.0",
+    "@objectstack/cli": "^18.2.0",
+    "@objectstack/platform-objects": "^18.2.0",
+    "@objectstack/plugin-auth": "^18.2.0",
+    "@objectstack/plugin-email": "^18.2.0",
+    "@objectstack/plugin-security": "^18.2.0",
+    "@objectstack/plugin-sharing": "^18.2.0",
+    "@objectstack/service-automation": "^18.2.0",
+    "@objectstack/service-job": "^18.2.0",
+    "@objectstack/service-messaging": "^18.2.0",
+    "@objectstack/trigger-schedule": "^18.2.0",
     "typescript": "^6.0.0",
     "vitest": "^4.1.10"
   }

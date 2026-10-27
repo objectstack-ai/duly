@@ -30,22 +30,25 @@ import type { CatalogApplyResult, CatalogSyncResult } from '../src/actions/catal
 // read. The one test that needs an unfiltered read builds its own lenient
 // engine, deliberately — see "the source guard is in the code".
 //
-// ⚠️ `find(object, query)` reads `query` AS THE FILTER — flat, no `where`
-// wrapper — because that is what the runtime's own facade does
-// (`buildActionEngineFacade`, @objectstack/runtime 17.2.0: it wraps whatever it
-// is handed in a `where` of its own before calling ObjectQL). This fake used to
-// read `query.where`, honouring the handler's convention instead of the
-// runtime's, and that is exactly how the defect below survived a green suite:
-// all 78 duty assertions passed against a shape production never produced. A
-// fake encodes its author's belief about the contract, so it can only ever
-// confirm it — the coverage that can FALSIFY it dispatches through the real
-// route and lets the runtime build the facade, in
+// ⚠️ `find(object, query)` reads the filter from `query.where` and REFUSES any
+// other top-level key — because that is what the runtime's own facade does
+// (`buildActionEngineFacade`, @objectstack/runtime 18.1.0: the query is the
+// engine's envelope, and `assertActionEngineFindEnvelope` throws on a key the
+// envelope does not carry, so a bare filter fails loudly instead of matching
+// nothing). Through 17.4 the facade took the bare filter, and this fake once
+// honoured the handler's convention instead of the runtime's — exactly how a
+// defect survived a green suite: all 78 duty assertions passed against a shape
+// production never produced. A fake encodes its author's belief about the
+// contract, so it can only ever confirm it — the coverage that can FALSIFY it
+// dispatches through the real route and lets the runtime build the facade, in
 // `test/catalog-engine-facade.test.ts`. Keep both: this suite is where the
 // handler's logic is exercised cheaply, that one is where its wire shape is.
 
 interface Row extends Record<string, unknown> {
   id: string;
 }
+
+type FindQuery = Parameters<ActionEngineFacade['find']>[1];
 
 function matches(row: Row, filter: Record<string, unknown> | undefined): boolean {
   if (!filter) return true;
@@ -90,13 +93,21 @@ class FakeEngine implements ActionEngineFacade {
     this.updates.push({ object, id, data });
   }
 
-  async delete(object: string, id: string): Promise<void> {
-    this.deletes.push({ object, id });
+  // One id or an array of them: both spellings are the facade's declared
+  // contract (`ActionEngineFacade.delete`), and the array is one delete per id.
+  async delete(object: string, idOrIds: string | string[]): Promise<void> {
+    for (const id of Array.isArray(idOrIds) ? idOrIds : [idOrIds]) this.deletes.push({ object, id });
   }
 
-  async find(object: string, query: Record<string, unknown>): Promise<Array<Record<string, unknown>>> {
-    // `query` IS the filter. No `query.where` rung — see the note above.
-    return (this.tables.get(object) ?? []).filter((row) => matches(row, query)).map((row) => ({ ...row }));
+  async find(object: string, query: FindQuery): Promise<Array<Record<string, unknown>>> {
+    // `query` is the envelope; the filter is `query.where` and nothing else.
+    // No `?? query` rung — see the note above. The only envelope key this
+    // fake honours is `where`, so any other key is refused rather than
+    // silently ignored.
+    const stray = Object.keys(query ?? {}).filter((key) => key !== 'where');
+    if (stray.length > 0) throw new Error(`find('${object}'): unsupported query keys ${stray.join(', ')}`);
+    const filter = query?.where as Record<string, unknown> | undefined;
+    return (this.tables.get(object) ?? []).filter((row) => matches(row, filter)).map((row) => ({ ...row }));
   }
 
   rows(object: string): Row[] {
