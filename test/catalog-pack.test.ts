@@ -9,12 +9,13 @@ import { SecurityPlugin } from '@objectstack/plugin-security';
 import { SharingServicePlugin } from '@objectstack/plugin-sharing';
 
 import { CATALOG_PACKS, PACK_ENV_VAR, packCatalogRows, requestedPacks, type CatalogPack } from '../src/data/packs/index.js';
+import { EHS_PLANT } from '../src/data/packs/ehs-plant/pack.js';
 import { FOOD_SAFETY } from '../src/data/packs/food-safety/pack.js';
 import { ISO_9001 } from '../src/data/packs/iso-9001/pack.js';
 
 /**
  * Catalog packs (#134): the format, the packs (food-safety #134, iso-9001
- * #136), and the switch.
+ * #136, ehs-plant #137), and the switch.
  *
  * What is pinned, and why each half matters:
  *  - **Both languages, on every row.** zh-CN is the pack's primary language
@@ -150,6 +151,40 @@ describe('the iso-9001 pack — clause numbers and titles, never the standard', 
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+describe('the ehs-plant pack — obligation types, never an article (#137)', () => {
+  it('has the 30–40 duties its card asks for', () => {
+    expect(EHS_PLANT.duties.length).toBeGreaterThanOrEqual(30);
+    expect(EHS_PLANT.duties.length).toBeLessThanOrEqual(40);
+  });
+
+  it.each(['manager', 'safety', 'fire', 'equipment', 'waste', 'health', 'shift'])(
+    'has the position %s the card names',
+    (position) => {
+      expect(Object.keys(EHS_PLANT.positions)).toContain(position);
+    },
+  );
+
+  it('cites a reference on every row', () => {
+    for (const duty of EHS_PLANT.duties) expect(duty.reference, duty.name.en).toBeDefined();
+  });
+
+  // The card: reference the obligation type, never a named regulation's
+  // article text. So no article, clause or section number in either language.
+  it.each([
+    ['an article in Chinese', /第[一二三四五六七八九十百零\d]+条/],
+    ['an article in English', /\bArt(icle)?\.?\s*\d/i],
+    ['a section sign', /§/],
+    ['a clause number', /\b\d+\.\d+/],
+    ['a quotation', /[“”"]/],
+  ])('cites no %s', (_what, pattern) => {
+    for (const duty of EHS_PLANT.duties) {
+      expect(duty.reference!.zh, duty.name.en).not.toMatch(pattern);
+      expect(duty.reference!.en, duty.name.en).not.toMatch(pattern);
+    }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 describe('no pack name or position collides with the demo catalog', () => {
   it.each(['en', 'zh-CN'] as const)('in %s', async (locale) => {
     vi.resetModules();
@@ -185,6 +220,10 @@ describe('DULY_PACK chooses, and refuses what it does not know', () => {
 
   it.each(['iso-9001', ' ISO-9001 '])('%j is the iso-9001 pack alone', (raw) => {
     expect(requestedPacks(raw)).toEqual([ISO_9001]);
+  });
+
+  it.each(['ehs-plant', ' EHS-Plant '])('%j is the ehs-plant pack alone', (raw) => {
+    expect(requestedPacks(raw)).toEqual([EHS_PLANT]);
   });
 
   it('takes several packs, in the order named', () => {

@@ -19,6 +19,7 @@ screens, fields or automation, and it creates no people, duties or tasks.
 |:---|:---|:---|:---|
 | `food-safety` | Recurring food-safety duties of a food manufacturer (食品生产企业食品安全周期性履职): the PRC Food Safety Law, GB 14881-2013, SAMR Order No. 60 (日管控 / 周排查 / 月调度) and HACCP | 8 | 38 |
 | `iso-9001` | Recurring duties of an ISO 9001 quality management system, for a manufacturer or a service business holding the certificate (ISO 9001 质量管理体系周期性履职): internal audit, management review, external providers, calibration, nonconforming output, documented information, customer satisfaction | 9 | 39 |
+| `ehs-plant` | Recurring environment, health and safety duties of a mid-size manufacturing plant (工厂 EHS 周期性履职): work safety, fire protection, special equipment, hazardous waste, occupational health, the discharge permit, ISO 45001 / ISO 14001 | 8 | 39 |
 
 The `iso-9001` pack cites ISO 9001:2015 by **clause number and clause title
 only**, in Chinese through GB/T 19001-2016, the identical national adoption.
@@ -26,6 +27,16 @@ The standard's text is copyrighted and none of it is reproduced: each duty's
 wording is the pack's own. Its certification-audit row cites no clause,
 because certification is the certification body's scheme, not a clause of
 the standard.
+
+The `ehs-plant` pack names the **type of obligation** each duty discharges
+("《消防法》：防火巡查", "PRC Fire Protection Law: fire patrols") and at
+most the public framework it belongs to. It cites no article or clause
+number and quotes no text. Its cadences are common practice, not a statutory
+minimum: a fire-safety key unit or a plant with severe occupational hazards
+may owe more, and the local rule wins. It sits beside an EHS suite rather
+than replacing one: the suite keeps incidents, findings and corrective
+actions; the pack keeps who does which check, how often, and what record
+shows it was done.
 
 ## Turn a pack on
 
@@ -39,8 +50,10 @@ effect on the next start.
 | An empty app with the food-safety catalog in it | `DULY_PACK=food-safety pnpm dev` |
 | The same, in Chinese | `DULY_PACK=food-safety DULY_DEMO_LOCALE=zh-CN pnpm dev` |
 | An empty app with the ISO 9001 catalog in it | `DULY_PACK=iso-9001 pnpm dev` |
+| An empty app with the plant EHS catalog in it | `DULY_PACK=ehs-plant pnpm dev` |
 | The demo (it loads `food-safety` by itself) | `pnpm demo` / `pnpm demo:zh` |
 | The demo with the ISO 9001 pack instead | `DULY_PACK=iso-9001 pnpm demo:zh` |
+| The demo with the EHS pack instead | `DULY_PACK=ehs-plant pnpm demo:zh` |
 | The demo without the pack | `DULY_PACK=none pnpm demo` |
 
 On Windows, set the variable first (`set DULY_PACK=food-safety`, or
