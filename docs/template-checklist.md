@@ -79,9 +79,9 @@ Same clone, `.objectstack/` and `dist/` deleted, then `pnpm demo` (port 3918).
 | `duly_assignment` | 0 | 2 |
 | `duly_log_entry` | 0 | 15 |
 
-Sign-in after `pnpm demo`: `200`. The demo still needs its priming boot to get
-there (`scripts/demo.mjs`, objectstack-ai/objectstack#14157); retiring it is
-#131, not this checklist.
+Sign-in after `pnpm demo`: `200`. Since #131 the demo is one boot: the demo
+people are declared as `demoStaff`, so the platform creates the accounts before
+the seed runs (`scripts/demo.mjs`, `src/data/demo-staff.ts`).
 
 ## 3 · Local state is ignored
 

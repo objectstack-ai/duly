@@ -8,20 +8,22 @@ import { describe, expect, it, vi } from 'vitest';
  * `scripts/demo.mjs` and the fixture have to agree about one string, and
  * nothing in the type system can hold them to it.
  *
- * The script is plain `.mjs` that runs BEFORE anything is compiled — it
- * sequences two `objectstack dev` boots — and the fixture is TypeScript baked
- * into the artifact the second boot compiles. So `ADMIN` in
- * `src/data/demo-org.ts` and `ADMIN_NAME_BY_LOCALE` in the script are two
- * copies of the same fact, and this file is what keeps them equal.
+ * The script is plain `.mjs` that runs BEFORE anything is compiled (it starts
+ * the one `objectstack dev` boot) and the fixture is TypeScript baked into the
+ * artifact that boot compiles. So `ADMIN` in `src/data/demo-org.ts` and
+ * `ADMIN_NAME_BY_LOCALE` in the script are two copies of the same fact, and
+ * this file is what keeps them equal.
  *
  * ── What their drifting looks like, which is why it is worth a test ──────
- * The seed's `sys_user` dataset is keyed on `name`. The script renames the
- * live admin account in its priming step; the seed then matches that row and
- * skips it. Change one spelling and not the other and the loader matches
- * nothing, INSERTS a second admin, and hands the demo account's duties, tasks,
+ * The seed's `sys_user` dataset is keyed on `name`. The script hands the
+ * fixture's name to `@objectstack/plugin-auth` as `OS_SEED_ADMIN_NAME`, so the
+ * admin is minted under it, and the seed then matches that row and skips it.
+ * Change one spelling and not the other and the loader matches nothing,
+ * INSERTS a second admin, and hands the demo account's duties, tasks,
  * assignment and work log to a person nobody can log in as. Nothing errors:
  * the seed reports success, the app boots, and My week / My duties / Sent by
- * me / Work log are empty on the first screen an evaluator opens.
+ * me / Work log are empty on the first screen an evaluator opens. Measured on
+ * 18.2.0 for #131 with the variable left out of a `zh-CN` boot.
  *
  * `package.json` is read the same way, for the same reason: `pnpm demo:zh` is
  * the documented entry point and it is a string in a JSON file, so nothing
@@ -44,9 +46,9 @@ const adminFor = async (locale: string): Promise<string> => {
 
 describe('scripts/demo.mjs agrees with the fixture', () => {
   it('knows the name the fixture gives the admin in each locale', async () => {
-    // Both directions of the pair the rename depends on. `Dev Admin` is the
-    // name `@objectstack/plugin-auth` mints and the one English keeps; the
-    // Chinese one only exists because the script puts it there.
+    // Both directions of the pair the admin's name depends on. `Dev Admin` is
+    // the name `@objectstack/plugin-auth` mints by default and the one English
+    // keeps; the Chinese one only exists because the script asks for it.
     expect(await adminFor('')).toBe('Dev Admin');
     expect(await adminFor('zh-CN')).toBe('演示管理员');
 
@@ -55,9 +57,9 @@ describe('scripts/demo.mjs agrees with the fixture', () => {
   });
 
   it('maps the same locale spellings the fixture accepts', () => {
-    // A spelling the fixture takes but the script does not would rename the
-    // account for the wrong language — the exact drift above, arriving through
-    // an alias rather than through an edit.
+    // A spelling the fixture takes but the script does not would mint the
+    // account under the wrong language's name: the exact drift above,
+    // arriving through an alias rather than through an edit.
     for (const spelling of ['zh', 'zh-cn']) {
       expect(demoScript).toContain(`['${spelling}', '演示管理员']`);
     }
@@ -66,14 +68,25 @@ describe('scripts/demo.mjs agrees with the fixture', () => {
     }
   });
 
-  it('passes the locale to BOTH boots and deletes only the seed gate', () => {
-    // The priming boot deliberately runs with the demo OFF, and it deletes
-    // exactly one variable to do it. Deleting the locale alongside it — the
-    // obvious "symmetry" edit — would leave the priming step renaming the
-    // account for a language it could not see.
-    expect(demoScript).toContain('delete env[DEMO_SEED_ENV_VAR]');
-    expect(demoScript).not.toContain('delete env[DEMO_LOCALE_ENV_VAR]');
+  it('starts ONE boot, with the seed gate on and the admin minted under the fixture name', () => {
+    // #131: from 18.2 the declared `demoStaff` defers the seed past the admin
+    // mint, so a second, priming boot has nothing left to do. A second spawn
+    // coming back is the old workaround returning, not a harmless extra.
+    expect(demoScript.split("spawn('objectstack'").length - 1, 'objectstack spawns in the script').toBe(1);
+    expect(demoScript).toContain("spawn('objectstack', ['dev', '--compile'");
+    expect(demoScript).toContain("[DEMO_SEED_ENV_VAR]: '1'");
+    expect(demoScript).toContain("const ADMIN_NAME_ENV_VAR = 'OS_SEED_ADMIN_NAME';");
+    expect(demoScript).toContain('[ADMIN_NAME_ENV_VAR]: ADMIN_NAME');
     expect(demoScript).toContain('DULY_DEMO_LOCALE');
+    // The REST rename the priming boot did is gone with it.
+    expect(demoScript).not.toContain('/api/v1/data/sys_user/');
+  });
+
+  it('refuses a caller-set admin name the fixture does not use, before starting anything', () => {
+    // Silently obeying it would be the ghost-admin split; silently overriding
+    // it would hide that the caller's variable was ignored.
+    expect(demoScript).toContain('callerAdminName !== ADMIN_NAME');
+    expect(demoScript.indexOf('callerAdminName !== ADMIN_NAME')).toBeLessThan(demoScript.indexOf('startDemo();'));
   });
 });
 
@@ -104,13 +117,12 @@ describe('scheduled work is armed in dev and demo, and left to the deployer in s
     );
   });
 
-  it('pnpm demo sets it only when unset, before either boot', () => {
+  it('pnpm demo sets it only when unset, before the boot', () => {
     expect(demoScript).toContain("const SCHEDULED_WORK_ENV_VAR = 'OS_AUTOMATION_SCHEDULED_WORK_ENABLED';");
     expect(demoScript).toContain(
       "if (process.env[SCHEDULED_WORK_ENV_VAR] === undefined) process.env[SCHEDULED_WORK_ENV_VAR] = 'true';",
     );
-    // Ahead of the first spawn, so the priming boot and the demo boot both
-    // inherit it through `process.env`.
+    // Ahead of the spawn, so the demo boot inherits it through `process.env`.
     expect(demoScript.indexOf('process.env[SCHEDULED_WORK_ENV_VAR] =')).toBeLessThan(
       demoScript.indexOf("spawn('objectstack'"),
     );

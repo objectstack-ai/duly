@@ -23,7 +23,7 @@ import { dulyDatasets } from './src/datasets/index.js';
 import { dulyMappings } from './src/mappings/index.js';
 import { dulyTranslations } from './src/translations/index.js';
 import { dulyEmailTemplates } from './src/email-templates/index.js';
-import { dulySeeds } from './src/data/index.js';
+import { dulyDemoStaff, dulySeeds } from './src/data/index.js';
 // [#7036] Lifecycle hooks are NOT collected from the objects barrel — the
 // runtime reads them from `defineStack({ hooks })` only. A `*.hook.ts` that is
 // not exported from src/hooks/ is dead metadata: it type-checks, it reads as
@@ -144,6 +144,9 @@ export default defineStack({
   translations: dulyTranslations,
   emailTemplates: dulyEmailTemplates,
   data: dulySeeds,
+  // The demo's people as sign-in accounts; empty unless DULY_DEMO_SEED is set.
+  // Declaring them is what makes `pnpm demo` one boot (#131), see src/data/demo-staff.ts.
+  demoStaff: dulyDemoStaff,
   hooks: dulyHooks,
   functions: dulyFunctions,
 

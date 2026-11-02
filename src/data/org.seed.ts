@@ -77,11 +77,17 @@ export const businessUnitSeed: Seed = {
  * Twelve people, plus the account you are logged in as.
  *
  * ⚠️ The `Dev Admin` row carries its natural key and nothing else. On a real
- * `objectstack dev` boot that account already exists — `plugin-auth` seeds it
- * before the app plugin starts — so the loader matches it by name, finds the
- * one field the seed declares unchanged, and SKIPS without writing. Adding an
+ * `objectstack dev` boot that account already exists (`plugin-auth` mints it
+ * at `kernel:ready`, and the declared `demoStaff` defers this seed until
+ * after that), so the loader matches it by name, finds the one field the
+ * seed declares unchanged, and SKIPS without writing. Adding an
  * `email` or a `manager_id` here would turn that skip into an UPDATE against a
  * live credential-bearing account. See `demo-org.ts` for the full reasoning.
+ *
+ * The twelve are live accounts too on that boot: `demo-staff.ts` declares
+ * them, `plugin-auth` creates them by name and email before the seed runs,
+ * and these rows land on them. Their `email` is the address the account was
+ * created with, so the only field the loader writes is `manager_id`.
  *
  * ── `manager_id` is written directly; `primary_business_unit_id` is NOT ────
  * Both columns are `readonly: true` on `sys_user`, and reading that as one
@@ -194,8 +200,9 @@ export const businessUnitMemberSeed: Seed = {
  * needed to grant a declared set), so the grant reaches the live account
  * without the loader ever writing to `sys_user`. `user_id` resolves by natural
  * key against `sys_user.name`, exactly as `owner` does on every `duly_*` row,
- * which is why the zh-CN rename in `scripts/demo.mjs` has to have landed first
- * — it already must, for the same reason.
+ * which is why the admin has to be minted under the fixture's name first
+ * (`OS_SEED_ADMIN_NAME`, set by `scripts/demo.mjs`); it already must, for
+ * the same reason.
  *
  * `organization_id` is not stated. The loader writes from a system context,
  * and from @objectstack 18 a system write is stamped with the Default
