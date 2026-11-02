@@ -8,6 +8,7 @@ import { MessagingServicePlugin } from '@objectstack/service-messaging';
 import { EmailServicePlugin, createRegistryEmailTemplateLoader } from '@objectstack/plugin-email';
 import { TimeRelativeTriggerPlugin } from '@objectstack/trigger-schedule';
 import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
+import { EMAIL_TEMPLATE_FLOOR_LOCALE } from '@objectstack/spec/system';
 
 import stack from '../objectstack.config.js';
 import { dulyEmailTemplates } from '../src/email-templates/index.js';
@@ -204,15 +205,18 @@ describe('the email-template barrel', () => {
     expect(seen.length).toBe(4);
   });
 
-  it('every referenced bundle has an `en` row — the source language (AGENTS.md §8)', () => {
-    // Locale COVERAGE beyond this is #18's shape-discovering gate, not this
-    // suite's. What is pinned here is the source-language anchor: without an
-    // `en` row the app's own default locale resolves through the service's
-    // en-US ladder to whatever sorts first.
+  it('every referenced bundle has an `en-US` row — the resolver\'s floor (#145)', () => {
+    // The English source row (AGENTS.md §8) is tagged `en-US`, not the app's
+    // own `en`: `sendTemplate` retries exactly that literal tag after an exact
+    // miss and nothing else, so it is the row every recipient locale without
+    // its own row receives. Locale COVERAGE beyond this is
+    // `test/i18n-coverage.test.ts`'s gate; the delivery it buys is pinned
+    // end to end below.
+    expect(EMAIL_TEMPLATE_FLOOR_LOCALE).toBe('en-US');
     const names = rowsByName();
     for (const { node } of notifyNodes()) {
       const rows = names.get(String(node.config?.template)) ?? [];
-      expect(rows.map((r) => r.locale)).toContain('en');
+      expect(rows.map((r) => r.locale)).toContain(EMAIL_TEMPLATE_FLOOR_LOCALE);
     }
   });
 
@@ -320,4 +324,81 @@ describe('the lead-time sweep delivers a RESOLVED body', () => {
       email.renderTemplate({ template: 'duly.task_lead_tim', locale: 'en', data: {} }),
     ).rejects.toThrow(/TEMPLATE_NOT_FOUND/);
   });
+});
+
+// ── A recipient whose locale the bundle does not list still hears (#145) ──
+
+/**
+ * The recipient's language is read per recipient, after fan-out, off
+ * `sys_user.locale` (falling back to the deployment default), and handed to
+ * the resolver — which matches it exactly, then tries the literal `en-US`
+ * floor, and stops. `sys_user.locale` is free-text BCP-47 the user can edit;
+ * it is NOT constrained to `i18n.supportedLocales`.
+ *
+ * Measured on @objectstack 18.2.0 with the English rows tagged `en`, through
+ * this same sweep: `en-US`, `en-GB`, `zh`, `zh-TW`, `fr-FR` and `ja` all wrote
+ * a `sys_notification_delivery` row with `status: 'dead'` and
+ * `TEMPLATE_NOT_FOUND`, and no inbox row. So these assertions are on the
+ * delivery row's status as well as on the inbox body: a dead letter is not a
+ * thrown error anywhere a flow run can see, and the run reports success.
+ *
+ * `zh` and `zh-TW` land on ENGLISH, not on the zh-CN row. That is what the
+ * platform gives today — there is no subtag folding — and it is pinned so the
+ * day the resolver learns to fold, this goes red and says so.
+ */
+describe('a recipient whose locale no row lists gets the en-US floor, not a dead letter', () => {
+  const ENGLISH = `This is now on your list. Due ${utcDay(7)}.`;
+  const CHINESE = `这项任务已进入你的待办列表，截止日期 ${utcDay(7)}。`;
+
+  /** user id → `sys_user.locale`, and the body that user must receive. */
+  const RECIPIENTS: { id: string; locale: string; body: string }[] = [
+    { id: 'user_fr', locale: 'fr-FR', body: ENGLISH }, // a language the app never authored
+    { id: 'user_zh_tw', locale: 'zh-TW', body: ENGLISH }, // no folding to zh-CN
+    { id: 'user_zh', locale: 'zh', body: ENGLISH }, // ditto, bare language subtag
+    { id: 'user_en_us', locale: 'en-US', body: ENGLISH }, // the floor, matched exactly
+    { id: 'user_en_gb', locale: 'en-GB', body: ENGLISH },
+    { id: 'user_en', locale: 'en', body: ENGLISH }, // the app's own tag: exact miss, then floor
+    { id: 'user_zh_cn', locale: 'zh-CN', body: CHINESE }, // control: a listed locale keeps its row
+  ];
+
+  beforeAll(async () => {
+    for (const { id, locale } of RECIPIENTS) {
+      await data.insert(
+        'sys_user',
+        { id, name: id, email: `${id}@example.invalid`, locale },
+        { context: { isSystem: true } },
+      );
+      await data.insert('duly_task', {
+        subject: `${TASK_SUBJECT} (${locale})`,
+        owner: id,
+        source: 'catalog',
+        status: 'open',
+        visible_from: utcDay(0),
+        due_date: utcDay(7),
+      });
+    }
+    await job.trigger('flow-time-relative:duly_task_lead_time_reminder');
+  }, 120_000);
+
+  it.each(RECIPIENTS)('delivers to a $locale recipient, in the right language', async ({ id, locale, body }) => {
+    const row = await waitFor(async () => {
+      const rows = await data.find('sys_inbox_message', {
+        where: { user_id: id, topic: 'duly.task_lead_time' },
+        limit: 5,
+      });
+      return rows?.length ? rows[0] : undefined;
+    }, `the inbox row for the ${locale} recipient`);
+    expect(row.title).toBe(`${TASK_SUBJECT} (${locale})`);
+    expect(row.body_md).toBe(body);
+
+    // And the delivery itself settled `success` — not `dead`, which is what
+    // TEMPLATE_NOT_FOUND classifies as (permanent, no retry).
+    const deliveries = await data.find(
+      'sys_notification_delivery',
+      { where: { recipient_id: id } },
+      { context: { isSystem: true } },
+    );
+    expect(deliveries.map((d: AnyRec) => [d.channel, d.status, d.error ?? null]))
+      .toEqual([['inbox', 'success', null]]);
+  }, 20_000);
 });

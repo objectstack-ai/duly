@@ -1,6 +1,7 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
 import { defineEmailTemplateDefinition } from '@objectstack/spec';
+import { EMAIL_TEMPLATE_FLOOR_LOCALE } from '@objectstack/spec/system';
 
 /**
  * The notification text of the three owner-facing reminder sweeps
@@ -18,10 +19,24 @@ import { defineEmailTemplateDefinition } from '@objectstack/spec';
  *
  * AGENTS.md §8 ("English is the source language … do not hard-code display
  * text in a hook or flow") is only satisfiable on the second path, so the
- * three sweeps' strings live here. Each name carries TWO rows — `en` and
+ * three sweeps' strings live here. Each name carries TWO rows — English and
  * `zh-CN` — which is what a template "bundle" is: same `name`, one row per
- * locale, exactly the two locales `objectstack.config.ts` declares in
- * `i18n.supportedLocales`.
+ * locale.
+ *
+ * ── Why the English row is tagged `en-US`, not the app's own `en` ────────
+ * The English row is the bundle's FLOOR, and the floor is spelled exactly
+ * `en-US` (`EMAIL_TEMPLATE_FLOOR_LOCALE`). The resolver matches
+ * `(name, recipientLocale)` exactly, then retries that one literal tag and
+ * stops: no subtag folding, and `i18n.fallbackLocale` is not read. Tagged `en`
+ * — the consistent-looking choice, since `objectstack.config.ts` declares
+ * `defaultLocale: 'en'` — the bundles had no floor at all. Measured on
+ * @objectstack 18.2.0 through the real lead-time sweep (#145): recipients with
+ * no locale, `en` or `zh-CN` got their notice; `en-US`, `en-GB`, `zh`,
+ * `zh-TW`, `fr-FR` and `ja` dead-lettered with `TEMPLATE_NOT_FOUND`. Tagged
+ * `en-US`, `en` still resolves (exact miss, then the floor) and every other
+ * tag lands on English instead of nowhere. `test/email-templates.test.ts`
+ * pins the delivery; `test/i18n-coverage.test.ts` refuses a bundle with no
+ * floor row.
  *
  * ── Why `{{{…}}}` in `subject` / `bodyText` and `{{…}}` in `bodyHtml` ────
  * `renderTemplate` HTML-escapes a `{{hole}}` and leaves a `{{{hole}}}` raw
@@ -79,7 +94,7 @@ const REMINDER_VARIABLES = [
 export const TaskLeadTimeReminderEn = defineEmailTemplateDefinition({
   name: 'duly.task_lead_time',
   label: 'Task lead-time reminder',
-  locale: 'en',
+  locale: EMAIL_TEMPLATE_FLOOR_LOCALE,
   subject: SUBJECT_LINE,
   bodyHtml: '<p>This is now on your list. Due {{due_date}}.</p>',
   bodyText: 'This is now on your list. Due {{{due_date}}}.',
@@ -103,7 +118,7 @@ export const TaskLeadTimeReminderZhCN = defineEmailTemplateDefinition({
 export const TaskDueSoonReminderEn = defineEmailTemplateDefinition({
   name: 'duly.task_due_soon',
   label: 'Task due-soon reminder',
-  locale: 'en',
+  locale: EMAIL_TEMPLATE_FLOOR_LOCALE,
   subject: SUBJECT_LINE,
   bodyHtml: '<p>Due in 2 days, on {{due_date}}.</p>',
   bodyText: 'Due in 2 days, on {{{due_date}}}.',
@@ -127,7 +142,7 @@ export const TaskDueSoonReminderZhCN = defineEmailTemplateDefinition({
 export const TaskOverdueEscalationEn = defineEmailTemplateDefinition({
   name: 'duly.task_overdue',
   label: 'Task overdue escalation — owner',
-  locale: 'en',
+  locale: EMAIL_TEMPLATE_FLOOR_LOCALE,
   subject: SUBJECT_LINE,
   bodyHtml: '<p>Past due since {{due_date}}.</p>',
   bodyText: 'Past due since {{{due_date}}}.',
@@ -150,7 +165,7 @@ export const TaskOverdueEscalationZhCN = defineEmailTemplateDefinition({
 /**
  * Everything in this file, in the same order as `dulyReminderFlows`, so the
  * barrel spreads one name and the pairing with `reminders.flow.ts` stays
- * readable: one flow, one template name, two locale rows.
+ * readable: one flow, one template name, two locale rows (the en-US floor and zh-CN).
  */
 export const dulyReminderEmailTemplates = [
   TaskLeadTimeReminderEn,

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
 import { defineEmailTemplateDefinition } from '@objectstack/spec';
+import { EMAIL_TEMPLATE_FLOOR_LOCALE } from '@objectstack/spec/system';
 
 /**
  * The assigner-facing text of the fan-out failure handler
@@ -19,8 +20,10 @@ import { defineEmailTemplateDefinition } from '@objectstack/spec';
  * inline path is the one its own `.describe()` calls "not localizable".
  * AGENTS.md §8 ("English is the source language … do not hard-code display
  * text in a hook or flow") is only satisfiable on the template path. Two rows
- * — `en` and `zh-CN` — which is exactly the pair `objectstack.config.ts`
- * declares in `i18n.supportedLocales`.
+ * — English and `zh-CN`. The English row is tagged `en-US`, the resolver's
+ * floor, not the app's own `en`: see `reminders.email-template.ts` for why a
+ * bundle without that exact tag dead-letters every recipient locale it does
+ * not carry (#145).
  *
  * ── `{{{…}}}` in `subject` / `bodyText`, `{{…}}` in `bodyHtml` ───────────
  * Measured and pinned by `test/email-templates.test.ts`: `renderTemplate`
@@ -71,7 +74,7 @@ const FANOUT_FAILURE_VARIABLES = [
 export const AssignmentFanoutFailedEn = defineEmailTemplateDefinition({
   name: 'duly.assignment_fanout_failed',
   label: 'Assignment fan-out could not reach one assignee',
-  locale: 'en',
+  locale: EMAIL_TEMPLATE_FLOOR_LOCALE,
   subject: 'No task was created for one assignee: {{{subject}}}',
   bodyHtml:
     '<p>Everyone else on this assignment has their task. This one did not get created,'

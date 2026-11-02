@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { expandViewContainer } from '@objectstack/spec';
+import { EMAIL_TEMPLATE_FLOOR_LOCALE } from '@objectstack/spec/system';
 
 import stackConfig from '../objectstack.config.js';
 import { dulyViews } from '../src/views/index.js';
@@ -408,9 +409,24 @@ describe('untranslatable display text is declared rather than dropped', () => {
  * `EmailTemplateDefinitionSchema` carries its own `locale`, and the platform
  * documents a template as "resolved by `(name, locale)`" — its `translations`
  * key is `z.ZodNever`. So the coverage rule for templates is not "has a bundle
- * key" but "has a sibling in every supported locale". Written now, against a
- * collection that is still empty, so #69's templates are covered the moment
- * they are wired in rather than after somebody remembers.
+ * key" but "RESOLVES in every supported locale", with the right words.
+ *
+ * ── What "resolves" means — the resolver's ladder, not a literal sibling ──
+ * `IEmailService.sendTemplate` matches `(name, locale)` EXACTLY, then retries
+ * exactly one rung, the literal `EMAIL_TEMPLATE_FLOOR_LOCALE` (`en-US`), and
+ * stops. There is no subtag folding and `i18n.fallbackLocale` is not read
+ * (measured on @objectstack 18.2.0, #145). Until #145 this gate asked for a
+ * literal `en` row — the app's own source tag — and so passed bundles with no
+ * floor at all, which dead-lettered every recipient whose locale was `en-US`,
+ * `en-GB`, `zh`, `fr-FR`, …. It now asks two things of every bundle:
+ *
+ *  1. **A floor row** tagged exactly `en-US`. It is what every recipient locale
+ *     the bundle does not carry receives; without it they receive nothing.
+ *  2. **Every supported locale resolves to its own language.** The source
+ *     locale (`en`) is satisfied by the floor row, because the floor IS the
+ *     English row — `en` misses exactly and lands on it. Every OTHER supported
+ *     locale still needs its own exact sibling: the floor would resolve it,
+ *     but in English, which is the untranslated gap this gate exists for.
  */
 interface TemplateLike { name?: unknown; locale?: unknown; subject?: unknown; bodyHtml?: unknown; bodyText?: unknown }
 
@@ -419,16 +435,23 @@ const templateGaps = (templates: readonly TemplateLike[], locales: readonly stri
   for (const template of templates) {
     const name = typeof template?.name === 'string' ? template.name : '';
     if (!name) continue;
-    // `locale` has a schema default, so an omitted one is the default locale.
-    const locale = typeof template?.locale === 'string' ? template.locale : SOURCE_LOCALE;
+    // `locale` has a schema default — the floor, `en-US` — so an omitted one is
+    // the floor row, not "every locale".
+    const locale = typeof template?.locale === 'string' ? template.locale : EMAIL_TEMPLATE_FLOOR_LOCALE;
     const seen = byName.get(name) ?? new Set<string>();
     seen.add(locale);
     byName.set(name, seen);
   }
   const gaps: string[] = [];
   for (const [name, seen] of byName) {
+    const hasFloor = seen.has(EMAIL_TEMPLATE_FLOOR_LOCALE);
+    if (!hasFloor) {
+      gaps.push(`email template "${name}" has no ${EMAIL_TEMPLATE_FLOOR_LOCALE} floor row`);
+    }
     for (const locale of locales) {
-      if (!seen.has(locale)) gaps.push(`email template "${name}" has no ${locale} sibling`);
+      if (seen.has(locale)) continue;
+      if (locale === SOURCE_LOCALE && hasFloor) continue;
+      gaps.push(`email template "${name}" has no ${locale} sibling`);
     }
   }
   return gaps.sort();
@@ -580,13 +603,37 @@ describe('i18n coverage guard — the guard can fail (self-test on synthetic met
     expect(
       templateGaps(
         [
-          { name: 'duly_task_due_soon', locale: 'en' },
+          { name: 'duly_task_due_soon', locale: 'en-US' },
           { name: 'duly_task_due_soon', locale: 'zh-CN' },
-          { name: 'duly_task_overdue', locale: 'en' },
+          { name: 'duly_task_overdue', locale: 'en-US' },
         ],
         ['en', 'zh-CN'],
       ),
     ).toEqual(['email template "duly_task_overdue" has no zh-CN sibling']);
+  });
+
+  it('reports a bundle whose English row is tagged `en` — no floor (#145)', () => {
+    // The exact shape Duly shipped through 18.2.0: consistent with
+    // `defaultLocale: 'en'`, clean through validate and build, and every
+    // recipient locale it did not carry dead-lettered. `en` itself is not a
+    // gap here — it has its exact row — the missing floor is.
+    expect(
+      templateGaps(
+        [
+          { name: 'duly.task_due_soon', locale: 'en' },
+          { name: 'duly.task_due_soon', locale: 'zh-CN' },
+        ],
+        ['en', 'zh-CN'],
+      ),
+    ).toEqual(['email template "duly.task_due_soon" has no en-US floor row']);
+  });
+
+  it('does not let the floor stand in for a translated locale', () => {
+    // The floor RESOLVES a zh-CN recipient, but in English. Accepting it would
+    // turn this gate's translation check into a delivery check and pass an
+    // untranslated bundle.
+    expect(templateGaps([{ name: 'duly.english_only', locale: 'en-US' }], ['en', 'zh-CN']))
+      .toEqual(['email template "duly.english_only" has no zh-CN sibling']);
   });
 
   it('reports a locale row that copies the source row\'s wording', () => {
@@ -606,9 +653,10 @@ describe('i18n coverage guard — the guard can fail (self-test on synthetic met
     ])).toEqual([]);
   });
 
-  it('treats a template with no explicit locale as the source locale', () => {
+  it('treats a template with no explicit locale as the floor row', () => {
     // `locale` carries a schema default, so an omitted one is not "every
-    // locale" — it is `en`, and it still needs a zh-CN sibling.
+    // locale" — it is `en-US`, the floor, which serves the source locale and
+    // still needs a zh-CN sibling.
     expect(templateGaps([{ name: 'duly_welcome' }], ['en', 'zh-CN']))
       .toEqual(['email template "duly_welcome" has no zh-CN sibling']);
   });
