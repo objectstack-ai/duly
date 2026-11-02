@@ -187,9 +187,10 @@ describe('the declarations', () => {
     }
   });
 
-  it('locks nothing else on any object', () => {
+  it('declares nothing but the duty and task provenance maps (#176 owns the task one)', () => {
+    const expected = ['duly_duty', 'duly_task'].flatMap((object) => PROVENANCE.map((f) => `${object}.${f}`)).sort();
     for (const set of [MemberPermissionSet, ManagerPermissionSet, AdminPermissionSet]) {
-      expect(Object.keys(set.fields ?? {}).sort(), set.name).toEqual(PROVENANCE.map((f) => `duly_duty.${f}`).sort());
+      expect(Object.keys(set.fields ?? {}).sort(), set.name).toEqual(expected);
     }
   });
 

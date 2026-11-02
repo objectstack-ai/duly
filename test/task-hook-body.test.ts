@@ -103,18 +103,22 @@ describe('the lowered body', () => {
     expect(lowered.source).toContain("ctx.api.object(\"duly_duty\").findOne");
   });
 
-  it('makes exactly one elevated call: grace_days off the duty the row names', () => {
+  it('makes exactly two elevated calls: grace_days off the duty, and the owner\'s unit (#176)', () => {
     // `runAs: 'system'` elevates the body's own `ctx.api` calls and nothing
     // else — the triggering task write keeps its caller's authorization (the
     // spec's `runAs` scope note; measured live on `pnpm demo` for #100: a
     // member who gets 404 reading the duty still gets the grace on their
     // task, and still gets 404 updating a task that is not theirs). So the
-    // whole of what the elevation reaches is this one read, and it is pinned.
+    // whole of what the elevation reaches is these two reads, and they are
+    // pinned: the duty's grace, and — on a caller's insert only (#176) — the
+    // owner's `primary_business_unit_id` (the caller, unless the caller is unlocked).
     const calls = lowered.source.match(/ctx\.api\b[^;]*/g) ?? [];
-    const apiCalls = calls.filter((c) => c.includes('.object('));
-    expect(apiCalls, 'one ctx.api data call in the whole body').toHaveLength(1);
-    expect(apiCalls[0].replace(/\s+/g, ' '))
+    const apiCalls = calls.filter((c) => c.includes('.object(')).map((c) => c.replace(/\s+/g, ' '));
+    expect(apiCalls, 'two ctx.api data calls in the whole body').toHaveLength(2);
+    expect(apiCalls[0])
       .toBe('ctx.api.object("duly_duty").findOne({ where: { id }, fields: ["grace_days"] })');
+    expect(apiCalls[1])
+      .toBe('ctx.api.object("sys_user").findOne({ where: { id: ownerId }, fields: ["primary_business_unit_id"] })');
   });
 
   it('stamps a task on a one-off duty with the duty\'s grace (#100)', async () => {
