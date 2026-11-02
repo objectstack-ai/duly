@@ -215,10 +215,13 @@ export const Task = ObjectSchema.create({
      * Blank only when the task has no `due_date` at all — nothing to be late
      * against, so it never appears in a lateness surface. Every task that HAS a
      * due date gets one: the planner stamps it with the duty's grace, and
-     * `task.hook.ts` stamps `late_after = due_date` (zero grace) for the paths
-     * that have no duty to read — the assignment fan-out and a hand-created
-     * task. That is the same reading of "no duty governs this row" the overdue
-     * escalation already uses (`src/flows/reminders.flow.ts`).
+     * `task.hook.ts` stamps every other row at creation — `due_date` plus the
+     * grace of the duty the row carries, so a task created by hand on a
+     * one-off duty is judged exactly as the overdue escalation judges it
+     * (#100), and `due_date` itself (zero grace) for a row with no duty: the
+     * assignment fan-out and a member's own task. That is the same reading of
+     * "no duty governs this row" the escalation already uses
+     * (`src/flows/reminders.flow.ts`).
      */
     late_after: Field.date({
       label: 'Late after',

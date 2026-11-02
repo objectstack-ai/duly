@@ -858,6 +858,119 @@ describe('late_after — the deadline the row is born with', () => {
   });
 });
 
+/**
+ * #100 — a task created ON a duty carries that duty's grace, whoever creates it.
+ *
+ * Through #52 only the planner applied `grace_days`; every other producer got
+ * `late_after = due_date`. Measured on 18.2.0 before this change: a task on a
+ * `one_off` duty granting 7 days, created as a member, as the system and
+ * through `protocol.createData`, came back with `late_after` equal to its due
+ * date on all three — so the owner was on the Late lens the morning after the
+ * due date while the overdue escalation (correctly) waited out the week.
+ */
+describe('late_after on a task created on a duty that grants grace (#100)', () => {
+  const DUE = '2026-11-10';
+  const DUE_PLUS_7 = '2026-11-17';
+
+  const oneOffDuty = async (name: string, grace: number | null) =>
+    data.insert('duly_duty', {
+      name,
+      owner: 'user_alice',
+      form: 'one_off',
+      status: 'active',
+      source: 'catalog',
+      grace_days: grace,
+      timezone: 'UTC',
+    }, { context: SYSTEM });
+
+  it('a member\'s create on a one-off duty is late after the due date PLUS the grace', async () => {
+    const duty = await oneOffDuty('One-off granting a week — member create', 7);
+    expect(duty.grace_days).toBe(7);
+    const task = await newTask({ duty: duty.id, due_date: DUE });
+    expect(task.late_after, 'due_date + duty.grace_days, as the escalation reads it').toBe(DUE_PLUS_7);
+  });
+
+  it('a system create that carries no stamp gets the same deadline', async () => {
+    const duty = await oneOffDuty('One-off granting a week — system create', 7);
+    const task = await dispatchedTask({ duty: duty.id, due_date: DUE });
+    expect(task.late_after).toBe(DUE_PLUS_7);
+  });
+
+  it('so does a create through the protocol — the REST, OpenAPI and MCP write face', async () => {
+    const duty = await oneOffDuty('One-off granting a week — protocol create', 7);
+    const protocol = kernel.getService('protocol');
+    const created = await protocol.createData({
+      object: 'duly_task',
+      data: {
+        subject: 'Hand over the commissioning file',
+        owner: 'user_alice',
+        source: 'catalog',
+        status: 'open',
+        duty: duty.id,
+        due_date: DUE,
+      },
+    });
+    expect(created.record.late_after).toBe(DUE_PLUS_7);
+  });
+
+  it('agrees with the planner across a month end', async () => {
+    // Civil-day arithmetic, not 24h steps: the planner's `addCalendarDays`
+    // and this hook must land on the same day for the same inputs.
+    const duty = await oneOffDuty('One-off granting a week — month end', 7);
+    const task = await newTask({ duty: duty.id, due_date: '2027-02-25' });
+    expect(task.late_after).toBe('2027-03-04');
+  });
+
+  it('a duty granting no grace is zero grace — blank and 0 alike', async () => {
+    const zero = await oneOffDuty('One-off granting nothing', 0);
+    expect((await newTask({ duty: zero.id, due_date: DUE })).late_after).toBe(DUE);
+
+    const blank = await oneOffDuty('One-off with a blank grace', null);
+    expect((await newTask({ duty: blank.id, due_date: DUE })).late_after).toBe(DUE);
+  });
+
+  it('a row with no duty keeps zero grace — the assignment fan-out and a member\'s own task', async () => {
+    // The card's boundary, restated where it is enforced: no duty governs
+    // these rows, so there is no grace to apply.
+    const own = await newTask({ subject: 'my own task', due_date: DUE });
+    expect(own.late_after).toBe(DUE);
+    const fannedOut = await dispatchedTask({ subject: 'from an assignment', duty: null, due_date: DUE });
+    expect(fannedOut.late_after).toBe(DUE);
+  });
+
+  it('the planner\'s stamp is kept as it arrived — the duty is not re-read', async () => {
+    // Grace changed between planning and insert: the planner's value wins,
+    // because write-once means the stamp a producer supplies is the stamp.
+    const duty = await oneOffDuty('One-off whose grace the planner already applied', 7);
+    const task = await dispatchedTask({ duty: duty.id, due_date: DUE, late_after: '2026-11-12' });
+    expect(task.late_after).toBe('2026-11-12');
+  });
+
+  it('a task dated after it was created is judged with its duty\'s grace too', async () => {
+    const duty = await oneOffDuty('One-off dated later', 7);
+    const task = await newTask({ duty: duty.id });
+    expect(task.late_after ?? null).toBeNull();
+    const dated = await data.update('duly_task', { id: task.id, due_date: DUE });
+    expect(dated.late_after).toBe(DUE_PLUS_7);
+  });
+
+  it('is still write-once: widening the duty\'s grace later does not move the stamp', async () => {
+    const duty = await oneOffDuty('One-off widened after creation', 7);
+    const task = await newTask({ duty: duty.id, due_date: DUE });
+    await data.update('duly_duty', { id: duty.id, grace_days: 21 }, { context: SYSTEM });
+    await data.update('duly_task', { id: task.id, note: 'touched after the widening' });
+    expect((await read(task.id)).late_after).toBe(DUE_PLUS_7);
+  });
+
+  it('reads the duty elevated — runAs system is declared on the hook', () => {
+    // A creator who cannot see the duty must not get a zero-grace deadline.
+    // This harness runs no security middleware, so the elevation itself is
+    // verified against a live `pnpm demo`; here the declaration is pinned.
+    const hook = dulyHooks.find((h) => h.name === 'duly_task_lifecycle_stamps');
+    expect(hook?.runAs).toBe('system');
+  });
+});
+
 describe('WRITE-ONCE — editing a duty\'s grace never rewrites history', () => {
   /**
    * The assertion this whole card turns on.

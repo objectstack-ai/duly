@@ -678,6 +678,7 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'hook.handler': machine('handler registration key'),
   'hook.events[]': machine('lifecycle events'),
   'hook.onError': machine('failure posture'),
+  'hook.runAs': machine('execution identity'),
   'hook.label': untranslatable(ADMIN_WHY('hook')),
   'hook.description': untranslatable(ADMIN_WHY('hook')),
 
