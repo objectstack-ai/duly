@@ -94,7 +94,9 @@ import { defineFlow } from '@objectstack/spec';
  *     completes returns the `childSteps` an aborted one threw away.
  *  2. **The failure is named to the assigner**, in their inbox, one
  *     notification per failed assignee, carrying the assignee handle, the
- *     engine's own reason, and a click-through to the assignment. A partial
+ *     engine's own reason (or, for a removed or banned account, the cause and
+ *     the remedy instead — #160, below), and a click-through to the
+ *     assignment. A partial
  *     fan-out that nobody is told about is the "silent partial success" this
  *     card exists to remove; the run log alone does not count, because it is
  *     an operator surface and the assigner never sees it.
@@ -140,7 +142,57 @@ import { defineFlow } from '@objectstack/spec';
  * Re-saving the assignment after the account is restored (or the name
  * replaced) fans out again, and the per-owner guard creates exactly the
  * missing task, so a temporary ban costs a re-save, not a lost assignee.
+ *
+ * ── The notice names the account, not "Owner is required" (#160) ────────
+ * Refusing through `owner: null` means the engine's reason for a removed or
+ * banned assignee is "Owner is required": true, and useless to the assigner,
+ * who needs to hear that the account is gone or banned and what to do about
+ * it. So the protected region also records WHY it is refusing, in
+ * `fanout_refusal_cause`, and the handler picks its words by that cause.
+ *
+ * *Why three templates and not one template with a cause in it.* The words
+ * have to come from a template (AGENTS.md §8), and on @objectstack 18.2.0
+ * neither half of "one template, two sentences" exists: the email renderer
+ * fills `{{path}}` / `{{path | formatter}}` holes and nothing else — no
+ * section, no conditional, no formatter that maps a value to text — and the
+ * notify node's `template` is a plain string read raw, never an expression.
+ * So the catch region is an exclusive gateway onto one notify node per
+ * cause: `duly.assignment_fanout_account_removed`,
+ * `duly.assignment_fanout_account_banned`, and the unchanged
+ * `duly.assignment_fanout_failed` — engine reason and all — for every other
+ * failure. All three share one topic, so anything filtering on
+ * `duly.assignment_fanout_failed` still sees every refusal.
+ *
+ * *Why the cause is judged in the try, and cleared first.* The handler must
+ * not judge the account itself: `fanout_assignee_user` can be the previous
+ * assignee's row (see above), and on a lookup MISS there is no row whose id
+ * could prove it is this assignee's. So `fanout_judge_account` reads the
+ * lookup in the one place it is known to be fresh — the node straight after
+ * it — and `fanout_clear_cause`, the first node of every iteration, empties
+ * the cause before anything can fail. A failure before the judge therefore
+ * reads as "other" and keeps the engine's reason, never a previous
+ * assignee's cause.
+ *
+ * *The ownership guard does not read the cause.* `owner` keeps its own
+ * predicate over the lookup. The two say the same thing, but if they ever
+ * drifted the worst outcome is a notice worded as the generic failure, not a
+ * task handed to an account nobody can open. The engine-driven tests pin
+ * that they agree on every case: removed, banned, banned with a lapsed
+ * expiry, and a blank handle.
  */
+/**
+ * What every fan-out failure notice shares, whichever template words it: the
+ * assigner hears it, as a warning, under ONE topic, with a click-through to
+ * the assignment. Only `template` and `templateData` differ per cause (#160).
+ */
+const FANOUT_NOTICE = {
+  recipients: F`record.assigner`,
+  severity: 'warning' as const,
+  topic: 'duly.assignment_fanout_failed',
+  sourceObject: 'duly_assignment',
+  sourceId: F`record.id`,
+};
+
 export const AssignmentFanout = defineFlow({
   name: 'duly_assignment_fanout',
   label: 'Assignment fan-out',
@@ -176,6 +228,11 @@ export const AssignmentFanout = defineFlow({
     { name: 'existing_assigner_task', type: 'record', defaultValue: null },
     { name: 'fanout_assignee_user', type: 'record', defaultValue: null },
     { name: 'assigner_user', type: 'record', defaultValue: null },
+    // Why this assignee is being refused, judged right after the account
+    // lookup (#160, see the header): `account_removed`, `account_banned`, or
+    // '' for anything else. Declared because the handler's gateway reads it on
+    // every failure, including one that happens before the judge has run.
+    { name: 'fanout_refusal_cause', type: 'text', defaultValue: '' },
   ],
 
   nodes: [
@@ -223,6 +280,15 @@ export const AssignmentFanout = defineFlow({
                 try: {
                   nodes: [
                     {
+                      id: 'fanout_clear_cause',
+                      type: 'assignment',
+                      // First, every iteration, before anything can fail: a
+                      // cause left over from the previous assignee must never
+                      // word this one's notice (#160, see the header).
+                      label: 'Forget the previous assignee\'s refusal cause',
+                      config: { assignments: { fanout_refusal_cause: '' } },
+                    },
+                    {
                       id: 'fanout_find_existing',
                       type: 'get_record',
                       label: 'Does this assignee already have a task?',
@@ -248,6 +314,25 @@ export const AssignmentFanout = defineFlow({
                         filter: { id: F`fanout_assignee` },
                         fields: ['id', 'primary_business_unit_id', 'banned', 'ban_expires'],
                         outputVariable: 'fanout_assignee_user',
+                      },
+                    },
+                    {
+                      id: 'fanout_judge_account',
+                      type: 'assignment',
+                      // Straight after the lookup, so the row it reads is this
+                      // assignee's — or null because THIS lookup missed. It
+                      // only words the notice; the create's `owner` keeps its
+                      // own guard (#160, see the header).
+                      //
+                      // A blank handle is not "removed": there was never an
+                      // account to restore, so it stays '' and the notice keeps
+                      // the engine's reason. The ban arm is the exact negation
+                      // of the active-account arm on `owner` below.
+                      label: 'Say why this account cannot hold a task, if it cannot',
+                      config: {
+                        assignments: {
+                          fanout_refusal_cause: F`isBlank(fanout_assignee) ? "" : vars.fanout_assignee_user == null ? "account_removed" : (has(vars.fanout_assignee_user.banned) && vars.fanout_assignee_user.banned == true && !(has(vars.fanout_assignee_user.ban_expires) && !isBlank(vars.fanout_assignee_user.ban_expires) && datetime(vars.fanout_assignee_user.ban_expires) <= now())) ? "account_banned" : ""`,
+                        },
                       },
                     },
                     {
@@ -300,6 +385,7 @@ export const AssignmentFanout = defineFlow({
                     },
                   ],
                   edges: [
+                    { id: 'fanout_e_cleared', source: 'fanout_clear_cause', target: 'fanout_find_existing' },
                     {
                       id: 'fanout_e_missing',
                       source: 'fanout_find_existing',
@@ -311,7 +397,8 @@ export const AssignmentFanout = defineFlow({
                       // access through a null root, which aborts the predicate.
                       condition: P`isBlank(vars.existing_task)`,
                     },
-                    { id: 'fanout_e_create', source: 'fanout_find_unit', target: 'fanout_create_task' },
+                    { id: 'fanout_e_judge', source: 'fanout_find_unit', target: 'fanout_judge_account' },
+                    { id: 'fanout_e_create', source: 'fanout_judge_account', target: 'fanout_create_task' },
                   ],
                 },
                 // The handler is what turns "this person got nothing" from a
@@ -319,14 +406,51 @@ export const AssignmentFanout = defineFlow({
                 // be able to fail the container itself: `notify` degrades to a
                 // no-op success when no messaging service is mounted, and a
                 // catch region that threw would put the abort straight back.
+                // The gateway in front of the three notices cannot fail either:
+                // its edges compare `fanout_refusal_cause`, which is declared
+                // with a default and so is bound even when the try failed
+                // before clearing it.
                 catch: {
                   nodes: [
+                    {
+                      // A plain gateway: no `conditions` of its own, so the
+                      // branching is on the out-edges, and it is EXCLUSIVE —
+                      // the first conditioned edge that holds wins and the
+                      // default runs only when none does. Exactly one notice
+                      // per refused assignee (#160, see the header).
+                      id: 'fanout_route_failure',
+                      type: 'decision',
+                      label: 'Which notice fits this failure?',
+                      config: {},
+                    },
+                    {
+                      id: 'fanout_report_removed',
+                      type: 'notify',
+                      label: "Tell the assigner this person's account no longer exists",
+                      config: {
+                        ...FANOUT_NOTICE,
+                        template: 'duly.assignment_fanout_account_removed',
+                        // No `reason`: the engine's sentence here is "Owner is
+                        // required", which is exactly what this notice replaces.
+                        templateData: { subject: F`record.subject`, assignee: F`fanout_assignee` },
+                      },
+                    },
+                    {
+                      id: 'fanout_report_banned',
+                      type: 'notify',
+                      label: "Tell the assigner this person's account is banned",
+                      config: {
+                        ...FANOUT_NOTICE,
+                        template: 'duly.assignment_fanout_account_banned',
+                        templateData: { subject: F`record.subject`, assignee: F`fanout_assignee` },
+                      },
+                    },
                     {
                       id: 'fanout_report_failure',
                       type: 'notify',
                       label: 'Tell the assigner this person got no task',
                       config: {
-                        recipients: F`record.assigner`,
+                        ...FANOUT_NOTICE,
                         // The localizable content path (AGENTS.md §8) — the
                         // words live in src/email-templates/, never inline.
                         template: 'duly.assignment_fanout_failed',
@@ -343,14 +467,52 @@ export const AssignmentFanout = defineFlow({
                           // not a CEL identifier, so it is read through `vars`.
                           reason: F`vars["$error"].message`,
                         },
-                        severity: 'warning',
-                        topic: 'duly.assignment_fanout_failed',
-                        sourceObject: 'duly_assignment',
-                        sourceId: F`record.id`,
                       },
                     },
+                    // The region's one exit (see the edges below). It also
+                    // empties the cause, so nothing after the loop can read
+                    // the last refused assignee's. It is NOT what keeps the
+                    // next assignee's notice right — `fanout_clear_cause` at
+                    // the top of the try is. An `end` cannot stand here: the
+                    // schema refuses one inside a region.
+                    {
+                      id: 'fanout_reported',
+                      type: 'assignment',
+                      label: 'Assigner told; forget the refusal cause',
+                      config: { assignments: { fanout_refusal_cause: '' } },
+                    },
                   ],
-                  edges: [],
+                  edges: [
+                    {
+                      id: 'fanout_e_removed',
+                      source: 'fanout_route_failure',
+                      target: 'fanout_report_removed',
+                      type: 'conditional',
+                      label: 'Account no longer exists',
+                      condition: P`vars.fanout_refusal_cause == "account_removed"`,
+                    },
+                    {
+                      id: 'fanout_e_banned',
+                      source: 'fanout_route_failure',
+                      target: 'fanout_report_banned',
+                      type: 'conditional',
+                      label: 'Account is banned',
+                      condition: P`vars.fanout_refusal_cause == "account_banned"`,
+                    },
+                    {
+                      id: 'fanout_e_other',
+                      source: 'fanout_route_failure',
+                      target: 'fanout_report_failure',
+                      label: 'Any other failure',
+                      isDefault: true,
+                    },
+                    // The three notices meet again here because a region must
+                    // be single-exit: registration refuses one with three
+                    // sinks, and `pnpm validate` does not catch it.
+                    { id: 'fanout_e_removed_told', source: 'fanout_report_removed', target: 'fanout_reported' },
+                    { id: 'fanout_e_banned_told', source: 'fanout_report_banned', target: 'fanout_reported' },
+                    { id: 'fanout_e_other_told', source: 'fanout_report_failure', target: 'fanout_reported' },
+                  ],
                 },
               },
             },
