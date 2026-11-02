@@ -103,6 +103,8 @@ describe('permission sets — declared scopes, object by object', () => {
       // member set grants no write bit, so both fall to the baseline.
       duly_catalog_item: { read: 'own', write: 'own' },
       duly_assignment: { read: 'own', write: 'own' },
+      // #180: read only, no scope keys — see PLATFORM_READS below.
+      sys_business_unit: { read: 'own', write: 'own' },
     },
     duly_manager: {
       // The two ADR-0057 depth grants. Authorable because the stack declares
@@ -113,6 +115,8 @@ describe('permission sets — declared scopes, object by object', () => {
       duly_log_entry: { read: 'own', write: 'own' },
       duly_catalog_item: { read: 'own', write: 'own' },
       duly_assignment: { read: 'own', write: 'own' },
+      // #180: read only, no scope keys — see PLATFORM_READS below.
+      sys_business_unit: { read: 'own', write: 'own' },
     },
     duly_admin: {
       // Inherited from the manager set, not restated.
@@ -125,13 +129,14 @@ describe('permission sets — declared scopes, object by object', () => {
       // edit catalog items they personally created.
       duly_catalog_item: { read: 'own', write: 'org' },
       duly_assignment: { read: 'own', write: 'own' },
+      sys_business_unit: { read: 'own', write: 'own' },
     },
   };
 
   for (const set of ALL_SETS) {
     const expected = EXPECTED[set.name];
 
-    it(`${set.name} grants exactly the five duly objects`, () => {
+    it(`${set.name} grants exactly the five duly objects, plus read on business units`, () => {
       expect(Object.keys(set.objects).sort()).toEqual(Object.keys(expected).sort());
       // No wildcard grant anywhere. `'*'` plus a super-user bit is a
       // package-authored superuser (ADR-0066), and `'*'` alone is a blank
@@ -577,14 +582,46 @@ describe('no write scope is wider than own', () => {
   });
 });
 
+/**
+ * The platform objects a set may name, and the one grant each may carry.
+ *
+ * `sys_business_unit` (#180): the unit lookups on `duly_task` and `duly_duty`
+ * resolve under the viewer's read, so without it a member sees a raw id and a
+ * non-platform `duly_admin` cannot Import units by name. READ ONLY, every
+ * key written out: a write bit, a scope or a super-user bit here would be a
+ * Duly set editing the org tree. `test/business-unit-read.test.ts` drives it
+ * against a real member.
+ */
+const PLATFORM_READS: Record<string, Record<string, unknown>> = {
+  // As the schema parses it: every other bit false, and no scope key.
+  sys_business_unit: {
+    allowRead: true,
+    allowCreate: false,
+    allowEdit: false,
+    allowDelete: false,
+    allowTransfer: false,
+    viewAllRecords: false,
+    modifyAllRecords: false,
+  },
+};
+
 describe('objects the sets grant are the objects this app ships', () => {
-  it('grants nothing outside the duly namespace', () => {
+  it('grants nothing outside the duly namespace, bar the named platform reads', () => {
     const shipped = new Set([Task, Duty, LogEntry, CatalogItem, Assignment].map((o) => o.name));
     for (const set of ALL_SETS) {
       for (const objectName of Object.keys(set.objects)) {
+        if (objectName in PLATFORM_READS) continue;
         expect(shipped, `${set.name} grants "${objectName}", which this app does not ship`).toContain(
           objectName,
         );
+      }
+    }
+  });
+
+  it('a named platform read is exactly the declared grant, in every set', () => {
+    for (const set of ALL_SETS) {
+      for (const [objectName, grant] of Object.entries(PLATFORM_READS)) {
+        expect(set.objects[objectName], `${set.name}.${objectName}`).toEqual(grant);
       }
     }
   });
