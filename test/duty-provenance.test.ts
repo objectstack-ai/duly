@@ -327,14 +327,15 @@ describe('the writers that put a duty on somebody else keep writing all three', 
     expect(response?.body?.data?.created).toBe(1);
 
     const [duty] = await data.find('duly_duty', { where: { catalog_item: item.id, owner: 'user_sami' } }, { context: SYSTEM });
-    expect([duty.source, duty.owner, duty.business_unit]).toEqual(['catalog', 'user_sami', UNIT.quality]);
+    // The primary unit wins over the position anchor (#179, ruling R-A).
+    expect([duty.source, duty.owner, duty.business_unit]).toEqual(['catalog', 'user_sami', UNIT.ops]);
 
     // Sync replays cadence onto it and leaves its provenance alone.
     await data.update('duly_catalog_item', { id: item.id, due_offset_days: 9 }, { context: SYSTEM });
     const synced = await action(IDA, CATALOG_SYNC_ACTION, { position_code: position });
     expect(synced?.status, JSON.stringify(synced?.body)).toBe(200);
     const after = await stored(String(duty.id));
-    expect([after.source, after.owner, after.business_unit, after.due_offset_days]).toEqual(['catalog', 'user_sami', UNIT.quality, 9]);
+    expect([after.source, after.owner, after.business_unit, after.due_offset_days]).toEqual(['catalog', 'user_sami', UNIT.ops, 9]);
   });
 
   it('a member still cannot call Apply catalog', async () => {

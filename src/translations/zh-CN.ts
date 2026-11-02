@@ -163,7 +163,7 @@ export const dulyChinese = defineTranslationBundle({
           },
           business_unit: {
             label: '部门',
-            help: '汇总口径的锚点。创建时取自负责人的岗位。',
+            help: '汇总口径的锚点。创建时取自负责人的主业务单元。负责人没有主业务单元时，应用岗位职责库会改用其岗位锚定的业务单元（仅当这些岗位都指向同一个业务单元时）；否则留空。',
           },
           source: {
             label: '来源',
@@ -516,6 +516,13 @@ export const dulyChinese = defineTranslationBundle({
           duly_catalog_apply_to_people: {
             label: '应用到人员',
             description: '为选中的每个人创建这个岗位应尽的职责。可以放心重复执行——已经从职责库条目获得过职责的人会被跳过，不会重复创建。',
+            // 操作完成后的提示，按处理器返回的 outcome 选取（#179）。
+            outcomeMessages: {
+              created: '已创建 ${result.created} 条职责。${result.skipped} 条已存在，已跳过。',
+              created_unanchored:
+                '已创建 ${result.created} 条职责。其中 ${result.unanchored} 条没有业务单元，因为无法确定负责人所属的业务单元。${result.skipped} 条已存在，已跳过。',
+              nothing_created: '没有新职责：全部 ${result.skipped} 条都已存在。',
+            },
             params: {
               position_code: {
                 label: '岗位',
@@ -824,6 +831,13 @@ export const dulyChinese = defineTranslationBundle({
       duly_catalog_apply: {
         label: '应用岗位职责库',
         description: '为选中的每个人创建这个岗位应尽的职责。可以放心重复执行——已经从职责库条目获得过职责的人会被跳过，不会重复创建。',
+        // 操作完成后的提示，按处理器返回的 outcome 选取（#179）。
+        outcomeMessages: {
+          created: '已创建 ${result.created} 条职责。${result.skipped} 条已存在，已跳过。',
+          created_unanchored:
+            '已创建 ${result.created} 条职责。其中 ${result.unanchored} 条没有业务单元，因为无法确定负责人所属的业务单元。${result.skipped} 条已存在，已跳过。',
+          nothing_created: '没有新职责：全部 ${result.skipped} 条都已存在。',
+        },
         params: {
           position_code: {
             label: '岗位',

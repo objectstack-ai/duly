@@ -149,7 +149,7 @@ export const DutyTimezoneGuard: Hook = {
 /**
  * `duly_duty.business_unit` for a duty somebody creates by hand (#178).
  *
- * The field's description has always said "Set from the owner's position on
+ * The field's description used to say "Set from the owner's position on
  * create", and on a hand-made duty nothing set it: measured on 18.2.0, a
  * plain create through the form, data POST or MCP stored `business_unit:
  * null`. Since #178 a member or manager can no longer name a unit at all (the
@@ -169,9 +169,11 @@ export const DutyTimezoneGuard: Hook = {
  *
  * ── What it never touches ────────────────────────────────────────────────
  *  - A SYSTEM write: the seed names each duty's unit itself, and
- *    `duly_catalog_apply` resolves the unit from the person's position
- *    anchor. Both say what they mean; a second rung here would be a product
- *    decision taken behind their backs (that is card #179's to make).
+ *    `duly_catalog_apply` (whose engine runs as system) resolves its own:
+ *    the owner's primary unit first — this hook's rung — then a lone
+ *    position anchor, and it reports a duty left without one
+ *    (`resolveBusinessUnits` in `src/actions/catalog.handlers.ts`, #179).
+ *    Both say what they mean, so this hook leaves them alone.
  *  - A write that NAMES a unit: only a `duly_admin` can, the Import and a
  *    correction by hand among them, and their value stands.
  *  - An update. The anchor is written once, at create.

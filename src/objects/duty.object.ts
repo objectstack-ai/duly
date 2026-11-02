@@ -105,12 +105,15 @@ export const Duty = ObjectSchema.create({
     }),
 
     // On a hand-made duty, `duly_duty_unit_stamp` (src/hooks/duty.hook.ts)
-    // writes the owner's primary business unit at create. Apply catalog
-    // resolves it from the person's position anchor; the seed names it.
+    // writes the owner's primary business unit at create. Apply catalog runs
+    // as system, so the stamp skips it; its handler resolves the same rung
+    // first, then a lone position anchor, and reports a duty left without a
+    // unit (`resolveBusinessUnits`, #179). The seed names it.
     business_unit: Field.lookup('sys_business_unit', {
       label: 'Business unit',
       group: 'basics',
-      description: 'Rollup anchor. Set from the owner\'s position on create.',
+      description:
+        'Rollup anchor. Set on create from the owner\'s primary business unit. Apply catalog falls back to the owner\'s position anchor when they have no primary unit and their anchored positions name one unit; otherwise it stays empty.',
     }),
 
     // ── Where the duty came from ──────────────────────────────────────────

@@ -80,6 +80,18 @@ export const CatalogApplyAction = defineAction({
   // could reach the route could mint a duty for any `sys_user` id they typed,
   // in bulk. Granted by the `duly_admin` permission set (src/security/).
   requiredPermissions: ['duly.catalog.apply'],
+  // The toast after a run, picked by the handler's `outcome` (#179). The
+  // handler returns facts — counts and a closed outcome — and the copy lives
+  // here, so it is translated like every other label. The one the reader must
+  // not miss is `created_unanchored`: a duty with no business unit drops out
+  // of every per-unit reading, so the toast says how many and why, and the
+  // result's `unanchored_owners` says who. Inherited by the twin below.
+  outcomeMessages: {
+    created: 'Created ${result.created} duties. ${result.skipped} already existed and were skipped.',
+    created_unanchored:
+      'Created ${result.created} duties. ${result.unanchored} have no business unit, because none could be determined for their owner. ${result.skipped} already existed and were skipped.',
+    nothing_created: 'Nothing new: all ${result.skipped} duties already existed.',
+  },
   params: [
     {
       name: 'position_code',
