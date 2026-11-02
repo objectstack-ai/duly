@@ -70,12 +70,13 @@ import {
  * the code, not measured: hierarchy scopes need the enterprise runtime, and
  * this open-edition checkout resolves both to owner-only — AGENTS.md rule 7.)
  *
- * What is gone, and why that is not a hole: the handlers' 409 on a wrong
- * status (completing a cancelled task, skipping a done one). That was never
- * authorization — the same caller can send the same `{ status }` through the
- * data plane, which has no such check — so it guarded one door of several.
- * The declared transition rule belongs on the object, where every door
- * passes: card #162.
+ * Where the old status check went: the handlers' 409 on a wrong status
+ * (completing a cancelled task, skipping a done one) guarded one door of
+ * several — the same caller could send the same `{ status }` through the
+ * data plane. It is now the `status_transitions` rule on `duly_task` (#162),
+ * which the route, the data PATCH and MCP all write through: completing a
+ * cancelled task answers 400 `VALIDATION_FAILED` / `invalid_transition` on
+ * every door (`test/task-status-transitions.test.ts`).
  * The completion instant is still never re-stamped: a done → done write is
  * not a transition, and the hook stamps only transitions.
  *

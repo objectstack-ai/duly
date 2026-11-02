@@ -94,11 +94,11 @@ export const SKIP_PATCH = { status: 'skipped' } as const;
  * asking for, and re-completing it would put it back into on-time rates that
  * had correctly forgotten it.
  *
- * ⚠️ Since #146 this is offered-from, not enforced-from. The declarative write
- * has no server-side status precondition, and neither does the data plane the
- * same caller can already PATCH. Enforcing a transition rule belongs on the
- * object, where every door passes (a `state_machine` validation on
- * `duly_task.status`, card #162), not back in a handler that guards one door.
+ * This list is what the buttons OFFER. What the server ENFORCES is the
+ * `status_transitions` rule on `duly_task` (#162): only these two states may
+ * move to `done` or `skipped`, on the action route, the data PATCH and MCP
+ * alike. `test/task-status-transitions.test.ts` pins the two together, so a
+ * status added here and not to the rule (or the reverse) goes red.
  */
 export const ACTIONABLE_STATUSES: readonly string[] = ['open', 'in_progress'];
 
