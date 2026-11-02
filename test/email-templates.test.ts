@@ -170,8 +170,9 @@ describe('the email-template barrel', () => {
     const onStack = ((stack as AnyRec).emailTemplates ?? []) as AnyRec[];
     expect(onStack.map(key)).toEqual((dulyEmailTemplates as unknown as AnyRec[]).map(key));
     // 6 before #123: three reminder bundles x two locales. The fan-out failure
-    // handler adds a fourth bundle, also x two locales.
-    expect(onStack.length).toBe(8);
+    // handler adds a fourth bundle, also x two locales, and #160 two more —
+    // a removed and a banned account — x two locales.
+    expect(onStack.length).toBe(12);
   });
 
   it('is a named ARRAY of rows that each carry a name', () => {
@@ -200,9 +201,10 @@ describe('the email-template barrel', () => {
       ).toBe(true);
       seen.push(name);
     }
-    // Three reminder sweeps plus the fan-out failure handler (#123), which
-    // only counts here because `notifyNodes()` recurses into container regions.
-    expect(seen.length).toBe(4);
+    // Three reminder sweeps plus the fan-out failure handler's three notices
+    // (#123, one per cause since #160), which only count here because
+    // `notifyNodes()` recurses into container regions.
+    expect(seen.length).toBe(6);
   });
 
   it('every referenced bundle has an `en-US` row — the resolver\'s floor (#145)', () => {
@@ -323,6 +325,92 @@ describe('the lead-time sweep delivers a RESOLVED body', () => {
     await expect(
       email.renderTemplate({ template: 'duly.task_lead_tim', locale: 'en', data: {} }),
     ).rejects.toThrow(/TEMPLATE_NOT_FOUND/);
+  });
+});
+
+// ── The fan-out refusal notices: cause and remedy, both locales (#160) ───
+
+/**
+ * The two account bundles render through the mailer itself, in each locale
+ * they carry, with every hole filled. The engine-driven leg in
+ * `test/assignment-fanout.test.ts` pins the same words as the assigner reads
+ * them; this one pins them at the template, where a typo in a hole name would
+ * otherwise render as an empty string and pass every other gate.
+ */
+describe('the fan-out refusal bundles name the cause and the remedy (#160)', () => {
+  const SUBJECT = "Renew the operator's licence";
+  const ASSIGNEE = 'user_gone';
+  const EN_LEAD = 'Everyone else on this assignment has their task. This one did not get created, so'
+    + ' nobody is holding it.';
+  const ZH_LEAD = '这项指派中其他人的任务都已生成，只有这一条没有创建成功，因此目前无人承担。';
+
+  const CASES: { template: string; locale: string; subject: string; text: string }[] = [
+    {
+      template: 'duly.assignment_fanout_account_removed',
+      locale: EMAIL_TEMPLATE_FLOOR_LOCALE,
+      subject: `No task was created for one assignee: ${SUBJECT}`,
+      text: `${EN_LEAD}\nAssignee: ${ASSIGNEE}\n`
+        + "Reason: this person's account no longer exists, so nobody could open a task assigned to it.\n"
+        + 'To fix it, replace them on the assignment or restore their account, then save the assignment'
+        + ' again. Only the missing task is created.',
+    },
+    {
+      template: 'duly.assignment_fanout_account_removed',
+      locale: 'zh-CN',
+      subject: `有一位成员没有生成任务：${SUBJECT}`,
+      text: `${ZH_LEAD}\n成员：${ASSIGNEE}\n原因：该成员的账号已不存在，分配给这个账号的任务没有人能打开。\n`
+        + '处理办法：在指派中换成其他成员，或恢复该账号，然后重新保存指派。只会补建缺少的那一条任务。',
+    },
+    {
+      template: 'duly.assignment_fanout_account_banned',
+      locale: EMAIL_TEMPLATE_FLOOR_LOCALE,
+      subject: `No task was created for one assignee: ${SUBJECT}`,
+      text: `${EN_LEAD}\nAssignee: ${ASSIGNEE}\n`
+        + "Reason: this person's account is banned, so they cannot sign in to open a task.\n"
+        + 'To fix it, replace them on the assignment or restore their account by lifting the ban, then save'
+        + ' the assignment again. Only the missing task is created.',
+    },
+    {
+      template: 'duly.assignment_fanout_account_banned',
+      locale: 'zh-CN',
+      subject: `有一位成员没有生成任务：${SUBJECT}`,
+      text: `${ZH_LEAD}\n成员：${ASSIGNEE}\n原因：该成员的账号已被封禁，无法登录打开任务。\n`
+        + '处理办法：在指派中换成其他成员，或解除封禁以恢复该账号，然后重新保存指派。只会补建缺少的那一条任务。',
+    },
+  ];
+
+  it.each(CASES)('$template renders in $locale', async ({ template, locale, subject, text }) => {
+    const rendered = await email.renderTemplate({ template, locale, data: { subject: SUBJECT, assignee: ASSIGNEE } });
+    // Unescaped in the two plain-text slots the inbox writes, escaped in html.
+    expect(rendered.subject).toBe(subject);
+    expect(rendered.text).toBe(text);
+    expect(rendered.html).toContain(ASSIGNEE);
+    expect(rendered.html).not.toContain('{{');
+  });
+
+  it('they print no engine reason, and the generic bundle still does', async () => {
+    // The point of the two bundles is to REPLACE "Owner is required"; a
+    // `reason` hole left in one would print it again. The generic bundle
+    // keeps it for every failure that is not one of the two causes.
+    const data = { subject: SUBJECT, assignee: ASSIGNEE, reason: 'Owner is required' };
+    for (const template of ['duly.assignment_fanout_account_removed', 'duly.assignment_fanout_account_banned']) {
+      for (const locale of [EMAIL_TEMPLATE_FLOOR_LOCALE, 'zh-CN']) {
+        const rendered = await email.renderTemplate({ template, locale, data });
+        expect(rendered.text, `${template} @ ${locale}`).not.toContain('Owner is required');
+      }
+    }
+    const generic = await email.renderTemplate({ template: 'duly.assignment_fanout_failed', locale: 'zh-CN', data });
+    expect(generic.text).toContain('原因：Owner is required');
+  });
+
+  it('a removed assignee rendered blank still renders, rather than dead-lettering', async () => {
+    // `assignee` is optional on these rows for the same reason as on the
+    // generic one: a required hole the fan-out cannot fill would turn the
+    // notice into a permanent MISSING_VARIABLES dead letter.
+    for (const template of ['duly.assignment_fanout_account_removed', 'duly.assignment_fanout_account_banned']) {
+      const rendered = await email.renderTemplate({ template, locale: 'zh-CN', data: { subject: SUBJECT } });
+      expect(rendered.text, template).toContain('成员：\n');
+    }
   });
 });
 

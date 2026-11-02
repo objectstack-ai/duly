@@ -432,27 +432,34 @@ describe('assignment fan-out — a bad row costs one task, not the fan-out', () 
   it('every node that can fail sits inside the protected region', () => {
     // The three data nodes are the ones that return `success: false` or throw;
     // a `get_record`/`create_record` left outside the `try` would abort the
-    // whole loop exactly as before the wrapper existed.
+    // whole loop exactly as before the wrapper existed. The two `assignment`
+    // nodes word the notice (#160) and are inside for the same reason: the
+    // judge evaluates CEL over the lookup, and CEL can throw.
     expect(loopBody().nodes.map((n) => n.id)).toEqual([
-      'fanout_find_existing', 'fanout_find_unit', 'fanout_create_task',
+      'fanout_clear_cause', 'fanout_find_existing', 'fanout_find_unit', 'fanout_judge_account', 'fanout_create_task',
     ]);
     for (const n of loopBody().nodes) {
-      expect(['get_record', 'create_record'], `${n.id}`).toContain(n.type);
+      expect(['get_record', 'create_record', 'assignment'], `${n.id}`).toContain(n.type);
     }
   });
 
   it('the handler tells the ASSIGNER, and names the assignee from the iterator', () => {
+    // A gateway, one notice per cause (#160), and the region's single exit.
     const handler = catchBody().nodes;
-    expect(handler.map((n) => n.type)).toEqual(['notify']);
-    const config = (handler[0].config ?? {}) as AnyRec;
-    expect(config.recipients).toEqual(cel('record.assigner'));
-    const templateData = (config.templateData ?? {}) as AnyRec;
-    // `fanout_assignee` is re-bound by the loop before every iteration.
-    // `fanout_assignee_user` is NOT: a region that throws at `fanout_find_unit`
-    // leaves it holding the PREVIOUS assignee's row, so a handler reading a
-    // name from it would calmly name the wrong colleague.
-    expect(templateData.assignee).toEqual(cel('fanout_assignee'));
-    expect(JSON.stringify(templateData)).not.toContain('fanout_assignee_user');
+    expect(handler.map((n) => n.type)).toEqual(['decision', 'notify', 'notify', 'notify', 'assignment']);
+    for (const notice of handler.filter((n) => n.type === 'notify')) {
+      const config = (notice.config ?? {}) as AnyRec;
+      expect(config.recipients, notice.id).toEqual(cel('record.assigner'));
+      expect(config.topic, notice.id).toBe('duly.assignment_fanout_failed');
+      expect(config.severity, notice.id).toBe('warning');
+      const templateData = (config.templateData ?? {}) as AnyRec;
+      // `fanout_assignee` is re-bound by the loop before every iteration.
+      // `fanout_assignee_user` is NOT: a region that throws at
+      // `fanout_find_unit` leaves it holding the PREVIOUS assignee's row, so a
+      // handler reading a name from it would calmly name the wrong colleague.
+      expect(templateData.assignee, notice.id).toEqual(cel('fanout_assignee'));
+      expect(JSON.stringify(config), notice.id).not.toContain('fanout_assignee_user');
+    }
   });
 
   it('the handler says something, in a bundle, never inline', () => {
@@ -460,10 +467,16 @@ describe('assignment fan-out — a bad row costs one task, not the fan-out', () 
     // `title`/`message`, so the check that matters is that a template is named
     // at all — a handler with neither would not parse, and one with inline copy
     // would ship English into a zh-CN deployment.
-    const config = (catchBody().nodes[0].config ?? {}) as AnyRec;
-    expect(config.template).toBe('duly.assignment_fanout_failed');
-    expect(Object.keys(config)).not.toContain('title');
-    expect(Object.keys(config)).not.toContain('message');
+    const notices = catchBody().nodes.filter((n) => n.type === 'notify');
+    expect(notices.map((n) => n.config?.template)).toEqual([
+      'duly.assignment_fanout_account_removed',
+      'duly.assignment_fanout_account_banned',
+      'duly.assignment_fanout_failed',
+    ]);
+    for (const notice of notices) {
+      expect(Object.keys(notice.config ?? {}), notice.id).not.toContain('title');
+      expect(Object.keys(notice.config ?? {}), notice.id).not.toContain('message');
+    }
   });
 
   it('the handler still writes nothing back onto the assignment', () => {
@@ -743,11 +756,17 @@ describe('assignment fan-out — the owner must be an active account (#148)', ()
 
   it('the lookup runs right before the create, so the row it judges is this assignee\'s', () => {
     // `fanout_assignee_user` is shared across iterations. It is only safe to
-    // judge because the create's sole incoming edge comes straight from the
-    // lookup, which rebinds it (to the row, or to null on a miss) every time.
-    const incoming = loopBody().edges.filter((e) => e.target === 'fanout_create_task');
-    expect(incoming.map((e) => e.source)).toEqual(['fanout_find_unit']);
-    expect(incoming[0].condition).toBeUndefined();
+    // judge because the create is reached from the lookup, which rebinds it
+    // (to the row, or to null on a miss) every time, through nothing but the
+    // cause judge (#160) — which reads that row and writes only the cause.
+    const into = (id: string) => loopBody().edges.filter((e) => e.target === id);
+    expect(into('fanout_create_task').map((e) => e.source)).toEqual(['fanout_judge_account']);
+    expect(into('fanout_judge_account').map((e) => e.source)).toEqual(['fanout_find_unit']);
+    for (const e of [...into('fanout_create_task'), ...into('fanout_judge_account')]) {
+      expect(e.condition, e.id).toBeUndefined();
+    }
+    const judge = loopBody().nodes.find((n) => n.id === 'fanout_judge_account')!;
+    expect(Object.keys((judge.config?.assignments ?? {}) as AnyRec)).toEqual(['fanout_refusal_cause']);
   });
 });
 
@@ -823,12 +842,15 @@ describe('assignment fan-out — a removed or banned assignee, driven through th
     expect(result.success, String(result.error ?? '')).toBe(true);
     expect((result.summary as AnyRec).acted).toBe(1);
 
-    // One failure, told to the assigner through the existing handler, naming
-    // the removed handle from the iterator.
+    // One failure, told to the assigner under the same topic, naming the
+    // removed handle from the iterator — and, since #160, the cause instead of
+    // the engine's "Owner is required" (the words are pinned in the #160 block
+    // below).
     expect(inbox.length).toBe(1);
     expect(inbox[0].topic).toBe('duly.assignment_fanout_failed');
     expect(String(inbox[0].body_md)).toContain(removed);
-    expect(String(inbox[0].body_md)).toContain('fanout_create_task');
+    expect(String(inbox[0].body_md)).toContain('account no longer exists');
+    expect(String(inbox[0].body_md)).not.toContain('Owner is required');
     expect(String(inbox[0].action_url)).toContain(String(stored.id));
   }, 30_000);
 
@@ -853,5 +875,243 @@ describe('assignment fan-out — a removed or banned assignee, driven through th
     const named = inbox.map((m) => String(m.body_md));
     expect(named.some((b) => b.includes(banned))).toBe(true);
     expect(named.some((b) => b.includes(bannedUntilLater))).toBe(true);
+  }, 30_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// The notice names the cause and the remedy, not "Owner is required" (#160)
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('assignment fan-out — the refusal cause picks the notice (#160)', () => {
+  const tryNode = (id: string) => loopBody().nodes.find((n) => n.id === id)!;
+  const fromGateway = () => catchBody().edges.filter((e) => e.source === 'fanout_route_failure');
+  const conditionOf = (e: EdgeLike) => (typeof e.condition === 'string' ? e.condition : e.condition?.source);
+
+  it('the cause is declared with a default, so the gateway can always read it', () => {
+    // The gateway reads it on EVERY failure, including one before the try has
+    // run a single node. An unbound name aborts a strict-CEL predicate, and a
+    // catch region that throws puts the whole-loop abort (#123) straight back.
+    const v = (AssignmentFanout.variables ?? []).find((d) => d.name === 'fanout_refusal_cause');
+    expect(v, 'fanout_refusal_cause must be declared').toBeDefined();
+    expect(v!.defaultValue).toBe('');
+  });
+
+  it('every iteration clears the cause before anything in it can fail', () => {
+    // The try region's ENTRY — the only node with no incoming edge — is the
+    // clear. A failure at any later node therefore reads as "other" and keeps
+    // the engine's reason, never the previous assignee's cause.
+    const body = loopBody();
+    const entries = body.nodes.filter((n) => !body.edges.some((e) => e.target === n.id));
+    expect(entries.map((n) => n.id)).toEqual(['fanout_clear_cause']);
+    expect(tryNode('fanout_clear_cause').config?.assignments).toEqual({ fanout_refusal_cause: '' });
+  });
+
+  it('the judge names only the two causes, and leaves a blank handle to the engine', () => {
+    const source = String(
+      ((tryNode('fanout_judge_account').config?.assignments as AnyRec)?.fanout_refusal_cause as AnyRec)?.source ?? '',
+    );
+    // A blank handle never had an account to restore, so it is not "removed".
+    expect(source.startsWith('isBlank(fanout_assignee) ? "" : ')).toBe(true);
+    expect(source).toContain('vars.fanout_assignee_user == null ? "account_removed"');
+    expect(source).toContain('"account_banned"');
+    expect(source.endsWith(': ""')).toBe(true);
+  });
+
+  it('the gateway sends each cause to its own notice and everything else to the generic one', () => {
+    const routes = fromGateway().map((e) => ({
+      to: catchBody().nodes.find((n) => n.id === e.target)?.config?.template,
+      when: conditionOf(e) ?? (e.isDefault ? 'default' : 'UNCONDITIONAL'),
+    }));
+    expect(routes).toEqual([
+      { to: 'duly.assignment_fanout_account_removed', when: 'vars.fanout_refusal_cause == "account_removed"' },
+      { to: 'duly.assignment_fanout_account_banned', when: 'vars.fanout_refusal_cause == "account_banned"' },
+      { to: 'duly.assignment_fanout_failed', when: 'default' },
+    ]);
+    // Exclusive: no conditions on the node itself, so the edges decide and
+    // the first that holds wins. `inclusive` would send two notices.
+    const gateway = catchBody().nodes.find((n) => n.id === 'fanout_route_failure')!;
+    expect(gateway.type).toBe('decision');
+    expect(gateway.config?.mode).toBeUndefined();
+    expect(gateway.config?.conditions).toBeUndefined();
+  });
+
+  it('only the generic notice carries the engine reason', () => {
+    for (const notice of catchBody().nodes.filter((n) => n.type === 'notify')) {
+      const templateData = (notice.config?.templateData ?? {}) as AnyRec;
+      if (notice.config?.template === 'duly.assignment_fanout_failed') {
+        expect(templateData.reason).toEqual(cel('vars["$error"].message'));
+      } else {
+        expect(Object.keys(templateData).sort(), notice.id).toEqual(['assignee', 'subject']);
+      }
+    }
+  });
+});
+
+/**
+ * The words the assigner actually reads, in both locales, through the real
+ * engine and the real delivery path. The assigner's `sys_user.locale` picks
+ * the row, exactly as in production: `en-US` lands on the floor row, `zh-CN`
+ * on its own.
+ */
+describe('assignment fan-out — the notice the assigner reads, per cause and per locale (#160)', () => {
+  let kernel: any;
+  let data: any;
+  let automation: { execute(flow: string, ctx: AnyRec): Promise<AnyRec> };
+
+  const SUBJECT = 'Annual supplier attestation';
+  const sys = { context: { isSystem: true } };
+  const first = (r: unknown): AnyRec => (Array.isArray(r) ? r[0] : r) as AnyRec;
+
+  const EN_LEAD = 'Everyone else on this assignment has their task. This one did not get created, so'
+    + ' nobody is holding it.';
+  const ZH_LEAD = '这项指派中其他人的任务都已生成，只有这一条没有创建成功，因此目前无人承担。';
+  const TEXT: Record<'en-US' | 'zh-CN', { title: string; removed: (a: string) => string; banned: (a: string) => string; other: (a: string, reason: string) => string }> = {
+    'en-US': {
+      title: `No task was created for one assignee: ${SUBJECT}`,
+      removed: (a) => `${EN_LEAD}\nAssignee: ${a}\n`
+        + "Reason: this person's account no longer exists, so nobody could open a task assigned to it.\n"
+        + 'To fix it, replace them on the assignment or restore their account, then save the assignment'
+        + ' again. Only the missing task is created.',
+      banned: (a) => `${EN_LEAD}\nAssignee: ${a}\n`
+        + "Reason: this person's account is banned, so they cannot sign in to open a task.\n"
+        + 'To fix it, replace them on the assignment or restore their account by lifting the ban, then save'
+        + ' the assignment again. Only the missing task is created.',
+      other: (a, reason) => `${EN_LEAD}\nAssignee: ${a}\nReason: ${reason}`,
+    },
+    'zh-CN': {
+      title: `有一位成员没有生成任务：${SUBJECT}`,
+      removed: (a) => `${ZH_LEAD}\n成员：${a}\n原因：该成员的账号已不存在，分配给这个账号的任务没有人能打开。\n`
+        + '处理办法：在指派中换成其他成员，或恢复该账号，然后重新保存指派。只会补建缺少的那一条任务。',
+      banned: (a) => `${ZH_LEAD}\n成员：${a}\n原因：该成员的账号已被封禁，无法登录打开任务。\n`
+        + '处理办法：在指派中换成其他成员，或解除封禁以恢复该账号，然后重新保存指派。只会补建缺少的那一条任务。',
+      other: (a, reason) => `${ZH_LEAD}\n成员：${a}\n原因：${reason}`,
+    },
+  };
+  const LOCALES = ['en-US', 'zh-CN'] as const;
+
+  let seq = 0;
+  const mkUser = async (name: string, extra: AnyRec = {}): Promise<string> =>
+    String(first(await data.insert('sys_user', { name: `${name}_${++seq}`, email: `${name}_${seq}@example.test`, ...extra }, sys)).id);
+
+  /**
+   * Save the assignment while every stored assignee exists, remove the ones
+   * named, then run the fan-out. `runAssignees`, when given, rides on the
+   * trigger context instead of the stored row — the only way to reach a bad
+   * handle the assignment write itself now refuses (see the #123 block).
+   */
+  const fanOut = async (opts: {
+    assigner: string; stored: string[]; remove?: string[]; runAssignees?: unknown[]; expectNotices: number;
+  }) => {
+    const assignment = first(await data.insert('duly_assignment', {
+      subject: SUBJECT, assigner: opts.assigner, assignees: opts.stored, due_date: '2026-10-01',
+      status: 'dispatched', needs_collection: false,
+    }));
+    for (const id of opts.remove ?? []) await data.delete('sys_user', { where: { id }, ...sys });
+    const stored = (await data.find('duly_assignment', { where: { id: assignment.id } }))[0] as AnyRec;
+    const result = await automation.execute('duly_assignment_fanout', {
+      record: opts.runAssignees ? { ...stored, assignees: opts.runAssignees } : stored,
+      object: 'duly_assignment',
+      event: 'afterUpdate',
+    });
+    const tasks = (await data.find('duly_task', { where: { assignment: assignment.id } })) as AnyRec[];
+    const deadline = Date.now() + 10_000;
+    let inbox: AnyRec[] = [];
+    for (;;) {
+      inbox = (await data.find('sys_inbox_message', { where: { user_id: opts.assigner } })) as AnyRec[];
+      if (inbox.length >= opts.expectNotices || Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const notifications = (await data.find('sys_notification', {})) as AnyRec[];
+    return { result, tasks, inbox, notifications };
+  };
+
+  beforeAll(async () => {
+    kernel = await bootEngine();
+    data = kernel.getService('data');
+    automation = kernel.getService('automation');
+  }, 180_000);
+
+  afterAll(async () => {
+    await kernel?.shutdown?.();
+  });
+
+  it.each(LOCALES)('a removed account: the %s notice says the account is gone and how to fix it', async (locale) => {
+    const valid = await mkUser('n160_valid');
+    const removed = await mkUser('n160_removed');
+    const boss = await mkUser('n160_boss', { locale });
+
+    const { result, tasks, inbox } = await fanOut({ assigner: boss, stored: [valid, removed], remove: [removed], expectNotices: 1 });
+
+    expect(result.success, String(result.error ?? '')).toBe(true);
+    expect(tasks.map((t) => String(t.owner))).toEqual([valid]);
+    expect(inbox.length).toBe(1);
+    expect(inbox[0].topic).toBe('duly.assignment_fanout_failed');
+    expect(inbox[0].title).toBe(TEXT[locale].title);
+    expect(inbox[0].body_md).toBe(TEXT[locale].removed(removed));
+  }, 30_000);
+
+  it.each(LOCALES)('a banned account: the %s notice says the account is banned and how to fix it', async (locale) => {
+    const banned = await mkUser('n160_banned', { banned: true });
+    const boss = await mkUser('n160_boss', { locale });
+
+    const { result, tasks, inbox } = await fanOut({ assigner: boss, stored: [banned], expectNotices: 1 });
+
+    expect(result.success, String(result.error ?? '')).toBe(true);
+    expect(tasks).toEqual([]);
+    expect(inbox.length).toBe(1);
+    expect(inbox[0].topic).toBe('duly.assignment_fanout_failed');
+    expect(inbox[0].title).toBe(TEXT[locale].title);
+    expect(inbox[0].body_md).toBe(TEXT[locale].banned(banned));
+  }, 30_000);
+
+  it.each(LOCALES)('an ordinary bad row: the %s notice keeps the engine\'s reason', async (locale) => {
+    // A blank handle — the "missing owner" shape. It never had an account, so
+    // it is neither cause; the notice is the generic one, reason and all.
+    const valid = await mkUser('n160_valid');
+    const boss = await mkUser('n160_boss', { locale });
+
+    const { result, tasks, inbox, notifications } = await fanOut({
+      assigner: boss, stored: [valid], runAssignees: [valid, ''], expectNotices: 1,
+    });
+
+    expect(result.success, String(result.error ?? '')).toBe(true);
+    expect(tasks.map((t) => String(t.owner))).toEqual([valid]);
+    expect(inbox.length).toBe(1);
+    const reason = String(((notifications.at(-1)?.payload as AnyRec)?.templateData as AnyRec)?.reason ?? '');
+    expect(reason).toContain('Owner is required');
+    expect(inbox[0].title).toBe(TEXT[locale].title);
+    expect(inbox[0].body_md).toBe(TEXT[locale].other('', reason));
+  }, 30_000);
+
+  it('a removed account, then rows that fail BEFORE the judge and AT the create: each gets its own notice', async () => {
+    // No stale cause. The second handle is not a string at all, so the run
+    // fails at the guard read — before `fanout_judge_account` runs — in the
+    // iteration straight after a refused account. Without the clear at the
+    // top of the try, the cause would still say "account_removed" and the
+    // assigner would be told a colleague's account is gone when it is not.
+    const removed = await mkUser('n160_removed');
+    const boss = await mkUser('n160_boss', { locale: 'en-US' });
+    const notAHandle = { not: 'a handle' };
+
+    const { result, tasks, inbox } = await fanOut({
+      assigner: boss, stored: [removed], remove: [removed], runAssignees: [removed, notAHandle, ''], expectNotices: 3,
+    });
+
+    expect(result.success, String(result.error ?? '')).toBe(true);
+    expect(tasks).toEqual([]);
+    expect(inbox.length).toBe(3);
+    const bodies = inbox.map((m) => String(m.body_md));
+    const removedNotices = bodies.filter((b) => b.includes('account no longer exists'));
+    expect(removedNotices).toEqual([TEXT['en-US'].removed(removed)]);
+    const generic = bodies.filter((b) => !b.includes('account no longer exists'));
+    expect(generic.length).toBe(2);
+    for (const body of generic) {
+      expect(body.startsWith(`${EN_LEAD}\nAssignee: `), body).toBe(true);
+      expect(body, body).toMatch(/\nReason: Node '/);
+    }
+    // One of them failed before the judge, at the guard read; the blank one
+    // failed at the create, as every ordinary bad row does.
+    expect(generic.some((b) => b.includes("Node 'fanout_find_existing'"))).toBe(true);
+    expect(generic.some((b) => b.includes('Owner is required'))).toBe(true);
   }, 30_000);
 });
