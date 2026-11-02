@@ -90,7 +90,7 @@ describe('product invariants', () => {
     };
     expect(progress.required, 'nobody is made to file a status line').not.toBe(true);
     expect((progress.options ?? []).map((o) => o.value))
-      .toEqual(['on_time', 'distributed', 'awaiting_feedback', 'in_hand']);
+      .toEqual(['started', 'waiting_on_others', 'blocked', 'nearly_done']);
     expect(
       (progress.options ?? []).filter((o) => o.default),
       'a dispatched task has reported nothing yet — no option may claim the default',
@@ -110,7 +110,7 @@ describe('product invariants', () => {
    */
   it('every field is filed under a declared group, and history is exactly the readonly stamps', () => {
     const groups = new Set((Task.fieldGroups ?? []).map((g) => g.key));
-    expect(groups, 'the three sections the deck asks for').toEqual(
+    expect(groups, 'the record page\'s three sections').toEqual(
       new Set(['basics', 'progress', 'history']),
     );
 

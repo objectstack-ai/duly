@@ -344,17 +344,19 @@ export const dulyChinese = defineTranslationBundle({
             help: '完成时间晚于「逾期起算日」时为是。此值在完成的那一刻写入一次，按当时生效的宽限期判定——之后修改职责的宽限期不会改动它。',
           },
           last_update_at: { label: '最后更新' },
-          // #108 一线界面。四条预设短语用方案 p7 的原话，不另行翻译——这四句
-          // 正是一线的人本来会打出来的字，把它们改写成更「书面」的说法，等于
-          // 把一次点击又换回一次打字。
+          // #108 一线界面。四条预设短语写成一线的人本来会打出来的字，而不是
+          // 更「书面」的说法——改写成公文腔，等于把一次点击又换回一次打字。
+          // 四句都只描述仍在进行中的任务：「完成」看状态，「是否按期」看
+          // 「逾期完成」，短语不和这两者抢答。改法见 README「Change the
+          // progress phrases」：只改这里的文字，已有记录跟着变，不改写任何行。
           progress: {
             label: '最新进展',
             help: '负责人自己选的一句话——不是举证，不计分，也从不强制填写。是否按期的判定在「逾期完成」，由服务端在完成的那一刻写入。',
             options: {
-              on_time: '已按期完成',
-              distributed: '已下发各部门',
-              awaiting_feedback: '待反馈',
-              in_hand: '处理中',
+              started: '已开始',
+              waiting_on_others: '等待他人',
+              blocked: '受阻',
+              nearly_done: '即将完成',
             },
           },
           note: {
@@ -493,7 +495,7 @@ export const dulyChinese = defineTranslationBundle({
             params: {
               position_code: {
                 label: '岗位',
-                placeholder: 'plant_compliance_officer',
+                placeholder: '厂区合规专员',
                 helpText: '与 duly_catalog_item.position_code 精确匹配。自由文本——这个岗位不需要事先在平台里建模。',
               },
               users: {
@@ -673,7 +675,7 @@ export const dulyChinese = defineTranslationBundle({
             title: '按期率',
             description: '在各自宽限期内完成的、组织认定的任务，占已完成的组织认定任务的比例。未完成的工作不计入这里。',
           },
-          // 「逾期项」是方案 p8/p20 四卡之一。口径写全：判的是任务自身的逾期
+          // 「逾期项」是领导首屏四个数之一。口径写全：判的是任务自身的逾期
           // 时点（派发当时按各自职责的宽限期钉住），不是「过了到期日」。
           overdue: {
             title: '逾期项',
@@ -698,8 +700,9 @@ export const dulyChinese = defineTranslationBundle({
             title: '各部门逾期项分布',
             description: '各部门已过自身逾期时点、仍未完成的组织认定任务。部门按名称排序，绝不按数量排序。',
           },
-          // 方案 p20 的口径说明原话：「完成率只统计重复事项」。这张图数的是
-          // 职责不是任务——常设职责永远不产生任务，所以它只在这里露面。
+          // 说明里写明「完成率只统计重复事项」：常设职责出现在这张图里，却永远
+          // 不进按期率，读者不该从图上的占比去推完成率。这张图数的是职责不是
+          // 任务——常设职责永远不产生任务，所以它只在这里露面。
           work_mix: {
             title: '本月工作构成',
             description: '组织认定的职责清单按形态划分。这里数的是职责，不是任务——常设职责永远不产生任务；完成率只统计重复事项。',
@@ -790,8 +793,10 @@ export const dulyChinese = defineTranslationBundle({
         params: {
           position_code: {
             label: '岗位',
-            // 岗位代码是数据值，不翻译：它要与 duly_catalog_item.position_code 精确匹配。
-            placeholder: 'plant_compliance_officer',
+            // 岗位是数据值，精确匹配 duly_catalog_item.position_code，所以占位提示
+            // 不是英文提示的译文，而是中文演示数据里的岗位写法（src/data/demo-org.ts
+            // 的 POSITIONS），提示里的例子才真能匹配上。
+            placeholder: '厂区合规专员',
             helpText: '与 duly_catalog_item.position_code 精确匹配。自由文本——这个岗位不需要事先在平台里建模。',
           },
           users: {
@@ -806,7 +811,7 @@ export const dulyChinese = defineTranslationBundle({
         params: {
           position_code: {
             label: '岗位',
-            placeholder: 'plant_compliance_officer',
+            placeholder: '厂区合规专员',
             helpText: '把同步限定在一个岗位。留空则同步每一条来自职责库的职责。',
           },
         },

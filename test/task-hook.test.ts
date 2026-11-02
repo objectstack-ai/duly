@@ -318,7 +318,7 @@ describe('last_update_at — the stagnation signal', () => {
     const before = task.last_update_at as string;
 
     await tick();
-    const reported = await data.update('duly_task', { id: task.id, progress: 'distributed' });
+    const reported = await data.update('duly_task', { id: task.id, progress: 'waiting_on_others' });
 
     expect(
       reported.last_update_at as string > before,
@@ -329,15 +329,15 @@ describe('last_update_at — the stagnation signal', () => {
   it('advances when the phrase CHANGES, and not when it is re-sent', async () => {
     // Same pre-image comparison the rest of the list gets: a form that
     // re-submits the whole record is not progress on it.
-    const task = await newTask({ progress: 'in_hand' });
+    const task = await newTask({ progress: 'started' });
     const before = task.last_update_at as string;
 
     await tick();
-    const resent = await data.update('duly_task', { id: task.id, progress: 'in_hand' });
+    const resent = await data.update('duly_task', { id: task.id, progress: 'started' });
     expect(resent.last_update_at, 're-sending the same phrase is not a touch').toBe(before);
 
     await tick();
-    const changed = await data.update('duly_task', { id: task.id, progress: 'awaiting_feedback' });
+    const changed = await data.update('duly_task', { id: task.id, progress: 'blocked' });
     expect(changed.last_update_at as string > before).toBe(true);
   });
 

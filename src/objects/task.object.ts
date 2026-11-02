@@ -32,16 +32,18 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  *
  * ── `progress` is a phrase, NOT a measurement ────────────────────────────
  * Four preset phrases + the free-text `note` beside it. It exists because the
- * frontline gesture the product promises is one tap: "已下发各部门" is what
- * the person would have typed, so it is offered as an option instead. It is
- * SELF-REPORTED, and nothing derives a number from it:
+ * frontline gesture the product promises is one tap: "Waiting on someone
+ * else" is what the person would have typed, so it is offered as an option
+ * instead. It is SELF-REPORTED, and nothing derives a number from it:
  *
  *   the on-time verdict is `completed_late`, stamped by the server from
  *   `completed_at` against `late_after` — never from this column.
  *
- * ⛔ Do not build a rate, a rollup or a ranking on `progress`. The `on_time`
- * option is a person's own words about their own work; reading it as evidence
- * would make the phrase a scored field, and then nobody picks the honest one.
+ * ⛔ Do not build a rate, a rollup or a ranking on `progress`. Every option is
+ * a person's own words about their own work; reading one as evidence would
+ * make the phrase a scored field, and then nobody picks the honest one. That
+ * is also why no option says "finished" or "on time": completion is `status`,
+ * and lateness is `completed_late` — a phrase must never compete with either.
  * `duly_stagnation` and the duty-health measures deliberately do not name it.
  *
  * ── `attachments` is never a gate ────────────────────────────────────────
@@ -67,7 +69,8 @@ export const Task = ObjectSchema.create({
   sharingModel: 'private',
 
   /**
-   * The record page, in three sections (#108 · deck p7).
+   * The record page, in three sections (#108): what the task is, what its
+   * owner has said about it, and the server's own stamps.
    *
    * ── How a group reaches the screen, measured on 17.2.0 ──────────────────
    * Field → group mapping is derived from `Field.group` matching a `key` here;
@@ -296,13 +299,24 @@ export const Task = ObjectSchema.create({
     }),
 
     /**
-     * The one-tap progress phrase (#108 · deck p7 ③).
+     * The one-tap progress phrase (#108).
      *
-     * Four phrases, chosen because they are what people already write in the
-     * note: the work is finished on time, it has been passed down to the
-     * departments, it is waiting on somebody else, or it is simply in hand.
-     * `note` stays beside it as "write your own" — this replaces nothing, it
-     * removes the typing from the four cases that repeat.
+     * Four phrases for the states an open task is actually in, worded so that
+     * any organisation can ship them unchanged: work has started, it is
+     * waiting on somebody else, it is blocked, or it is nearly done. `note`
+     * stays beside it as "write your own" — this replaces nothing, it removes
+     * the typing from the four cases that repeat.
+     *
+     * Every option describes a task that is still OPEN. "Done" is `status`,
+     * and "on time" is `completed_late`; a phrase that said either would be a
+     * second, self-reported answer to a question the server already answers.
+     *
+     * ── Changing them ────────────────────────────────────────────────────
+     * README "Change the progress phrases". The stored value is the option
+     * `value`, so relabelling an option (here for English, in
+     * `src/translations/zh-CN.ts` for Chinese) changes what every existing row
+     * reads as, without rewriting a single row. Changing a `value` is a data
+     * migration: rows carrying the old one render the raw value.
      *
      * ── No default, deliberately ────────────────────────────────────────
      * A dispatched task starts with NO progress reported, and blank is the
@@ -326,10 +340,10 @@ export const Task = ObjectSchema.create({
       group: 'progress',
       description: 'A phrase the owner picked, in their own words — never evidence, never scored, and never required. The on-time verdict is `completed_late`, which the server stamps at completion.',
       options: [
-        { label: 'Finished on time', value: 'on_time', color: '#35674D' },
-        { label: 'Passed down to the departments', value: 'distributed', color: '#2E7C8E' },
-        { label: 'Waiting on a reply', value: 'awaiting_feedback', color: '#8C6512' },
-        { label: 'In hand', value: 'in_hand', color: '#576B73' },
+        { label: 'Started', value: 'started', color: '#2E7C8E' },
+        { label: 'Waiting on someone else', value: 'waiting_on_others', color: '#8C6512' },
+        { label: 'Blocked', value: 'blocked', color: '#B07C17' },
+        { label: 'Nearly done', value: 'nearly_done', color: '#35674D' },
       ],
     }),
 
