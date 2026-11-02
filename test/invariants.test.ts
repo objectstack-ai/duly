@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { Duty, Task, LogEntry, CatalogItem } from '../src/objects/index.js';
+import { Duty, Task, LogEntry, CatalogItem, Assignment } from '../src/objects/index.js';
 
 /**
  * These are not schema tests — `pnpm validate` already checks the protocol.
@@ -128,6 +128,43 @@ describe('product invariants', () => {
     expect(historyFields, 'the history section IS the set of server-owned stamps')
       .toEqual(readonlyFields);
     expect(readonlyFields.length, 'and it is not vacuously empty').toBeGreaterThan(3);
+  });
+
+  /**
+   * #147 — the same rule on the other four record pages.
+   *
+   * Every field of every Duly object is filed under a declared group. Beyond
+   * the unnamed-bucket placement above, a field left ungrouped is one the
+   * `field-no-consumers` lint reports: the synthesized layout's ungrouped
+   * bucket does not count as displaying it. That is how `description`,
+   * `catalog_item`, `timezone`, `last_dispatched_period`, `detail` and
+   * `related_task` came to be flagged on 18. Where an object has a `history`
+   * group, it is exactly that object's readonly stamps, as on the task.
+   */
+  it.each([
+    ['duly_duty', Duty, ['basics', 'schedule', 'review', 'history']],
+    ['duly_catalog_item', CatalogItem, ['basics', 'schedule']],
+    ['duly_assignment', Assignment, ['basics', 'progress']],
+    ['duly_log_entry', LogEntry, ['basics', 'sharing']],
+  ] as const)('%s files every field under a declared group', (object, schema, expected) => {
+    const groups = new Set((schema.fieldGroups ?? []).map((g) => g.key));
+    expect(groups, `${object}'s record page sections`).toEqual(new Set(expected));
+
+    const entries = Object.entries(schema.fields) as Array<[string, { group?: string; readonly?: boolean }]>;
+    for (const [name, field] of entries) {
+      expect(
+        field.group && groups.has(field.group) ? field.group : undefined,
+        `${object}.${name} has no group, or names one that is not declared — it renders in an `
+        + 'unnamed bucket after the last section, and field-no-consumers reports it',
+      ).toBeDefined();
+    }
+
+    if (groups.has('history')) {
+      const readonlyFields = entries.filter(([, f]) => f.readonly === true).map(([name]) => name).sort();
+      const historyFields = entries.filter(([, f]) => f.group === 'history').map(([name]) => name).sort();
+      expect(historyFields, `${object}'s history section IS its server-owned stamps`).toEqual(readonlyFields);
+      expect(readonlyFields.length, 'and it is not vacuously empty').toBeGreaterThan(0);
+    }
   });
 
   it('no MAINTAINED lateness flag exists on the task', () => {

@@ -31,16 +31,30 @@ export const LogEntry = ObjectSchema.create({
 
   sharingModel: 'private',
 
+  /**
+   * The record page, in two sections (#147): what was done, and who may see
+   * it. Declared so `detail` and `related_task` are placed on the page rather
+   * than only in the ungrouped bucket, which `field-no-consumers` does not
+   * count. `related_task` is the one way a note points at a governed task, so
+   * it belongs beside the note; the seed leaves it empty (see
+   * `log-entry.seed.ts`), and a person filling it in is the reader.
+   */
+  fieldGroups: [
+    { key: 'basics', label: 'Basics', icon: 'notebook-pen' },
+    { key: 'sharing', label: 'Who sees it', icon: 'eye' },
+  ],
+
   fields: {
-    subject: Field.text({ label: 'What you did', required: true, searchable: true, maxLength: 255 }),
-    detail: Field.textarea({ label: 'Detail' }),
+    subject: Field.text({ label: 'What you did', group: 'basics', required: true, searchable: true, maxLength: 255 }),
+    detail: Field.textarea({ label: 'Detail', group: 'basics' }),
 
-    owner: Field.user({ label: 'Owner', required: true, defaultValue: 'current_user' }),
+    owner: Field.user({ label: 'Owner', group: 'sharing', required: true, defaultValue: 'current_user' }),
 
-    logged_on: Field.date({ label: 'Date', required: true, defaultValue: 'NOW()' }),
+    logged_on: Field.date({ label: 'Date', group: 'basics', required: true, defaultValue: 'NOW()' }),
 
     category: Field.select({
       label: 'Category',
+      group: 'basics',
       options: [
         { label: 'Cross-team coordination', value: 'coordination' },
         { label: 'Drafting / writing', value: 'drafting' },
@@ -53,6 +67,7 @@ export const LogEntry = ObjectSchema.create({
 
     visibility: Field.select({
       label: 'Visible to',
+      group: 'sharing',
       required: true,
       options: [
         { label: 'Only me', value: 'private', color: '#576B73', default: true },
@@ -63,6 +78,7 @@ export const LogEntry = ObjectSchema.create({
 
     related_task: Field.lookup('duly_task', {
       label: 'Related task',
+      group: 'basics',
       description: 'Optional. Ties a note to a governed duty without making the note part of its score.',
     }),
   },

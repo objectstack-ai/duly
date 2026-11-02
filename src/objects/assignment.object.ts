@@ -24,18 +24,31 @@ export const Assignment = ObjectSchema.create({
 
   sharingModel: 'private',
 
+  /**
+   * The record page, in two sections (#147): what was handed out, and how far
+   * the fan-out has got. Declared so `description` (the details every
+   * assignee reads) is placed on the page rather than only in the ungrouped
+   * bucket, which `field-no-consumers` does not count.
+   */
+  fieldGroups: [
+    { key: 'basics', label: 'Basics', icon: 'send' },
+    { key: 'progress', label: 'Progress', icon: 'list-todo' },
+  ],
+
   fields: {
-    subject: Field.text({ label: 'Assignment', required: true, searchable: true, maxLength: 255 }),
-    description: Field.markdown({ label: 'Details' }),
+    subject: Field.text({ label: 'Assignment', group: 'basics', required: true, searchable: true, maxLength: 255 }),
+    description: Field.markdown({ label: 'Details', group: 'basics' }),
 
     assigner: Field.user({
       label: 'Assigned by',
+      group: 'basics',
       required: true,
       defaultValue: 'current_user',
     }),
 
     assignees: Field.user({
       label: 'Assign to',
+      group: 'basics',
       multiple: true,
       required: true,
       description: 'Each name becomes one independent task.',
@@ -46,12 +59,14 @@ export const Assignment = ObjectSchema.create({
     // `dispatched` one is still waiting on people.
     due_date: Field.date({
       label: 'Due',
+      group: 'basics',
       dueLike: true,
       settledWhen: P`record.status == 'closed'`,
     }),
 
     status: Field.select({
       label: 'Status',
+      group: 'progress',
       required: true,
       options: [
         { label: 'Draft', value: 'draft', color: '#8598A0', default: true },
@@ -62,6 +77,7 @@ export const Assignment = ObjectSchema.create({
 
     needs_collection: Field.boolean({
       label: 'I have a follow-up once everyone is in',
+      group: 'basics',
       defaultValue: false,
       description: 'Only when this is ticked does the assigner get a task of their own. Otherwise a manager who assigns work does not inherit a to-do list from it.',
     }),
@@ -69,6 +85,7 @@ export const Assignment = ObjectSchema.create({
     // Server-owned rollups (ADR-0021). Nobody types these.
     task_count: Field.summary({
       label: 'Tasks',
+      group: 'progress',
       summaryOperations: {
         object: 'duly_task',
         field: 'id',
