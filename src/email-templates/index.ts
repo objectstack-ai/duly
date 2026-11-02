@@ -17,8 +17,13 @@
 // ONE `(name, locale)` ROW, not one template. A template "bundle" is the set
 // of rows sharing a `name`: `IEmailService` resolves `(name, locale)` at
 // delivery and renders the row it picks, so `duly.task_lead_time` appears
-// here twice — once as `en`, once as `zh-CN`. Adding a locale is adding an
+// here twice — once as `en-US`, once as `zh-CN`. Adding a locale is adding an
 // entry to this array, never editing an existing one.
+//
+// The English row is `en-US` and not the app's `en` on purpose: that literal
+// tag is the resolver's only fallback rung, so it is what a recipient whose
+// locale has no row of its own receives. Without it they receive nothing — a
+// permanent TEMPLATE_NOT_FOUND (#145; see reminders.email-template.ts).
 
 import {
   AssignmentFanoutFailedEn,
