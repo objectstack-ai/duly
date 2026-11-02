@@ -128,6 +128,15 @@ const TASK_BULK_ACTIONS = {
 export const dulyChinese = defineTranslationBundle({
   'zh-CN': {
     objects: {
+      // ── sys_user — 平台对象，这里只翻译 Duly 挂上去的动作 ─────────────
+      sys_user: {
+        _actions: {
+          duly_member_open: {
+            label: '打开成员页',
+            description: '打开此人的 Duly 成员页：待办工作、本周期职责、常设职责与近期动态。',
+          },
+        },
+      },
       // ── duly_duty — 职责：产生任务的那条规则 ─────────────────────────
       duly_duty: {
         label: '职责',

@@ -18,10 +18,12 @@ import {
   CatalogApplyToPeopleAction,
   CatalogSyncAction,
 } from './catalog.actions.js';
+import { MemberOpenAction } from './member.actions.js';
 import { TaskCompleteAction, TaskSkipAction, TaskUndoAction } from './task.actions.js';
 
 export { CatalogApplyAction, CatalogApplyToPeopleAction, CatalogSyncAction };
 export { TaskCompleteAction, TaskSkipAction, TaskUndoAction };
+export { MemberOpenAction };
 
 export const dulyActions = [
   CatalogApplyAction,
@@ -40,4 +42,8 @@ export const dulyActions = [
   TaskCompleteAction,
   TaskUndoAction,
   TaskSkipAction,
+  // Object-bound to `sys_user`, a platform object: defineStack() merges it
+  // into the served sys_user actions. A url action, so no handler. It is the
+  // stopgap that reaches duly_member (objectstack#28979); see member.actions.ts.
+  MemberOpenAction,
 ];

@@ -19,6 +19,8 @@ import {
   dulySharingRules,
 } from '../src/security/index.js';
 import { dulyActions } from '../src/actions/index.js';
+import { registerDulyActionHandlers } from '../src/actions/register-handlers.js';
+import type { HandlerRegistrationContext } from '../src/actions/register-handlers.js';
 import stack from '../objectstack.config.js';
 import { CatalogItem, Duty, LogEntry, Task, Assignment } from '../src/objects/index.js';
 
@@ -333,6 +335,33 @@ describe('manager and admin inherit rather than restate', () => {
  * writes. `requiredPermissions` is the only boundary there is, and these
  * assertions are what keep it from becoming a string that nothing grants.
  */
+/** Action names that have a handler registered through the REAL registration function. */
+const HANDLED_ACTIONS = (() => {
+  const names = new Set<string>();
+  registerDulyActionHandlers({
+    registerAction: (...args: unknown[]) => names.add(String(args[1])),
+  } as unknown as HandlerRegistrationContext);
+  return names;
+})();
+
+/**
+ * The one action shape exempt from the capability gate: it navigates inside
+ * Duly and runs nothing. `type: 'url'`, no registered handler, no `operation`,
+ * no `patch`, no `body`, and a target that is an in-app path into this app.
+ */
+const isInAppNavigation = (action: Record<string, unknown> | { name: string }): boolean => {
+  const a = action as Record<string, unknown>;
+  return (
+    a.type === 'url' &&
+    !HANDLED_ACTIONS.has(String(a.name)) &&
+    a.operation === undefined &&
+    a.patch === undefined &&
+    a.body === undefined &&
+    typeof a.target === 'string' &&
+    a.target.startsWith('/apps/ai.objectstack.duly/')
+  );
+};
+
 describe('action capability gates', () => {
   const byName = new Map(dulyActions.map((a) => [a.name, a]));
   const GATES: Record<string, string> = {
@@ -347,10 +376,42 @@ describe('action capability gates', () => {
     // Written over `dulyActions` rather than over the five known names, so a
     // SIXTH action added later fails here instead of shipping ungated.
     for (const action of dulyActions) {
+      if (isInAppNavigation(action)) continue;
       expect(
         action.requiredPermissions?.length,
         `${action.name} declares no requiredPermissions — its handler runs on the RLS-bypassing facade`,
       ).toBeGreaterThan(0);
+    }
+  });
+
+  it('exempts exactly one shape: handler-less in-app navigation into Duly (#113)', () => {
+    // The gate exists because a handler runs on the RLS-bypassing facade. A
+    // `type: 'url'` action with no handler, no operation and no patch runs
+    // nothing: the console navigates, and the page it lands on reads under
+    // the viewer's own grants. `duly_member_open` is that shape (seat ruling
+    // on duly#113: ungated). Each control below is one step off it and must
+    // still be held to the gate.
+    const hop = {
+      name: 'duly_member_open',
+      type: 'url',
+      target: '/apps/ai.objectstack.duly/sys_user/record/${ctx.recordId}/page/duly_member',
+    };
+    expect(isInAppNavigation(hop)).toBe(true);
+    expect(dulyActions.filter(isInAppNavigation).map((a) => a.name)).toEqual(['duly_member_open']);
+
+    const controls: Array<[string, Record<string, unknown>]> = [
+      ['an external target', { ...hop, target: 'https://example.com/x' }],
+      ['a protocol-relative target', { ...hop, target: '//evil.example/apps/ai.objectstack.duly/' }],
+      ['another app\'s route', { ...hop, target: '/apps/com.objectstack.setup/sys_user' }],
+      ['a template-led target', { ...hop, target: '${ctx.origin}/apps/ai.objectstack.duly/x' }],
+      ['an operation', { ...hop, operation: 'update' }],
+      ['a patch', { ...hop, patch: { status: 'done' } }],
+      ['a script body', { ...hop, body: 'return 1' }],
+      ['a registered handler', { ...hop, name: 'duly_task_undo' }],
+      ['a non-url type', { ...hop, type: 'script' }],
+    ];
+    for (const [label, action] of controls) {
+      expect(isInAppNavigation(action), `${label} must not be exempt`).toBe(false);
     }
   });
 
