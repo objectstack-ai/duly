@@ -447,6 +447,23 @@ export const DispatchJob = defineJob({
   description:
     'Turns active recurring duties into tasks, one per period, in each duty\'s own timezone. Idempotent on (duty, owner, period_key); safe to re-run, backfill or interrupt.',
   schedule: { type: 'cron', expression: '0 1 * * *', timezone: 'UTC' },
+
+  // ── Why `handler` and not `body`, although the spec marks it deprecated ──
+  // A declared workaround (#147), to be deleted when the gap closes. On
+  // @objectstack 18.2.0 a job `body` runs in the QuickJS sandbox, and that
+  // sandbox has NO `Intl` at all: measured on the quickjs-emscripten 0.32.0
+  // the runtime embeds, `typeof Intl` is `'undefined'`, and the `ctx` the
+  // runtime builds carries only `object`, `recordId`, `api`, `log`, `crypto`
+  // and `title`, with no clock or zone helper. The dispatcher's period maths
+  // (`src/functions/period.ts`) resolves every duty in its own IANA
+  // `timezone` through `Intl.DateTimeFormat({ timeZone })`, so a body cannot
+  // express this job without shipping a timezone database inside it. The
+  // gap is filed upstream as objectstack-ai/objectstack#28898; when the
+  // sandbox can resolve a zone, this moves to `body` and
+  // `bindDispatchEngine` goes with it (a body reaches data through
+  // `ctx.api`). Until then, note that `os package install` refuses an
+  // enabled job with no `body`: Duly's dispatcher runs on a boot that loads
+  // this config (`pnpm dev`, `os start`), not from a package install.
   handler: DISPATCH_HANDLER_NAME,
 
   // A failed run is worth retrying: the usual cause is a store that was briefly

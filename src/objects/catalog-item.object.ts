@@ -26,12 +26,25 @@ export const CatalogItem = ObjectSchema.create({
   // permission sets decide who writes.
   sharingModel: 'public_read',
 
+  /**
+   * The record page, in two sections (#147), mirroring `duly_duty`'s
+   * `basics` / `schedule` split, because catalog apply copies one onto the
+   * other. Declared so `description` (the acceptance bar a role's holders
+   * inherit) is placed on the page rather than only in the ungrouped bucket,
+   * which `field-no-consumers` does not count.
+   */
+  fieldGroups: [
+    { key: 'basics', label: 'Basics', icon: 'list-checks' },
+    { key: 'schedule', label: 'Schedule', icon: 'calendar-clock' },
+  ],
+
   fields: {
-    name: Field.text({ label: 'Duty', required: true, searchable: true, maxLength: 200 }),
-    description: Field.markdown({ label: 'What "done" means' }),
+    name: Field.text({ label: 'Duty', group: 'basics', required: true, searchable: true, maxLength: 200 }),
+    description: Field.markdown({ label: 'What "done" means', group: 'basics' }),
 
     position_code: Field.text({
       label: 'Position',
+      group: 'basics',
       required: true,
       searchable: true,
       maxLength: 100,
@@ -40,6 +53,7 @@ export const CatalogItem = ObjectSchema.create({
 
     form: Field.select({
       label: 'Form',
+      group: 'schedule',
       required: true,
       options: [
         { label: 'Recurring', value: 'recurring', color: '#2E7C8E', default: true },
@@ -55,6 +69,7 @@ export const CatalogItem = ObjectSchema.create({
     // block for the full reasoning on which forms lose which field.
     frequency: Field.select({
       label: 'Frequency',
+      group: 'schedule',
       options: [
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
@@ -70,6 +85,7 @@ export const CatalogItem = ObjectSchema.create({
 
     due_anchor: Field.select({
       label: 'Due date anchored to',
+      group: 'schedule',
       options: [
         { label: 'Start of period', value: 'period_start' },
         { label: 'End of period', value: 'period_end' },
@@ -91,6 +107,7 @@ export const CatalogItem = ObjectSchema.create({
     // the row being edited and a half-finished fan-out.
     due_offset_days: Field.number({
       label: 'Offset (days, 0 = anchor day)',
+      group: 'schedule',
       defaultValue: F`record.form != "recurring" ? null : 0`,
       scale: 0,
       min: -366,
@@ -99,6 +116,7 @@ export const CatalogItem = ObjectSchema.create({
     }),
     lead_days: Field.number({
       label: 'Lead time (days)',
+      group: 'schedule',
       defaultValue: F`record.form != "recurring" ? null : 7`,
       scale: 0,
       min: 0,
@@ -117,6 +135,7 @@ export const CatalogItem = ObjectSchema.create({
     // template for a duty that is perfectly legal.
     grace_days: Field.number({
       label: 'Grace (days)',
+      group: 'schedule',
       defaultValue: F`record.form == "standing" ? null : 0`,
       scale: 0,
       min: 0,
@@ -126,11 +145,12 @@ export const CatalogItem = ObjectSchema.create({
 
     regulation_ref: Field.text({
       label: 'Reference',
+      group: 'basics',
       maxLength: 200,
       description: 'The clause, standard or policy this duty discharges. What turns a checklist into an audit answer.',
     }),
 
-    active: Field.boolean({ label: 'Active', defaultValue: true }),
+    active: Field.boolean({ label: 'Active', group: 'basics', defaultValue: true }),
   },
 
   enable: { trackHistory: true, searchable: true, apiEnabled: true },
