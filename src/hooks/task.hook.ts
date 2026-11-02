@@ -576,3 +576,136 @@ export const TaskLifecycleHook: Hook = {
   runAs: 'system',
   handler: stampTaskLifecycle,
 };
+
+/**
+ * `duly_task.duty` must name a duty the WRITER can read (#174).
+ *
+ * ── The hole ───────────────────────────────────────────────────────────
+ * The engine checks that a lookup target EXISTS, and it checks it elevated:
+ * `assertReferencesResolve` → `referenceExists` reads the target as system,
+ * tenant kept. Only a `master_detail` field asks the caller's own read door
+ * first (objectstack#22519, ruling A); a plain `lookup` like `duty` does not,
+ * and no field key, validation rule or lookup filter can declare it. Measured
+ * on 18.2.0 against a live `pnpm demo`: a `duly_member` whose `GET` of a duty
+ * answers 404 could still `POST` a task naming it (201), `PATCH` it onto a
+ * task of their own (200), and do both through MCP `create_record` /
+ * `update_record`.
+ *
+ * Why it matters even though the health readings do not group by duty: the
+ * dispatch identity is `(duty, owner, period_key)` — unique, and the planner
+ * skips a period whose key already exists — so a task written ahead of the
+ * dispatcher on somebody else's duty takes that person's period from them.
+ * And a duty is the one reference on this row that says "the organisation
+ * owed this"; a member must not be able to borrow that from a duty they
+ * cannot even see. Platform half: objectstack issue cited in the PR (#174).
+ *
+ * ── The rule ───────────────────────────────────────────────────────────
+ * When a write puts a duty on a task — an insert carrying one, or an update
+ * that CHANGES it — the duty is read with the writer's own `ctx.api`. If that
+ * read returns nothing, the write is refused.
+ *
+ *  - **Only when the duty changes.** An update re-sending the stored duty
+ *    (a whole-record form save) is not checked. In the open edition a member
+ *    cannot read the duties dispatched to them at all (#143: `own` scope reads
+ *    `owner_id`, and a dispatched duty's is whoever created it), and refusing
+ *    every save of their own task over that would turn #143 into an outage.
+ *  - **The refusal answers what a duty that exists nowhere answers.** Same
+ *    field, same code (`reference_not_found`), same English sentence as the
+ *    engine's own check, so the write cannot be used to tell "exists but
+ *    hidden" from "does not exist" — the stance #22519 takes for a header.
+ *    Hook text has no translator (`src/translations/authored-text.ts`), and
+ *    this one is not reachable from the console: the duty picker lists only
+ *    duties the user can read. It is an API and MCP answer, like the
+ *    timezone guard's on `duly_duty`.
+ *  - **System writers pass on their own.** `runAs` is `'inherit'`, so
+ *    `ctx.api` carries the context of the write that fired the hook. The
+ *    dispatcher (`SYSTEM_CONTEXT`), the seed loader (`isSystem`) and the
+ *    `runAs: 'system'` flows read every duty and are never refused — no
+ *    exemption list, the identity does it.
+ *
+ * ── Why this is a second hook, not a leg of the one above ─────────────
+ * `duly_task_lifecycle_stamps` is `runAs: 'system'` (#100/#173): it must read
+ * a duty's grace whoever creates the row. That elevation is exactly wrong
+ * here, and `runAs` is per hook. Two hooks, two identities, each the one its
+ * question needs.
+ *
+ * ── A predicate (bulk) write ──────────────────────────────────────────
+ * The verdict depends on the payload's duty and the caller only, never on the
+ * row, so it is the same for every matched row — a refusal ADR-0058
+ * Addendum II D3 sanctions. A dispatch with no pre-image (the whole-operation
+ * context of an unscoped predicate write) has no stored duty to compare with,
+ * so it is checked: fail closed.
+ *
+ * Self-contained for the same reason as the handler above — the build lowers
+ * it into a sandboxed `body` with no module scope.
+ */
+const refuseUnreadableDuty = async (ctx: HookContext): Promise<void> => {
+  const input = ctx.input as Record<string, unknown>;
+  if (!('duty' in input)) return;
+
+  // A lookup may arrive as an id or as an expanded record.
+  const idOf = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (value !== null && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string') {
+      return (value as { id: string }).id;
+    }
+    return '';
+  };
+
+  const id = idOf(input.duty);
+  // Clearing the duty names nothing to read.
+  if (id === '') return;
+
+  if (ctx.event === 'beforeUpdate') {
+    const previous = ctx.previous as Record<string, unknown> | undefined;
+    if (previous && idOf(previous.duty) === id) return;
+  }
+
+  if (!ctx.api) {
+    // Both execution surfaces bind `ctx.api`. Without it the guard cannot ask,
+    // and letting the write through would be the hole again with no trace.
+    throw new Error('duly_task_duty_readable: ctx.api is unavailable, so the writer\'s access to the duty cannot be checked.');
+  }
+
+  const row = await ctx.api.object('duly_duty').findOne({ where: { id }, fields: ['id'] });
+  if (row) return;
+
+  // The engine's own `reference_not_found` refusal, built by hand: same field,
+  // code and sentence (`{{label}}: no {{target}} record has id "{{value}}"`),
+  // so an unreadable duty answers exactly like one that does not exist.
+  const message = `Duty: no duly_duty record has id "${id}"`;
+  const error = new Error(message) as Error & { code: string; fields: unknown[] };
+  error.name = 'ValidationError';
+  error.code = 'VALIDATION_FAILED';
+  error.fields = [{
+    field: 'duty',
+    code: 'reference_not_found',
+    message,
+    label: 'Duty',
+    constraint: { target: 'duly_duty' },
+    value: id,
+  }];
+  throw error;
+};
+
+export const TaskDutyReadGuard: Hook = {
+  name: 'duly_task_duty_readable',
+  label: 'Task duty is one the writer can read',
+  object: 'duly_task',
+  events: ['beforeInsert', 'beforeUpdate'],
+  description:
+    'Refuses a duly_task write that puts on the task a duty the writer cannot read — an insert '
+    + 'naming one, or an update changing it — with the same reference_not_found answer as a duty '
+    + 'that does not exist. The platform checks a lookup target exists but reads it elevated '
+    + '(only master_detail asks the caller). Runs with the identity of the write, so the '
+    + 'dispatcher, the seed and system flows read every duty and pass; re-sending the stored duty '
+    + 'is not checked.',
+  // A guard that fails open is not a guard: if the read itself throws, the
+  // write is refused.
+  onError: 'abort',
+  // Load-bearing, and the opposite of the hook above: `ctx.api` must read as
+  // the writer. Spelled out rather than left to the default so nobody
+  // "harmonises" it with `duly_task_lifecycle_stamps`.
+  runAs: 'inherit',
+  handler: refuseUnreadableDuty,
+};
