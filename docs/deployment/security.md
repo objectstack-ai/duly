@@ -23,6 +23,7 @@ apply over MCP, and never appears in an audit.
 | `duly_log_entry` | full control · read **own** · write **own** | inherited | inherited |
 | `duly_catalog_item` | read | inherited | **+ create / edit / delete** · write **org** |
 | `duly_assignment` | read · read **own** | **+ create / edit** · write **own** | inherited |
+| `sys_business_unit` (platform) | read — every unit, every column, incl. `external_ref` · no write ([#180](https://github.com/objectstack-ai/duly/issues/180)) | inherited | inherited |
 | Capabilities | `duly.task.update_status` | inherited | **+ `duly.catalog.apply`, `duly.catalog.sync`** |
 
 "Inherited" is literal: `src/security/permission-sets.ts` builds each map by

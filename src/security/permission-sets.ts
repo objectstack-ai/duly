@@ -64,6 +64,10 @@ import type { FieldPermission, ObjectPermission } from '@objectstack/spec/securi
  * read-open, write-owned), which is why the admin entry has to say `org` for
  * "full control" to mean anything at all.
  *
+ * ── One platform object: read on `sys_business_unit` (#180) ─────────────
+ * Every other entry is a `duly_*` object. Business units are read so the
+ * unit lookups on tasks and duties render as names; see the entry's note.
+ *
  * ── Two `fields` maps: task and duty provenance (#176, #178) ─────────────
  * Nothing in this schema needs MASKING: the server-owned columns
  * (`completed_at`, `last_update_at`, `last_dispatched_period`) are already
@@ -168,6 +172,50 @@ const MEMBER_OBJECTS = {
   duly_assignment: {
     allowRead: true,
     readScope: 'own',
+  },
+
+  /**
+   * The one platform object this package grants: READ on business units, so
+   * a unit renders as its name (#180).
+   *
+   * `duly_task.business_unit` and `duly_duty.business_unit` are lookups to
+   * `sys_business_unit`, and the console resolves a lookup by reading the
+   * target AS THE VIEWER. Measured on 18.2.0 before this entry: every Duly set
+   * got `403` on the object (the platform baseline does not name it either),
+   * so a member's own task and duty pages showed the unit as a raw id, and a
+   * `duly_admin` who is not a platform administrator could not Import
+   * `samples/duties.csv` at all — the Import resolves `business_unit` BY NAME
+   * under the importer's read, and refused 19/19 rows with "no record
+   * matches". With this entry: names render, the Import lands 19/19.
+   *
+   * ── What it discloses ───────────────────────────────────────────────────
+   * `sys_business_unit` declares no `sharingModel`, and a `sys_` object's
+   * unset model is public, so this reaches EVERY unit in the tenant, with
+   * every column: name, code, kind, parent unit, unit head, timezone,
+   * active / effective dates and `external_ref` (the HRIS id). Read only:
+   * no create, edit or delete bit, so every write stays `403`.
+   * The tree's shape is not new to a member — the platform's baseline already
+   * lets every member read each colleague's `primary_business_unit_id` and
+   * `manager_id` on `sys_user`. The names are what this adds.
+   *
+   * ⛔ Why not a name-only read. It is declarable — `readable: false` on
+   * every other column in `fields` — and it works for the member, but field
+   * permissions merge most-permissively among DECLARING sets only, and the
+   * platform's admin set declares nothing on these columns. So the mask also
+   * binds every administrator who holds a Duly set: measured, Setup → Business
+   * Units lost Kind, Business Unit Head and Active, and the org chart went
+   * flat. Filed as objectstack-ai/objectstack#29106. Until it lands, no Duly
+   * set declares a field permission on `sys_business_unit`, and
+   * `test/business-unit-read.test.ts` pins that.
+   *
+   * No row narrowing either: a predicate cannot reach across a relation, so
+   * "the viewer's own unit tree" is not expressible; a manager reads tasks
+   * across `unit_and_below`; and the importer needs every unit by name. No
+   * scope keys: on a public-default object `readScope` is inert (ADR-0049),
+   * and there is no write bit for a `writeScope` to bound.
+   */
+  sys_business_unit: {
+    allowRead: true,
   },
 } satisfies Record<string, ObjectPermission>;
 
