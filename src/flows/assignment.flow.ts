@@ -470,11 +470,13 @@ export const AssignmentFanout = defineFlow({
                       },
                     },
                     // The region's one exit (see the edges below). It also
-                    // empties the cause, so nothing after the loop can read
-                    // the last refused assignee's. It is NOT what keeps the
-                    // next assignee's notice right — `fanout_clear_cause` at
-                    // the top of the try is. An `end` cannot stand here: the
-                    // schema refuses one inside a region.
+                    // empties the cause after every notice, so nothing after
+                    // the loop reads the last refused assignee's. The
+                    // guarantee for the NEXT assignee is still
+                    // `fanout_clear_cause` at the top of the try: an iteration
+                    // that judged a cause and then did not fail never reaches
+                    // this node. An `end` cannot stand here: the schema
+                    // refuses one inside a region.
                     {
                       id: 'fanout_reported',
                       type: 'assignment',
