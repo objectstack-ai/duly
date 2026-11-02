@@ -416,6 +416,9 @@ describe('the fan-out refusal bundles name the cause and the remedy (#160)', () 
 
 // ── A recipient whose locale the bundle does not list still hears (#145) ──
 
+/** The `sys_notification_delivery` statuses an attempt concludes on — the set the outbox itself treats as terminal. */
+const DELIVERY_TERMINAL = new Set(['success', 'failed', 'dead']);
+
 /**
  * The recipient's language is read per recipient, after fan-out, off
  * `sys_user.locale` (falling back to the deployment default), and handed to
@@ -481,11 +484,22 @@ describe('a recipient whose locale no row lists gets the en-US floor, not a dead
 
     // And the delivery itself settled `success` — not `dead`, which is what
     // TEMPLATE_NOT_FOUND classifies as (permanent, no retry).
-    const deliveries = await data.find(
-      'sys_notification_delivery',
-      { where: { recipient_id: id } },
-      { context: { isSystem: true } },
-    );
+    //
+    // The inbox row is not that signal (#165). The dispatcher's `processRow`
+    // calls the inbox channel's `send()` — which writes the row found above —
+    // and only THEN `ack()`s the claim, so for one ack round trip the delivery
+    // still reads `in_flight`. Under parallel load the first case polled lands
+    // in that gap. So poll the delivery row itself until it reaches a status
+    // the outbox treats as terminal, and assert on what it settled as: a dead
+    // letter still fails here, with its own status and error.
+    const deliveries = await waitFor(async () => {
+      const rows: AnyRec[] = await data.find(
+        'sys_notification_delivery',
+        { where: { recipient_id: id } },
+        { context: { isSystem: true } },
+      );
+      return rows.length && rows.every((d) => DELIVERY_TERMINAL.has(String(d.status))) ? rows : undefined;
+    }, `the ${locale} recipient's delivery row to settle`);
     expect(deliveries.map((d: AnyRec) => [d.channel, d.status, d.error ?? null]))
       .toEqual([['inbox', 'success', null]]);
   }, 20_000);
