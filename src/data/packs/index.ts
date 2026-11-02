@@ -9,6 +9,7 @@ import { DEMO_LOCALE, type DemoLocale } from '../demo-locale.js';
 
 import { EHS_PLANT } from './ehs-plant/pack.js';
 import { FOOD_SAFETY } from './food-safety/pack.js';
+import { ISO_9001 } from './iso-9001/pack.js';
 
 /**
  * Catalog packs — a starting list of recurring duties for one industry, as
@@ -76,7 +77,7 @@ export interface CatalogPack {
 export const PACK_ENV_VAR = 'DULY_PACK';
 
 /** Every pack this repo ships. A new pack is one import and one entry here. */
-export const CATALOG_PACKS: readonly CatalogPack[] = [FOOD_SAFETY, EHS_PLANT];
+export const CATALOG_PACKS: readonly CatalogPack[] = [FOOD_SAFETY, ISO_9001, EHS_PLANT];
 
 /** Spellings that mean "no pack", besides leaving the variable unset. */
 const NO_PACK = ['', 'none'];

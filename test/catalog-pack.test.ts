@@ -11,9 +11,11 @@ import { SharingServicePlugin } from '@objectstack/plugin-sharing';
 import { CATALOG_PACKS, PACK_ENV_VAR, packCatalogRows, requestedPacks, type CatalogPack } from '../src/data/packs/index.js';
 import { EHS_PLANT } from '../src/data/packs/ehs-plant/pack.js';
 import { FOOD_SAFETY } from '../src/data/packs/food-safety/pack.js';
+import { ISO_9001 } from '../src/data/packs/iso-9001/pack.js';
 
 /**
- * Catalog packs (#134): the format, the first pack, and the switch.
+ * Catalog packs (#134): the format, the packs (food-safety #134, iso-9001
+ * #136, ehs-plant #137), and the switch.
  *
  * What is pinned, and why each half matters:
  *  - **Both languages, on every row.** zh-CN is the pack's primary language
@@ -82,28 +84,69 @@ describe.each(CATALOG_PACKS.map((pack) => [pack.id, pack] as const))('pack %s �
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-describe('the food-safety pack — what the card asks of it', () => {
+describe.each(CATALOG_PACKS.map((pack) => [pack.id, pack] as const))('pack %s — what its card asks of it', (_id, pack) => {
   it('has 6–10 positions and 25–40 duties', () => {
-    expect(Object.keys(FOOD_SAFETY.positions).length).toBeGreaterThanOrEqual(6);
-    expect(Object.keys(FOOD_SAFETY.positions).length).toBeLessThanOrEqual(10);
-    expect(FOOD_SAFETY.duties.length).toBeGreaterThanOrEqual(25);
-    expect(FOOD_SAFETY.duties.length).toBeLessThanOrEqual(40);
+    expect(Object.keys(pack.positions).length).toBeGreaterThanOrEqual(6);
+    expect(Object.keys(pack.positions).length).toBeLessThanOrEqual(10);
+    expect(pack.duties.length).toBeGreaterThanOrEqual(25);
+    expect(pack.duties.length).toBeLessThanOrEqual(40);
   });
 
   it('spans daily, weekly, monthly, quarterly and annual work', () => {
-    const frequencies = new Set(FOOD_SAFETY.duties.map((duty) => duty.frequency));
+    const frequencies = new Set(pack.duties.map((duty) => duty.frequency));
     for (const frequency of ['daily', 'weekly', 'monthly', 'quarterly', 'annual'] as const) {
       expect(frequencies, frequency).toContain(frequency);
     }
   });
 
   it('carries no cadence on a standing row, so #61 cannot refuse it', () => {
-    for (const row of packCatalogRows(FOOD_SAFETY, 'en').filter((row) => row.form === 'standing')) {
+    for (const row of packCatalogRows(pack, 'en').filter((row) => row.form === 'standing')) {
       expect(Object.keys(row)).not.toEqual(expect.arrayContaining(['frequency']));
       for (const column of ['frequency', 'due_anchor', 'due_offset_days', 'lead_days', 'grace_days']) {
         expect(row, `${row.name}.${column}`).not.toHaveProperty(column);
       }
     }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('the iso-9001 pack — clause numbers and titles, never the standard', () => {
+  const EN_CLAUSE = /§(\d+(?:\.\d+)*) \(([^)]+)\)/g;
+  const ZH_CLAUSE = /(?:^GB\/T 19001-2016 |；)(\d+(?:\.\d+)*) ([^；]+)/g;
+  const referenced = ISO_9001.duties.filter((duty) => duty.reference !== undefined);
+
+  it('cites ISO 9001:2015 in English and GB/T 19001-2016 in Chinese, on every cited row', () => {
+    for (const duty of referenced) {
+      expect(duty.reference!.en, duty.name.en).toMatch(/^ISO 9001:2015 §\d/);
+      expect(duty.reference!.zh, duty.name.en).toMatch(/^GB\/T 19001-2016 \d/);
+    }
+  });
+
+  it('names the same clauses, by number and title only, in both languages', () => {
+    for (const duty of referenced) {
+      const en = [...duty.reference!.en.matchAll(EN_CLAUSE)];
+      const zh = [...duty.reference!.zh.matchAll(ZH_CLAUSE)];
+      expect(en.length, duty.reference!.en).toBeGreaterThan(0);
+      expect(zh.map((match) => match[1]), duty.name.en).toEqual(en.map((match) => match[1]));
+      // A title is a few words, not a sentence of the standard.
+      for (const match of en) expect(match[2]!.split(' ').length, match[2]).toBeLessThanOrEqual(10);
+      for (const match of zh) expect(match[2]!.length, match[2]).toBeLessThanOrEqual(20);
+    }
+  });
+
+  it('gives one clause one title, wherever it is cited', () => {
+    const titles = new Map<string, string>();
+    for (const duty of referenced) {
+      for (const match of duty.reference!.en.matchAll(EN_CLAUSE)) {
+        expect(titles.get(match[1]!) ?? match[2], match[1]).toBe(match[2]);
+        titles.set(match[1]!, match[2]!);
+      }
+    }
+  });
+
+  it.each(['7.1.5', '8.4', '8.7', '9.1', '9.2', '9.3', '10.2'])('covers the clause area %s the card names', (area) => {
+    const clauses = referenced.flatMap((duty) => [...duty.reference!.en.matchAll(EN_CLAUSE)].map((match) => match[1]!));
+    expect(clauses.some((clause) => clause === area || clause.startsWith(`${area}.`)), area).toBe(true);
   });
 });
 
@@ -175,8 +218,20 @@ describe('DULY_PACK chooses, and refuses what it does not know', () => {
     expect(requestedPacks(raw)).toEqual([FOOD_SAFETY]);
   });
 
-  it.each(['bogus', 'food_safety', 'food-safety,bogus'])('%j is refused, naming the packs there are', (raw) => {
-    expect(() => requestedPacks(raw)).toThrow(/there is no catalog pack .*Use one of: food-safety/);
+  it.each(['iso-9001', ' ISO-9001 '])('%j is the iso-9001 pack alone', (raw) => {
+    expect(requestedPacks(raw)).toEqual([ISO_9001]);
+  });
+
+  it.each(['ehs-plant', ' EHS-Plant '])('%j is the ehs-plant pack alone', (raw) => {
+    expect(requestedPacks(raw)).toEqual([EHS_PLANT]);
+  });
+
+  it('takes several packs, in the order named', () => {
+    expect(requestedPacks('iso-9001,food-safety')).toEqual([ISO_9001, FOOD_SAFETY]);
+  });
+
+  it.each(['bogus', 'food_safety', 'iso9001', 'food-safety,bogus'])('%j is refused, naming the packs there are', (raw) => {
+    expect(() => requestedPacks(raw)).toThrow(/there is no catalog pack .*Use one of: food-safety, iso-9001/);
   });
 
   it('is refused at compile time, not quietly at boot', async () => {
@@ -196,11 +251,20 @@ describe('what the stack is handed', () => {
     return ((stack as { data?: readonly Dataset[] }).data ?? []) as readonly Dataset[];
   };
 
-  it('a pack alone is catalog rows and nothing else — no people, no duties', async () => {
-    vi.stubEnv(PACK_ENV_VAR, 'food-safety');
+  it.each(CATALOG_PACKS.map((pack) => [pack.id, pack] as const))(
+    '%s alone is its own catalog rows and nothing else — no other pack, no people, no duties',
+    async (id, pack) => {
+      vi.stubEnv(PACK_ENV_VAR, id);
+      const data = await loadStackData();
+      expect(data.map((dataset) => dataset.object)).toEqual(['duly_catalog_item']);
+      expect(data[0]!.records.map((row) => row.name)).toEqual(packCatalogRows(pack, 'en').map((row) => row.name));
+    },
+  );
+
+  it('two packs are two datasets, one per pack', async () => {
+    vi.stubEnv(PACK_ENV_VAR, 'food-safety,iso-9001');
     const data = await loadStackData();
-    expect(data.map((dataset) => dataset.object)).toEqual(['duly_catalog_item']);
-    expect(data[0]!.records).toHaveLength(FOOD_SAFETY.duties.length);
+    expect(data.map((dataset) => dataset.records.length)).toEqual([FOOD_SAFETY.duties.length, ISO_9001.duties.length]);
   });
 
   it('a pack with the demo is the whole demo plus the pack', async () => {
@@ -225,10 +289,12 @@ describe('what the stack is handed', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-describe.each(['en', 'zh-CN'] as const)('the pack boots on an empty database, in %s', (locale) => {
+describe.each(
+  CATALOG_PACKS.flatMap((pack) => (['en', 'zh-CN'] as const).map((locale) => [pack.id, locale, pack] as const)),
+)('pack %s boots on an empty database, in %s', (id, locale, pack) => {
   it('lands every row through the real loader and validation rules', async () => {
     vi.resetModules();
-    vi.stubEnv(PACK_ENV_VAR, 'food-safety');
+    vi.stubEnv(PACK_ENV_VAR, id);
     vi.stubEnv(DEMO_LOCALE_ENV_VAR, locale);
     const stack = (await import('../objectstack.config.js')).default as unknown as Record<string, unknown>;
 
@@ -252,15 +318,15 @@ describe.each(['en', 'zh-CN'] as const)('the pack boots on an empty database, in
       const items = async () =>
         ((await data.find('duly_catalog_item', {}, { context: { isSystem: true } })) ?? []) as Record<string, unknown>[];
       const deadline = Date.now() + 60_000;
-      while ((await items()).length < FOOD_SAFETY.duties.length && Date.now() < deadline) {
+      while ((await items()).length < pack.duties.length && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
 
       const rows = await items();
-      const expected = packCatalogRows(FOOD_SAFETY, locale);
+      const expected = packCatalogRows(pack, locale);
       expect(rows).toHaveLength(expected.length);
       expect(new Set(rows.map((row) => row.name))).toEqual(new Set(expected.map((row) => row.name)));
-      expect(new Set(rows.map((row) => row.position_code)).size).toBe(Object.keys(FOOD_SAFETY.positions).length);
+      expect(new Set(rows.map((row) => row.position_code)).size).toBe(Object.keys(pack.positions).length);
       // Nothing else: the pack writes no duty, no task and no person.
       expect(await data.find('duly_duty', {}, { context: { isSystem: true } })).toHaveLength(0);
       if (locale === 'zh-CN') for (const row of rows) expect(String(row.name)).toMatch(CJK);
