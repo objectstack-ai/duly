@@ -218,7 +218,11 @@ describe('assignment fan-out — N assignees, N independent tasks', () => {
     expect(create, 'the loop body must create a task').toBeDefined();
     const fields = (create!.config?.fields ?? {}) as AnyRec;
     expect(create!.config?.objectName).toBe(Task.name);
-    expect(fields.owner).toEqual(cel('fanout_assignee'));
+    // The iterated handle — guarded to `null` when it is not an active
+    // account (#148), which is asserted in its own block below.
+    const owner = (fields.owner as { dialect?: string; source?: string } | undefined);
+    expect(owner?.dialect).toBe('cel');
+    expect(owner?.source).toMatch(/\? fanout_assignee : null$/);
     expect(fields.subject).toEqual(cel('record.subject'));
     expect(fields.assignment).toEqual(cel('record.id'));
     expect(fields.source).toBe('assigned');
@@ -255,10 +259,13 @@ describe('assignment fan-out — N assignees, N independent tasks', () => {
   it('every created task has exactly one owner', () => {
     for (const create of allNodes().filter((n) => n.type === 'create_record')) {
       const fields = (create.config?.fields ?? {}) as AnyRec;
-      // One CEL path to one scalar id — not a list literal, not an array.
+      // One CEL path to one scalar id — not a list literal, not an array. The
+      // assignee task's path sits behind the #148 account guard, whose only
+      // two results are that one id or `null`.
       const owner = fields.owner as { dialect?: string; source?: string } | undefined;
       expect(owner?.dialect, `${create.id}`).toBe('cel');
-      expect(owner?.source, `${create.id}`).toMatch(/^[a-z_][a-z_.]*$/);
+      const path = (owner?.source ?? '').replace(/^.* \? ([a-z_][a-z_.]*) : null$/, '$1');
+      expect(path, `${create.id}`).toMatch(/^[a-z_][a-z_.]*$/);
       expect(Array.isArray(fields.owner), `${create.id}`).toBe(false);
     }
   });
@@ -494,6 +501,52 @@ describe('assignment fan-out — a bad row costs one task, not the fan-out', () 
  * context. WHICH context the trigger would assemble is pinned separately, by
  * the start-node assertions at the top of this file.
  */
+/**
+ * Boots the reduced kernel both engine-driven blocks below run against. What
+ * each plugin is for, and why the store is SQLite, is said once, here.
+ */
+async function bootEngine(): Promise<any> {
+  const { plugins } = await createStandaloneStack({
+    // SQLite's own in-memory database: from @objectstack 18 the in-memory
+    // (mingo) driver is no longer a boot store — `createStandaloneStack`
+    // refuses it, because it refuses every tenant-scoped read. Nothing here
+    // rests on a unique index (a fan-out task writes neither `duty` nor
+    // `period_key`, so the dispatch identity index cannot constrain these
+    // rows — see the idempotency block above). What this suite DOES need is
+    // `sys_user`, which the bare standalone stack does not declare: through
+    // 17.x PlatformObjectsPlugin declared it, from 18 plugin-auth does —
+    // hence the identity objects below.
+    databaseDriver: 'sqlite',
+    databaseUrl: ':memory:',
+    skipSeedData: true,
+    // Same reason as every other suite here: left to its default this
+    // resolves `<cwd>/dist/objectstack.json`, and a local `pnpm build` would
+    // make the run report on the last BUILD rather than on `src/`.
+    artifactPath: 'dist/objectstack.this-suite-must-not-load-an-artifact.json',
+  });
+  const kernel: any = new ObjectKernel();
+  for (const plugin of plugins) await kernel.use(plugin);
+  // The reduced kernel's identity objects (`sys_user`, `sys_member`,
+  // `sys_organization`) and, with them, the Default Organization a real
+  // `single` install creates at boot: from @objectstack 18 every
+  // tenant-scoped table carries `organization_id` NOT NULL, and a system
+  // write is stamped with that organization (ADR-0131 D3/D9).
+  await kernel.use(createIdentityObjectsPlugin());
+  // No longer what declares `sys_user` (see above); kept because `serve`
+  // mounts it on every real boot.
+  await kernel.use(new PlatformObjectsPlugin());
+  await kernel.use(new AppPlugin(stack as any, undefined, { skipSeedData: true }));
+  await kernel.use(new JobServicePlugin());
+  await kernel.use(new AutomationServicePlugin());
+  // The handler's notification only reaches an inbox row if the delivery
+  // path is real, and "a notification was emitted" is not the claim being
+  // tested — "the assigner can read what went wrong" is.
+  await kernel.use(new MessagingServicePlugin());
+  await kernel.use(new EmailServicePlugin());
+  await kernel.bootstrap();
+  return kernel;
+}
+
 describe('assignment fan-out — one bad row, driven through the real engine', () => {
   let kernel: any;
   let data: any;
@@ -519,44 +572,7 @@ describe('assignment fan-out — one bad row, driven through the real engine', (
   };
 
   beforeAll(async () => {
-    const { plugins } = await createStandaloneStack({
-      // SQLite's own in-memory database: from @objectstack 18 the in-memory
-      // (mingo) driver is no longer a boot store — `createStandaloneStack`
-      // refuses it, because it refuses every tenant-scoped read. Nothing here
-      // rests on a unique index (a fan-out task writes neither `duty` nor
-      // `period_key`, so the dispatch identity index cannot constrain these
-      // rows — see the idempotency block above). What this suite DOES need is
-      // `sys_user`, which the bare standalone stack does not declare: through
-      // 17.x PlatformObjectsPlugin declared it, from 18 plugin-auth does —
-      // hence the identity objects below.
-      databaseDriver: 'sqlite',
-      databaseUrl: ':memory:',
-      skipSeedData: true,
-      // Same reason as every other suite here: left to its default this
-      // resolves `<cwd>/dist/objectstack.json`, and a local `pnpm build` would
-      // make the run report on the last BUILD rather than on `src/`.
-      artifactPath: 'dist/objectstack.this-suite-must-not-load-an-artifact.json',
-    });
-    kernel = new ObjectKernel();
-    for (const plugin of plugins) await kernel.use(plugin);
-    // The reduced kernel's identity objects (`sys_user`, `sys_member`,
-    // `sys_organization`) and, with them, the Default Organization a real
-    // `single` install creates at boot: from @objectstack 18 every
-    // tenant-scoped table carries `organization_id` NOT NULL, and a system
-    // write is stamped with that organization (ADR-0131 D3/D9).
-    await kernel.use(createIdentityObjectsPlugin());
-    // No longer what declares `sys_user` (see above); kept because `serve`
-    // mounts it on every real boot.
-    await kernel.use(new PlatformObjectsPlugin());
-    await kernel.use(new AppPlugin(stack as any, undefined, { skipSeedData: true }));
-    await kernel.use(new JobServicePlugin());
-    await kernel.use(new AutomationServicePlugin());
-    // The handler's notification only reaches an inbox row if the delivery
-    // path is real, and "a notification was emitted" is not the claim being
-    // tested — "the assigner can read what went wrong" is.
-    await kernel.use(new MessagingServicePlugin());
-    await kernel.use(new EmailServicePlugin());
-    await kernel.bootstrap();
+    kernel = await bootEngine();
     data = kernel.getService('data');
     const automation = kernel.getService('automation') as {
       execute(flow: string, ctx: AnyRec): Promise<AnyRec>;
@@ -692,5 +708,150 @@ describe('assignment fan-out — one bad row, driven through the real engine', (
     expect(templateData.assignee).toBe('');
     expect(templateData.subject).toBe(SUBJECT);
     expect(String(templateData.reason)).toContain('Owner is required');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// A removed account is refused, not handed a task (#148)
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('assignment fan-out — the owner must be an active account (#148)', () => {
+  const create = () => loopBody().nodes.find((n) => n.id === 'fanout_create_task')!;
+  const ownerSource = () =>
+    ((create().config?.fields as AnyRec | undefined)?.owner as { source?: string } | undefined)?.source ?? '';
+
+  it('the account lookup reads what "active" is decided on', () => {
+    // The guard can only judge what the lookup projected: a `fields` list
+    // without `banned` leaves it absent, and the guard then reads "not banned".
+    const lookup = loopBody().nodes.find((n) => n.id === 'fanout_find_unit')!;
+    expect(lookup.config?.objectName).toBe('sys_user');
+    expect(lookup.config?.filter).toEqual({ id: cel('fanout_assignee') });
+    expect(lookup.config?.fields).toEqual(expect.arrayContaining(['id', 'banned', 'ban_expires']));
+    expect(lookup.config?.outputVariable).toBe('fanout_assignee_user');
+  });
+
+  it('writes the owner only when the lookup resolved, and null otherwise', () => {
+    // `null` is the refusal: `owner` is required, so the create fails inside
+    // the try and the existing handler names this assignee to the assigner.
+    // Routing AROUND the create instead would drop the person silently.
+    const source = ownerSource();
+    expect(source.startsWith('vars.fanout_assignee_user != null && ')).toBe(true);
+    expect(source).toContain('vars.fanout_assignee_user.banned != true');
+    expect(source.endsWith('? fanout_assignee : null')).toBe(true);
+    expect(Task.fields.owner.required).toBe(true);
+  });
+
+  it('the lookup runs right before the create, so the row it judges is this assignee\'s', () => {
+    // `fanout_assignee_user` is shared across iterations. It is only safe to
+    // judge because the create's sole incoming edge comes straight from the
+    // lookup, which rebinds it (to the row, or to null on a miss) every time.
+    const incoming = loopBody().edges.filter((e) => e.target === 'fanout_create_task');
+    expect(incoming.map((e) => e.source)).toEqual(['fanout_find_unit']);
+    expect(incoming[0].condition).toBeUndefined();
+  });
+});
+
+/**
+ * The card's own acceptance case, on the real engine, with the removed
+ * account removed for real: the assignment is saved while the person exists,
+ * then their `sys_user` row is deleted, and the flow runs on the row as STORED.
+ * Nothing about the bad id rides on the trigger context.
+ *
+ * The valid assignee comes FIRST on purpose. When the removed one is judged,
+ * `fanout_assignee_user` still holds the valid assignee's row from the
+ * previous iteration unless the lookup rebinds it on a miss, so a task for the
+ * removed id here would also mean the guard read a stale row.
+ */
+describe('assignment fan-out — a removed or banned assignee, driven through the real engine (#148)', () => {
+  let kernel: any;
+  let data: any;
+  let automation: { execute(flow: string, ctx: AnyRec): Promise<AnyRec> };
+
+  const SUBJECT = 'Annual supplier attestation';
+  const sys = { context: { isSystem: true } };
+  const first = (r: unknown): AnyRec => (Array.isArray(r) ? r[0] : r) as AnyRec;
+
+  const mkUser = async (name: string, extra: AnyRec = {}): Promise<string> =>
+    String(first(await data.insert('sys_user', { name, email: `${name}@example.test`, ...extra }, sys)).id);
+
+  /** Save the assignment while every assignee exists, then run the fan-out on the row as stored. */
+  const fanOut = async (assigner: string, assignees: string[], removeBeforeRun: string[] = []) => {
+    const assignment = first(await data.insert('duly_assignment', {
+      subject: SUBJECT, assigner, assignees, due_date: '2026-10-01', status: 'dispatched', needs_collection: false,
+    }));
+    for (const id of removeBeforeRun) await data.delete('sys_user', { where: { id }, ...sys });
+    const stored = (await data.find('duly_assignment', { where: { id: assignment.id } }))[0] as AnyRec;
+    const result = await automation.execute('duly_assignment_fanout', {
+      record: stored, object: 'duly_assignment', event: 'afterUpdate',
+    });
+    const tasks = (await data.find('duly_task', { where: { assignment: assignment.id } })) as AnyRec[];
+    const deadline = Date.now() + 10_000;
+    let inbox: AnyRec[] = [];
+    for (;;) {
+      inbox = (await data.find('sys_inbox_message', { where: { user_id: assigner } })) as AnyRec[];
+      if (inbox.length >= Math.max(1, assignees.length - tasks.length) || Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return { stored, result, tasks, inbox };
+  };
+
+  beforeAll(async () => {
+    kernel = await bootEngine();
+    data = kernel.getService('data');
+    automation = kernel.getService('automation');
+  }, 180_000);
+
+  afterAll(async () => {
+    await kernel?.shutdown?.();
+  });
+
+  it('one valid and one removed assignee: one task created, one failure reported', async () => {
+    const valid = await mkUser('fanout148_valid');
+    const removed = await mkUser('fanout148_removed');
+    const boss = await mkUser('fanout148_boss');
+
+    const { stored, result, tasks, inbox } = await fanOut(boss, [valid, removed], [removed]);
+
+    // The premise, read back: removing the account left its id on the stored
+    // assignment, so this is the row a real re-save would fan out.
+    expect(stored.assignees).toEqual([valid, removed]);
+    expect(await data.findOne('sys_user', { where: { id: removed }, ...sys })).toBeNull();
+
+    // One task, the valid assignee's. Before the guard this was two: the
+    // system write skipped the reference check and created the removed one's.
+    expect(tasks.map((t) => String(t.owner))).toEqual([valid]);
+    expect(result.success, String(result.error ?? '')).toBe(true);
+    expect((result.summary as AnyRec).acted).toBe(1);
+
+    // One failure, told to the assigner through the existing handler, naming
+    // the removed handle from the iterator.
+    expect(inbox.length).toBe(1);
+    expect(inbox[0].topic).toBe('duly.assignment_fanout_failed');
+    expect(String(inbox[0].body_md)).toContain(removed);
+    expect(String(inbox[0].body_md)).toContain('fanout_create_task');
+    expect(String(inbox[0].action_url)).toContain(String(stored.id));
+  });
+
+  it('a banned account is refused the same way; a ban that has expired is not', async () => {
+    // Sign-in clears a ban whose expiry has passed, so that person can open a
+    // task and gets one. A standing ban — no expiry, or one still ahead — is
+    // an account nobody can sign in as.
+    const banned = await mkUser('fanout148_banned', { banned: true });
+    const bannedUntilLater = await mkUser('fanout148_banned_later', {
+      banned: true, ban_expires: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    });
+    const banLapsed = await mkUser('fanout148_ban_lapsed', {
+      banned: true, ban_expires: new Date(Date.now() - 86_400_000).toISOString(),
+    });
+    const boss = await mkUser('fanout148_boss_2');
+
+    const { result, tasks, inbox } = await fanOut(boss, [banned, bannedUntilLater, banLapsed]);
+
+    expect(tasks.map((t) => String(t.owner))).toEqual([banLapsed]);
+    expect(result.success, String(result.error ?? '')).toBe(true);
+    expect(inbox.length).toBe(2);
+    const named = inbox.map((m) => String(m.body_md));
+    expect(named.some((b) => b.includes(banned))).toBe(true);
+    expect(named.some((b) => b.includes(bannedUntilLater))).toBe(true);
   });
 });

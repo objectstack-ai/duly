@@ -113,6 +113,33 @@ import { defineFlow } from '@objectstack/spec';
  * calmly name the wrong colleague. Where the assignee handle itself is the
  * defect (a blank entry in `assignees` — the "missing owner" shape), the
  * handle renders empty and the engine's reason carries the diagnosis.
+ *
+ * ── A removed account is a bad row too (#148) ────────────────────────────
+ * Removing a person leaves their id in every `assignees` list that named them
+ * (the multi-user field is not cleaned up), so a later save of the assignment
+ * — adding a sixth name is enough — fans out to that id again. A user-path
+ * insert of such a task is refused by the engine's reference check
+ * (`Owner: no sys_user record has id "…"`), but this flow is `runAs: 'system'`
+ * and `@objectstack/objectql` 18.2.0's `assertReferencesResolve` returns at its
+ * first line for any `isSystem` write. Neither the flow nor the `create_record`
+ * node has a key that keeps the check on. Measured on 18.2.0: an assignment
+ * naming one live, one deleted and one banned account created THREE tasks,
+ * reported `acted: 3` and sent the assigner nothing. Those tasks are owned by
+ * somebody who can never open them, so the duty reads as assigned while nobody
+ * holds it.
+ *
+ * So the guard is explicit. `fanout_find_unit` already read the assignee's
+ * `sys_user` row for the business unit; it now also reads `banned` /
+ * `ban_expires`, and the create writes `owner` only when that row resolved to
+ * an active account, `null` otherwise. `owner` is required, so the create
+ * fails, the try_catch catches it, and the assigner is told through the same
+ * notice as any other bad row. Refusing through the existing failure path
+ * rather than routing around the create is the point: a skipped iteration is
+ * the silent partial success #123 removed.
+ *
+ * Re-saving the assignment after the account is restored (or the name
+ * replaced) fans out again, and the per-owner guard creates exactly the
+ * missing task, so a temporary ban costs a re-save, not a lost assignee.
  */
 export const AssignmentFanout = defineFlow({
   name: 'duly_assignment_fanout',
@@ -212,11 +239,14 @@ export const AssignmentFanout = defineFlow({
                     {
                       id: 'fanout_find_unit',
                       type: 'get_record',
-                      label: "Read the assignee's business unit",
+                      // Two jobs, one read: the business unit the task is
+                      // stamped with, and whether this handle is still an
+                      // account anybody can sign in as (#148, see the header).
+                      label: "Read the assignee's account and business unit",
                       config: {
                         objectName: 'sys_user',
                         filter: { id: F`fanout_assignee` },
-                        fields: ['id', 'primary_business_unit_id'],
+                        fields: ['id', 'primary_business_unit_id', 'banned', 'ban_expires'],
                         outputVariable: 'fanout_assignee_user',
                       },
                     },
@@ -228,7 +258,23 @@ export const AssignmentFanout = defineFlow({
                         objectName: 'duly_task',
                         fields: {
                           subject: F`record.subject`,
-                          owner: F`fanout_assignee`,
+                          // The iterated handle, but ONLY when it resolved to
+                          // an active account one node up; otherwise `null`,
+                          // which `owner`'s `required` refuses, so the
+                          // try_catch reports this assignee to the assigner and
+                          // the loop moves on (#148, see the header). The
+                          // engine's own reference check would refuse a removed
+                          // account here, but this flow runs as system and a
+                          // system write skips it.
+                          //
+                          // "Active": the row exists, and it is not banned —
+                          // or its ban has an expiry that has already passed,
+                          // because sign-in clears such a ban, so that person
+                          // can still open the task. `fanout_assignee_user` is
+                          // fresh here: `get_record` binds it on a miss as well
+                          // as a hit, and it ran just before this node in the
+                          // same iteration.
+                          owner: F`vars.fanout_assignee_user != null && (!has(vars.fanout_assignee_user.banned) || vars.fanout_assignee_user.banned != true || (has(vars.fanout_assignee_user.ban_expires) && !isBlank(vars.fanout_assignee_user.ban_expires) && datetime(vars.fanout_assignee_user.ban_expires) <= now())) ? fanout_assignee : null`,
                           // Denormalised at dispatch so a later transfer does
                           // not rewrite history (see duly_task.business_unit).
                           // Guarded, because the lookup above can miss: a
