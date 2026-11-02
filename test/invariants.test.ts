@@ -123,20 +123,7 @@ describe('product invariants', () => {
       ).toBeDefined();
     }
 
-    // #176 — two readonly columns are PROVENANCE, not stamps: where the task
-    // came from and which unit it is filed under. They are server-owned so a
-    // caller cannot forge them, and they stay in Basics because they say what
-    // the task is. Named here, so a third one is a decision and not a drift.
-    const PROVENANCE = ['business_unit', 'source'];
-    for (const name of PROVENANCE) {
-      const field = (Task.fields as Record<string, { group?: string; readonly?: boolean }>)[name];
-      expect(field?.readonly, `duly_task.${name} is server-owned (#176)`).toBe(true);
-      expect(field?.group, `duly_task.${name} stays in Basics`).toBe('basics');
-    }
-
-    const readonlyFields = entries
-      .filter(([name, f]) => f.readonly === true && !PROVENANCE.includes(name))
-      .map(([name]) => name).sort();
+    const readonlyFields = entries.filter(([, f]) => f.readonly === true).map(([name]) => name).sort();
     const historyFields = entries.filter(([, f]) => f.group === 'history').map(([name]) => name).sort();
     expect(historyFields, 'the history section IS the set of server-owned stamps')
       .toEqual(readonlyFields);

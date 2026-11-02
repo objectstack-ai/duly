@@ -354,27 +354,35 @@ const stampTaskLifecycle = async (ctx: HookContext): Promise<void> => {
       input.completed_late = completedLate(input.completed_at, input.late_after);
     }
 
-    // ── business_unit — the writer's unit, on a caller's insert (#176) ──────
-    // `business_unit` is `readonly`, so a caller's value is stripped AFTER this
-    // hook and nothing would be left. The system writers carry their own: the
-    // dispatcher copies the duty's, the fan-out reads the assignee's, the seed
-    // writes history. A caller's own task is the remaining case, and its owner
-    // is the caller (`duly_task_owner_is_writer` refuses anyone else), so the
-    // unit is the caller's `primary_business_unit_id` — the rung the fan-out
-    // already reads for a task with no duty. A key this hook writes is not a
-    // caller write, so the strip keeps it, even when it equals what the
-    // caller sent (the form echoes the field back).
+    // ── business_unit — the owner's unit, on a caller's insert (#176) ───────
+    // A member or manager cannot name `business_unit`, `source` or `owner`:
+    // the Duly permission sets lock all three (`TASK_PROVENANCE_LOCK`,
+    // `src/security/permission-sets.ts`), so the platform refuses a payload
+    // that names one, and `owner` is its default — the writer. The system
+    // writers carry their own unit: the dispatcher copies the duty's, the
+    // fan-out reads the assignee's, the seed writes history. A caller's task
+    // with no unit is the remaining case, and it gets the owner's
+    // `primary_business_unit_id` — the rung the fan-out already reads for a
+    // task with no duty. The field lock judges the caller's payload, never
+    // what a hook derives, so this write lands. A caller the lock does not
+    // bind (a platform administrator) and who names a unit keeps it.
     const session = ctx.session;
-    if (session?.isSystem !== true && typeof session?.userId === 'string' && session.userId !== '') {
+    const ownerId = typeof input.owner === 'string'
+      ? input.owner
+      : input.owner !== null && typeof input.owner === 'object' && typeof (input.owner as { id?: unknown }).id === 'string'
+        ? (input.owner as { id: string }).id
+        : '';
+    const unitGiven = typeof input.business_unit === 'string' && input.business_unit !== '';
+    if (session?.isSystem !== true && !unitGiven && ownerId !== '') {
       if (!ctx.api) {
-        throw new Error('duly_task_lifecycle_stamps: ctx.api is unavailable, so the writer\'s business unit cannot be read.');
+        throw new Error('duly_task_lifecycle_stamps: ctx.api is unavailable, so the owner\'s business unit cannot be read.');
       }
-      const writer = await ctx.api.object('sys_user').findOne({
-        where: { id: session.userId },
+      const owner = await ctx.api.object('sys_user').findOne({
+        where: { id: ownerId },
         fields: ['primary_business_unit_id'],
       });
-      const unit = writer?.primary_business_unit_id;
-      input.business_unit = typeof unit === 'string' && unit !== '' ? unit : null;
+      const unit = owner?.primary_business_unit_id;
+      if (typeof unit === 'string' && unit !== '') input.business_unit = unit;
     }
     return;
   }
@@ -586,15 +594,15 @@ export const TaskLifecycleHook: Hook = {
     + 'moves them. On a predicate (bulk) write the row-conditional stamps are handled by '
     + 'ADR-0058 Addendum II D3: one payload for the whole batch, so a re-stamp of an '
     + 'already-done row and a completion that would be stamped late are both refused, and '
-    + 'last_update_at is not stamped at all. On an insert by a caller (not a system write), '
-    + 'business_unit is the writer\'s primary business unit, read elevated.',
+    + 'last_update_at is not stamped at all. On an insert by a caller (not a system write) that '
+    + 'carries no business_unit, it is the owner\'s primary business unit, read elevated.',
   // Explicit because it is load-bearing rather than a default worth inheriting:
   // if this handler throws, the write MUST be refused. Committing a task whose
   // stamps were not applied is the exact silent corruption the
   // `completed_at_required_when_done` rule exists to make impossible.
   onError: 'abort',
   // Elevated for the two `ctx.api` reads this hook makes: `grace_days` off the
-  // duty the row names, and the writer's own `primary_business_unit_id`. The
+  // duty the row names, and the owner's `primary_business_unit_id`. The
   // deadline a row is born with must not depend on whether its creator can see
   // that duty — see the module header.
   // Governs `ctx.api` only; the readonly strip on this payload is unchanged.
@@ -733,97 +741,4 @@ export const TaskDutyReadGuard: Hook = {
   // "harmonises" it with `duly_task_lifecycle_stamps`.
   runAs: 'inherit',
   handler: refuseUnreadableDuty,
-};
-
-/**
- * `duly_task.owner` names the writer, or the write is refused (#176).
- *
- * Measured on 18.2.0 against a live `pnpm demo`: a `duly_member` and a
- * `duly_manager` could each create a task, or move their own, with `owner`
- * set to somebody else — through data POST and PATCH and MCP create and
- * update. The row then sat in that person's governed readings (Overdue,
- * on-time) while that person could not see it, because `readScope: 'own'`
- * resolves through `owner_id`, which is the writer (#143).
- *
- * ── Who may name whom ────────────────────────────────────────────────────
- * A caller names only themselves. That holds for a manager too: "Assigning is
- * their only write" (AGENTS.md product invariants), and the door for a
- * report's work is `duly_assignment` and its fan-out. The system writers —
- * the dispatcher, the fan-out (`runAs: 'system'`), the seed — are who put work
- * on other people, and `session.isSystem` lets them through.
- *
- * ── Why a hook, and why it refuses ──────────────────────────────────────
- * `source` and `business_unit` are `readonly` on the object and the platform
- * strips a caller's value. `owner` cannot be: a `readonly` field is validated
- * shape-only, so its `required` stops being checked, and a system insert with
- * `owner: null` then commits an ownerless task (measured). The #148 fan-out
- * depends on that refusal to report a removed assignee. So `owner` stays
- * writable and this guard judges it.
- *
- * It refuses rather than rewrites. The console form does not carry `owner`
- * at all, so the only caller who meets this is one who meant somebody else,
- * and a silent rewrite would hide that mistake from them.
- *
- * Re-sending the stored owner is not judged, so a re-save of a row whose
- * owner is already someone else (written before this guard) keeps working.
- * A write with no caller identity at all is not judged either: there is
- * nobody to compare with, and the security layer refuses a principal-less
- * write before it gets here.
- *
- * Self-contained, like the hooks above: the build lowers it into a sandboxed
- * `body`, which carries `ctx.session`.
- */
-const refuseForeignOwner = async (ctx: HookContext): Promise<void> => {
-  const input = ctx.input as Record<string, unknown>;
-  if (!('owner' in input)) return;
-
-  const session = ctx.session;
-  if (session?.isSystem === true) return;
-  const writer = typeof session?.userId === 'string' ? session.userId : '';
-  if (writer === '') return;
-
-  const idOf = (value: unknown): string => {
-    if (typeof value === 'string') return value;
-    if (value !== null && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string') {
-      return (value as { id: string }).id;
-    }
-    return '';
-  };
-
-  const owner = idOf(input.owner);
-  if (owner === writer) return;
-
-  if (ctx.event === 'beforeUpdate') {
-    const previous = ctx.previous as Record<string, unknown> | undefined;
-    if (previous && idOf(previous.owner) === owner) return;
-  }
-
-  const message = 'Owner: you can only create or keep tasks for yourself. '
-    + 'To give work to someone else, send them an assignment.';
-  const error = new Error(message) as Error & { code: string; fields: unknown[] };
-  error.name = 'ValidationError';
-  error.code = 'VALIDATION_FAILED';
-  error.fields = [{
-    field: 'owner',
-    code: 'owner_not_writer',
-    message,
-    label: 'Owner',
-    value: owner,
-  }];
-  throw error;
-};
-
-export const TaskOwnerGuard: Hook = {
-  name: 'duly_task_owner_is_writer',
-  label: 'Task owner is the writer',
-  object: 'duly_task',
-  events: ['beforeInsert', 'beforeUpdate'],
-  description:
-    'Refuses a duly_task write by a caller that names someone else as owner — an insert, or an '
-    + 'update changing owner. A caller creates tasks only for themselves; work for another '
-    + 'person is an assignment. System writes (the dispatcher, the assignment fan-out, the seed) '
-    + 'pass, and re-sending the stored owner is not checked.',
-  // A guard that fails open is not a guard.
-  onError: 'abort',
-  handler: refuseForeignOwner,
 };

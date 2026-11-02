@@ -113,15 +113,12 @@ export const Task = ObjectSchema.create({
       description: 'Empty for a bare one-off that was never modelled as a duty.',
     }),
 
-    // A caller names only themselves (#176): `duly_task_owner_is_writer`
-    // refuses anyone else. The dispatcher, the fan-out and the seed are the
-    // writers that put work on other people.
-    //
-    // ⛔ NOT `readonly`, unlike `source` and `business_unit` beside it. A
-    // readonly field is validated shape-only, so `required` stops being
-    // checked and a system insert with `owner: null` commits an ownerless task
-    // (measured on 18.2.0). The #148 fan-out relies on that refusal to report a
-    // removed assignee, and "one task has exactly one owner" is an invariant.
+    // `owner`, `source` and `business_unit` are not a caller's to write
+    // (#176): the Duly permission sets lock all three
+    // (`TASK_PROVENANCE_LOCK`, `src/security/permission-sets.ts`). The
+    // defaults and `task.hook.ts` fill them for a caller; the dispatcher, the
+    // fan-out and the seed write them as the system. Not `readonly` here — a
+    // readonly field skips `required`, and `owner` must stay required.
     owner: Field.user({
       label: 'Owner',
       group: 'basics',
@@ -129,15 +126,9 @@ export const Task = ObjectSchema.create({
       defaultValue: 'current_user',
     }),
 
-    // Server-owned (#176). `readonly` strips a caller's value on insert and
-    // update; the system writers are exempt and carry their own — the
-    // dispatcher copies the duty's, the fan-out reads the assignee's. A
-    // caller's own task gets the writer's primary business unit from
-    // `task.hook.ts`. Before this, a member could file a row under any unit.
     business_unit: Field.lookup('sys_business_unit', {
       label: 'Business unit',
       group: 'basics',
-      readonly: true,
       description: 'Denormalised from the owner when the task is created, so rollups survive a later transfer. Set by the server, never by hand.',
     }),
 
@@ -149,17 +140,10 @@ export const Task = ObjectSchema.create({
 
     // Same caliber rule as the duty. Metrics read this column and only this
     // column; `self` never enters an on-time rate or a comparison.
-    //
-    // Server-owned (#176). A member could mark their own work `catalog` and
-    // enter every governed reading. `readonly` strips a caller's value on
-    // insert (re-defaulted to `self`) and on update; the dispatcher, the
-    // fan-out and the seed write as the system and are exempt. So where a task
-    // came from is decided by how it was made, never by who typed it.
     source: Field.select({
       label: 'Source',
       group: 'basics',
       required: true,
-      readonly: true,
       options: [
         { label: 'Role catalog', value: 'catalog', color: '#16515F' },
         { label: 'Assigned by manager', value: 'assigned', color: '#8C6512' },

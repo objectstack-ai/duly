@@ -165,13 +165,18 @@ describe('the premise, measured on this boot', () => {
 describe('every door refuses a duty the writer cannot read', () => {
   it('data POST', async () => {
     const before = (await tasksOn(otherDuty)).length;
-    const res = await post({ subject: 'On Sam\'s duty', duty: otherDuty, due_date: DUE, source: 'catalog' });
+    const res = await post({ subject: 'On Sam\'s duty', duty: otherDuty, due_date: DUE });
     expectNotFound(res.thrown, otherDuty);
     expect((await tasksOn(otherDuty)).length).toBe(before);
   });
 
   it('data POST naming the duty\'s own owner — the write that would pre-empt their dispatch', async () => {
-    const res = await post({ subject: 'As Sam', duty: otherDuty, owner: 'user_sam', period_key: '2026-11', due_date: DUE });
+    // Since #176 the owner key alone is refused, before this guard is asked:
+    // a member may not name anyone else as owner (`TASK_PROVENANCE_LOCK`).
+    const named = await post({ subject: 'As Sam', duty: otherDuty, owner: 'user_sam', period_key: '2026-11', due_date: DUE });
+    expect(String(named.thrown?.message ?? named.thrown?.error?.message ?? named.thrown)).toContain('Field write denied');
+    // And without it, the duty is still refused here.
+    const res = await post({ subject: 'Next period', duty: otherDuty, period_key: '2026-11', due_date: DUE });
     expectNotFound(res.thrown, otherDuty);
   });
 
@@ -232,7 +237,7 @@ describe('every door refuses a duty the writer cannot read', () => {
   });
 
   it('MCP create_record', async () => {
-    const res = await attempt(() => mcp().create('duly_task', { subject: 'Via MCP', duty: otherDuty, source: 'catalog' }));
+    const res = await attempt(() => mcp().create('duly_task', { subject: 'Via MCP', duty: otherDuty }));
     expect(res.ok?.id ?? res.ok?.record?.id, 'no row came back').toBeUndefined();
     expectNotFound(res.thrown, otherDuty);
   });
