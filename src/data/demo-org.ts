@@ -41,14 +41,17 @@
  * ⚠️ The `sys_user` seed row for `Dev Admin` carries its natural key and
  * NOTHING ELSE, deliberately. Two orderings have to both come out right:
  *
- *  - **`objectstack dev`, fresh DB.** `AuthPlugin` is registered before the
- *    app plugin (`serve.ts` mounts it at step 5d, the app's own plugins after),
- *    so the real admin account already exists when this seed runs. The loader
- *    finds it by `name`, `isNoOpReplay` compares only the fields the seed
- *    declares — just `name` — finds them equal, and SKIPS. Nothing is written
- *    to the live account. Add an `email` here and that stops being true: the
- *    row would be updated, and a changed email is a login the evaluator no
- *    longer has.
+ *  - **`objectstack dev` (`pnpm demo`), fresh DB.** The demo declares its
+ *    people as `demoStaff` (`demo-staff.ts`), and a stack that does has its
+ *    inline seed deferred to `kernel:bootstrapped`, after `plugin-auth` has
+ *    minted the admin at `kernel:ready` (#131, `@objectstack/*` 18.2). So the
+ *    real admin account already exists when this seed runs. The loader finds
+ *    it by `name`, `isNoOpReplay` compares only the fields the seed declares
+ *    (just `name`), finds them equal, and SKIPS. Nothing is written to the
+ *    live account. Add an `email` here and that stops being true: the row
+ *    would be updated, and a changed email is a login the evaluator no longer
+ *    has. Without the deferral the order flips, this row is inserted first,
+ *    and the minted admin becomes a second row that owns nothing.
  *  - **A kernel with no auth plugin** (the vitest suites, `createStandaloneStack`).
  *    No such account exists, so the row is inserted and `owner: 'Dev Admin'`
  *    still resolves. Without it every task owned by the admin would be refused
@@ -70,25 +73,22 @@ const DOMAIN = 'ardenline.example';
  * ── Why this one string is NOT in the dictionary (#117 item 5) ────────────
  * Every other name here is fixture data: this app writes it, and nothing else
  * reads it. This one names a LIVE CREDENTIAL-BEARING ACCOUNT that a different
- * component mints — `@objectstack/plugin-auth`'s `maybeSeedDevAdmin`, whose
- * `name` is not configurable (only `OS_SEED_ADMIN_EMAIL` / `OS_SEED_ADMIN_PASSWORD`
- * are). So the Chinese spelling is not a translation the fixture may simply
- * decide on; it only holds if something actually renames the account, and the
- * seed's natural-key match has to land on that same row afterwards.
+ * component mints: `@objectstack/plugin-auth`'s `maybeSeedDevAdmin`, under the
+ * name in `OS_SEED_ADMIN_NAME` (default `Dev Admin`). So the Chinese spelling
+ * is not a translation the fixture may simply decide on; it only holds if the
+ * account is actually minted under it, and the seed's natural-key match has
+ * to land on that same row.
  *
- * `scripts/demo.mjs` does the rename in its priming step, before the seed
- * runs, and MEASURED (2026-09-02, `@objectstack/*` 17.2.0, live `pnpm demo:zh`):
- * the PATCH lands, sign-in with the same credentials still returns 200
- * afterwards, and a second boot replays the seed as a no-op against the
- * renamed row. The evidence is in the PR for #117.
- *
- * The failure this guards is specific and silent: if the rename did not
- * happen, the seed would find no `演示管理员` row, INSERT a fourteenth user,
- * and hand every one of the demo account's duties, tasks and log entries to a
- * person nobody can log in as — leaving My week, My duties, Sent by me and
- * Work log empty on the screen the evaluator actually lands on. Which is why
- * the rename is verified in the script rather than assumed, and why this
- * constant is written where the reasoning is, not as a dictionary row.
+ * `scripts/demo.mjs` sets `OS_SEED_ADMIN_NAME` to this value for the boot.
+ * Measured on `@objectstack/*` 18.2.0 for #131, on a clean database: a
+ * `zh-CN` boot without it signs in as `Dev Admin`, and the seed inserts a
+ * second, credential-less `演示管理员` who owns every one of the demo
+ * account's duties, tasks and log entries (14 users, not 13), leaving My
+ * week, My duties, Sent by me and Work log empty on the screen the evaluator
+ * actually lands on. With it, there is one row and it owns that work. The
+ * script and this constant are held together by `test/demo-script.test.ts`.
+ * (Before 18.2 the script renamed the account over REST in a priming boot;
+ * #117 measured that path.)
  */
 export const ADMIN: string = DEMO_LOCALE === 'zh-CN' ? '演示管理员' : 'Dev Admin';
 

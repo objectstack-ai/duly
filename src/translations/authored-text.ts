@@ -1028,6 +1028,7 @@ export const COLLECTION_HANDLING: Readonly<Record<string, string>> = {
   manifest: 'package registry metadata — `name` and `description` describe the PACKAGE, '
     + 'not a screen, and no bundle group addresses them',
   data: 'seed rows — data a deployment replaces, not authored labels',
+  demoStaff: 'demo accounts — the seed\'s people by name and address, data like `data`, not authored labels',
   functions: 'handler registrations',
   plugins: 'plugin instances',
   requires: 'capability tokens',

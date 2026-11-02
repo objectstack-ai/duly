@@ -19,7 +19,9 @@ import { assignmentSeed } from './assignment.seed.js';
 import { catalogSeed } from './catalog.seed.js';
 import { dutySeed } from './duty.seed.js';
 import { logEntrySeed } from './log-entry.seed.js';
+import { DEMO_STAFF } from './demo-staff.js';
 import { adminPermissionSetSeed, businessUnitMemberSeed, businessUnitSeed, userSeed } from './org.seed.js';
+import type { DemoStaff } from '@objectstack/spec/system';
 import {
   taskAdHocSeed,
   taskAdHocTouchSeed,
@@ -130,27 +132,24 @@ export const demoSeeds: Seed[] = [
 // wrote duties would be the same product mistake at a smaller scale, so the
 // gate wraps the WHOLE array rather than filtering rows out of it.
 //
-// ── What this also settles, and what changes when the platform lands ───────
+// ── What this also settles ─────────────────────────────────────────────────
 //
-// `@objectstack/plugin-auth` mints the dev admin (`admin@objectos.ai`) on a
-// ZERO-USER database, from the `kernel:ready` hook — which fires AFTER the
-// app's declarative seed has run. While the demo's thirteen `sys_user` rows
-// were in the default path, a clean `git clone && pnpm dev` was never
-// zero-user by the time that check ran: the admin was never created, and
-// because the gate is "any human row exists" it was never created on a later
-// boot either. `sign-in` returned 401, `sys_account` was empty, and
-// `bootstrap-status` reported `{"hasOwner": true}` so the console offered no
-// first-admin flow to recover through.
+// `@objectstack/plugin-auth` mints the dev admin (`admin@objectos.ai`) only
+// on a database where nobody can sign in yet, from the `kernel:ready` hook.
+// With the demo off by default, a clean `git clone && pnpm dev` is exactly
+// that database, and the admin is minted as documented; nobody typing
+// `pnpm dev` has to know anything below.
 //
-// With the demo off by default that path is simply gone. The default boot
-// leaves the database zero-user and the admin is minted exactly as
-// documented — nobody typing `pnpm dev` has to know any of the above.
-//
-// The ordering itself is the platform's question and is filed as
-// objectstack-ai/objectstack#14157. When it lands, exactly ONE thing here
-// collapses: `pnpm demo` stops having to sequence two boots (see
-// `scripts/demo.mjs`) and becomes a single boot with the flag set. This gate
-// stays. It was never really about the bug.
+// `pnpm demo` used to need two boots, because the app's declarative seed ran
+// BEFORE `kernel:ready`: its name-only admin row landed first, and the admin
+// minted afterwards was a second row, so the demo account's own work belonged
+// to a ghost nobody could sign in as (objectstack#14157, then the ordering
+// half measured on 17.3.0 for #131). From 18.2 the platform orders it: a stack
+// that declares `demoStaff` has its inline seed deferred to
+// `kernel:bootstrapped`, after the admin and the demo accounts exist. That is
+// `dulyDemoStaff` below, gated exactly as the seed is, and it is why
+// `pnpm demo` is now ONE boot (`scripts/demo.mjs`). This gate stays. It was
+// never really about the bug.
 //
 // ── One mechanical detail: the flag is read at COMPILE time ────────────────
 //
@@ -208,3 +207,20 @@ export const demoSeedRequested = (): boolean =>
  * convenient row at a time.
  */
 export const dulySeeds: Seed[] = demoSeedRequested() ? demoSeeds : [];
+
+/**
+ * What `defineStack({ demoStaff })` declares: the twelve demo people as
+ * accounts that can sign in, and only when the demo was asked for (#131).
+ *
+ * Same gate as {@link dulySeeds}, for two reasons. `pnpm dev` must stay a
+ * database with no demo accounts in it. And a declaration is what tells the
+ * runtime to defer the seed until after the accounts are created, so the two
+ * have to be switched on together: demo accounts with no seed are twelve
+ * strangers, a seed with no declaration is the ghost-admin ordering again.
+ *
+ * Unlike `data`, this key is read off the CONFIG when the server starts, not
+ * off the compiled artifact (`os build` strips it), so `pnpm demo` sets
+ * `DULY_DEMO_SEED` in the server's own environment and both reads agree. See
+ * `demo-staff.ts` for what each account holds and why the admin is not one.
+ */
+export const dulyDemoStaff: DemoStaff[] = demoSeedRequested() ? [...DEMO_STAFF] : [];

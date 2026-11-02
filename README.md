@@ -136,11 +136,10 @@ example instead:
 | Command | What you get |
 |:---|:---|
 | `pnpm demo` | The same app **preloaded with a worked example**: a fictional manufacturer with three sites, twelve people over a three-level org chart, a catalog of duties, and six months of history behind them, so every view has something in it on the first screen. |
-| `pnpm demo:zh` | The same worked example **in Chinese**: its people, its duty catalog and its history all in zh-CN, so the records read the same language as the interface. Identical in every other respect: same objects, same row counts, same history. The account you sign in with is renamed 演示管理员 to match. |
+| `pnpm demo:zh` | The same worked example **in Chinese**: its people, its duty catalog and its history all in zh-CN, so the records read the same language as the interface. Identical in every other respect: same objects, same row counts, same history. The account you sign in with is named 演示管理员 to match. |
 
-`pnpm demo` prepares the database and then starts the server; it is one
-command and it works on a clean checkout. Everything it writes is ordinary
-data, so you can edit or delete any of it.
+`pnpm demo` is one command and one boot, and it works on a clean checkout.
+Everything it writes is ordinary data, so you can edit or delete any of it.
 
 The two demos are the **same fixture in two languages**, not two datasets:
 one org chart, one duty catalog, one history planner, with the display strings
@@ -230,7 +229,7 @@ src/datasets/  src/dashboards/   the semantic layer and what reads it
 src/security/            positions, permission sets, sharing rules
 src/mappings/  src/data/ catalog import and the demo fixture (src/data/demo-*)
 src/translations/        en (source) · zh-CN
-scripts/                 pnpm demo — prepare the database, then start with the example loaded
+scripts/                 pnpm demo — start with the example loaded, in one boot
 samples/                 CSVs for the platform's standard Import (see above)
 docs/                    getting started and the template-readiness checklist
 docs/product/            positioning, data model, design principles
