@@ -1,7 +1,8 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AppPlugin, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import { AppPlugin, HttpDispatcher, ObjectKernel, createStandaloneStack } from '@objectstack/runtime';
+import type { HttpDispatcherResult, HttpProtocolContext } from '@objectstack/runtime';
 import { createIdentityObjectsPlugin } from '@objectstack/plugin-auth';
 
 import stack from '../objectstack.config.js';
@@ -26,20 +27,28 @@ import {
  *
  * Everything here runs against a REAL booted ObjectQL engine (in-memory
  * driver) with the app's own `objectstack.config.ts` as the bundle. That is
- * not ceremony — it is the only way two of these assertions mean anything:
+ * not ceremony — it is the only way these assertions mean anything:
  *
- *  - **The registration.** An action whose handler is not registered RENDERS,
- *    IS CLICKABLE, and fails at call time; `pnpm validate` passes green. The
- *    suite dispatches through the engine's own `executeAction`, so a missing
- *    or mis-keyed registration surfaces as the same 404 the console would get.
- *  - **The payload.** "Completing sends `{ status: 'done' }` and nothing else,
- *    and the record comes back with `completed_at` set" is a claim about the
- *    hook, the readonly strip and the validation rules acting on the write in
- *    that order. Only the real pipeline can answer it.
+ *  - **The route.** Complete and skip are declarative (`operation: 'update'`,
+ *    #146): no handler, so the only thing that can perform them is the
+ *    platform's own action route. They are driven through
+ *    `HttpDispatcher.handleActions` — the `/actions` domain handler the REST
+ *    route delegates to — which resolves the declaration, enforces
+ *    `requiredPermissions` and the declared params, and performs the write as
+ *    the caller. Nothing here re-implements that dispatch.
+ *  - **The registration.** Undo is still a handler-backed action, and an
+ *    action whose handler is not registered RENDERS, IS CLICKABLE, and fails
+ *    at call time; `pnpm validate` passes green. The suite dispatches it too,
+ *    so a missing or mis-keyed registration surfaces as the console's 404.
+ *  - **The payload.** "Completing writes `{ status: 'done' }` and nothing
+ *    else, and the record comes back with `completed_at` set" is a claim
+ *    about the hook, the readonly strip and the validation rules acting on the
+ *    write in that order. Only the real pipeline can answer it.
  */
 
 let data: any;
 let kernel: any;
+let dispatcher: HttpDispatcher;
 
 beforeAll(async () => {
   const { plugins } = await createStandaloneStack({
@@ -73,6 +82,8 @@ beforeAll(async () => {
   // `registerTaskActionHandlers` missing from `registerDulyActionHandlers` —
   // which is the exact defect it exists to catch.
   registerDulyActionHandlers(data);
+
+  dispatcher = new HttpDispatcher(kernel);
 }, 180_000);
 
 afterAll(async () => {
@@ -149,50 +160,134 @@ async function refusal(promise: Promise<unknown>): Promise<{ code: unknown; stat
   throw new Error('expected the dispatch to be refused, but it resolved');
 }
 
+/** The capability every task action requires (`requiredPermissions`). */
+const UPDATE_STATUS = 'duly.task.update_status';
+
+/** The task owner, holding the capability the `duly_member` set grants. */
+const ALICE: HttpProtocolContext = {
+  request: {},
+  executionContext: { userId: 'user_alice', systemPermissions: [UPDATE_STATUS] },
+};
+
+/** An authenticated caller holding no Duly capability at all. */
+const NO_CAPABILITY: HttpProtocolContext = {
+  request: {},
+  executionContext: { userId: 'user_alice', systemPermissions: [] },
+};
+
+/**
+ * Call an action through the platform's own route — the path the console's
+ * `POST /api/v1/actions/duly_task/<action>/<id>` lands on, with the API prefix
+ * stripped. The response is returned as-is, refusals included.
+ */
+async function act(
+  action: string,
+  recordId?: string,
+  params: Record<string, unknown> = {},
+  as: HttpProtocolContext = ALICE,
+): Promise<NonNullable<HttpDispatcherResult['response']>> {
+  const path = recordId ? `/${TASK_OBJECT}/${action}/${recordId}` : `/${TASK_OBJECT}/${action}`;
+  const result = await dispatcher.handleActions(path, 'POST', { params }, as);
+  return result.response as NonNullable<HttpDispatcherResult['response']>;
+}
+
+/** An action call that must succeed; its `data` is returned. */
+async function ok(action: string, recordId: string, params: Record<string, unknown> = {}): Promise<any> {
+  const response = await act(action, recordId, params);
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
+  expect(response.body?.success).toBe(true);
+  return response.body?.data;
+}
+
+/**
+ * What the console's toast Undo does with the envelope it built: a data-plane
+ * update of `undoData` onto the record, as the caller. Reproduced from
+ * `@objectstack/console` 18.2.0 (`UndoManager` → `dataSource.update(objectName,
+ * recordId, undoData)`), so the suite exercises the write the click makes.
+ */
+async function applyUndo(undo: { objectName: string; recordId: string; undoData: Record<string, unknown> }) {
+  await data.update(undo.objectName, { ...undo.undoData }, {
+    where: { id: undo.recordId },
+    context: { userId: 'user_alice' },
+  });
+}
+
 const declared = (name: string) => dulyActions.find((a: any) => a?.name === name) as any;
 
-// ── The failure mode that reads as success ─────────────────────────────────
-//
-// There is no author-time gate for an unregistered handler. This block IS the
-// gate.
+// ── Two declared forms, and the failure mode that reads as success ─────────
+const DECLARATIVE = [TASK_COMPLETE_ACTION, TASK_SKIP_ACTION] as const;
+const ALL_ACTIONS = [TASK_COMPLETE_ACTION, TASK_UNDO_ACTION, TASK_SKIP_ACTION] as const;
+
 describe('registration', () => {
   it('every task action is declared in the actions barrel, bound to duly_task', () => {
-    for (const name of [TASK_COMPLETE_ACTION, TASK_UNDO_ACTION, TASK_SKIP_ACTION]) {
+    for (const name of ALL_ACTIONS) {
       const action = declared(name);
       expect(action, `${name} must be in dulyActions or it is dead metadata`).toBeDefined();
       expect(action.objectName).toBe(TASK_OBJECT);
-      expect(action.type).toBe('script');
-      // A `script` action with neither `body` nor `target` is refused at
-      // author time. `target` is what the dispatcher resolves the handler by.
-      expect(action.target).toBe(name);
     }
+  });
+
+  it('complete and skip are the declarative field write, with the same patch as the bulk forms', () => {
+    expect(declared(TASK_COMPLETE_ACTION).operation).toBe('update');
+    expect(declared(TASK_COMPLETE_ACTION).patch).toEqual(COMPLETE_PATCH);
+    expect(declared(TASK_SKIP_ACTION).operation).toBe('update');
+    expect(declared(TASK_SKIP_ACTION).patch).toEqual(SKIP_PATCH);
+    for (const name of DECLARATIVE) {
+      const action = declared(name);
+      // `type` stays at its default — the platform action route the write is
+      // performed on — and nothing binds a handler: `target` is refused beside
+      // `operation: 'update'`, because there is no handler for it to name.
+      expect(action.type).toBe('script');
+      expect(action.target, `${name} must not name a handler`).toBeUndefined();
+      expect(action.body).toBeUndefined();
+    }
+  });
+
+  it('undo is still a handler-backed script action', () => {
+    const undo = declared(TASK_UNDO_ACTION);
+    expect(undo.type).toBe('script');
+    expect(undo.operation).toBeUndefined();
+    // A `script` action with neither `body` nor `target` is refused at
+    // author time. `target` is what the dispatcher resolves the handler by.
+    expect(undo.target).toBe(TASK_UNDO_ACTION);
   });
 
   it('reaches duly_task.actions — defineStack merged it onto the object', () => {
     const merged = (data.getSchema(TASK_OBJECT)?.actions ?? []).map((a: any) => a?.name);
-    for (const name of [TASK_COMPLETE_ACTION, TASK_UNDO_ACTION, TASK_SKIP_ACTION]) {
+    for (const name of ALL_ACTIONS) {
       expect(merged, `${name} must reach the object the row renders`).toContain(name);
     }
   });
 
-  it('every declared handler-backed action has a handler registered under duly_task', () => {
+  it('undo has its handler registered under duly_task, and the declarative two have none', () => {
     const registered = data
       .listRegisteredActions()
       .map((r: { objectName: string; actionName: string }) => `${r.objectName}:${r.actionName}`);
 
-    for (const name of [TASK_COMPLETE_ACTION, TASK_UNDO_ACTION, TASK_SKIP_ACTION]) {
-      // `executeAction` is an exact-string map lookup on `<object>:<name>`, so
-      // a handler filed under `global` is unreachable from a task row even
-      // though it registered without error.
-      expect(registered, `${name} renders and 404s without this`).toContain(`${TASK_OBJECT}:${name}`);
+    // `executeAction` is an exact-string map lookup on `<object>:<name>`, so
+    // a handler filed under `global` is unreachable from a task row even
+    // though it registered without error.
+    expect(registered, `${TASK_UNDO_ACTION} renders and 404s without this`).toContain(`${TASK_OBJECT}:${TASK_UNDO_ACTION}`);
+    // The route dispatches on `operation` BEFORE any handler lookup, so a
+    // handler registered beside a declarative action is dead code that
+    // type-checks and never runs.
+    for (const name of DECLARATIVE) {
+      expect(registered, `${name} is declarative; a handler for it would never run`).not.toContain(`${TASK_OBJECT}:${name}`);
     }
   });
 
-  it('dispatches for real — the wiring end to end, not just the registry', async () => {
+  it('dispatches for real — every action, end to end through the route', async () => {
     const task = await newTask();
-    const result: any = await dispatch(TASK_COMPLETE_ACTION, { recordId: task.id });
-    expect(result?.action).toBe(TASK_COMPLETE_ACTION);
-    expect(result?.task).toBe(task.id);
+    const completed = await ok(TASK_COMPLETE_ACTION, task.id);
+    expect(completed.operation).toBe('update');
+    expect(completed.id).toBe(task.id);
+
+    const undone = await ok(TASK_UNDO_ACTION, task.id);
+    expect(undone.action).toBe(TASK_UNDO_ACTION);
+    expect(undone.task).toBe(task.id);
+
+    const skipped = await ok(TASK_SKIP_ACTION, task.id, { skip_reason: 'Plant down' });
+    expect(skipped.operation).toBe('update');
   });
 
   it('an unregistered action name is refused the way a missing handler would be', async () => {
@@ -218,7 +313,7 @@ describe('predicates', () => {
   };
 
   it('every action predicate is CEL and record.-qualified', () => {
-    for (const name of [TASK_COMPLETE_ACTION, TASK_UNDO_ACTION, TASK_SKIP_ACTION]) {
+    for (const name of ALL_ACTIONS) {
       const visible = declared(name)?.visible;
       expect(visible?.dialect, `${name}.visible must be CEL`).toBe('cel');
       scan(String(visible?.source ?? ''), `${name}.visible`);
@@ -233,8 +328,9 @@ describe('predicates', () => {
   });
 
   it('complete and skip are offered on exactly the actionable statuses', () => {
-    // Not a re-spelling of the source: this drives the same vocabulary the
-    // handlers enforce, so a status added to one and not the other is caught.
+    // Not a re-spelling of the source: this drives the vocabulary
+    // `ACTIONABLE_STATUSES` names, so a status added to one and not the other
+    // is caught.
     for (const name of [TASK_COMPLETE_ACTION, TASK_SKIP_ACTION]) {
       const source = String(declared(name)?.visible?.source ?? '');
       for (const status of ACTIONABLE_STATUSES) expect(source).toContain(`"${status}"`);
@@ -273,7 +369,7 @@ describe('payload', () => {
         expect(Object.keys(payload), `${where} must not write ${key}`).not.toContain(key);
       }
     }
-    for (const name of [TASK_COMPLETE_ACTION, TASK_UNDO_ACTION, TASK_SKIP_ACTION]) {
+    for (const name of ALL_ACTIONS) {
       const params = (declared(name)?.params ?? []) as Array<{ name?: string; field?: string }>;
       for (const p of params) {
         expect(SERVER_OWNED, `${name} must not collect a server-owned field`).not.toContain(p.name ?? p.field ?? '');
@@ -290,7 +386,7 @@ describe('payload', () => {
       expect(action.confirmText, `${name} must not confirm — undo is the confirmation`).toBeUndefined();
       expect(action.params ?? [], `${name} must not collect anything`).toHaveLength(0);
     }
-    const everyParam = [TASK_COMPLETE_ACTION, TASK_UNDO_ACTION, TASK_SKIP_ACTION]
+    const everyParam = ALL_ACTIONS
       .flatMap((n) => (declared(n)?.params ?? []) as Array<{ name?: string; type?: string }>);
     for (const p of everyParam) {
       expect(p.type, 'no action may demand an attachment to close a task').not.toBe('file');
@@ -298,15 +394,16 @@ describe('payload', () => {
     }
   });
 
-  it('the one-click reversal is the undo row action, on exactly the rows complete produces', () => {
-    // `undoable` — the success toast's Undo — is captured on two action shapes
-    // only, `operation: 'update'` and `type: 'api'`. On this `script` action it
-    // never produced a toast, and @objectstack/spec 17.5 refuses the flag
-    // there ("has no runtime that can fulfil it"). So the reversal that makes a
-    // no-confirmation tick defensible is `duly_task_undo`, and what is pinned
-    // here is that it stays one click away: a row action, shown on every row a
-    // tick leaves behind.
-    expect(declared(TASK_COMPLETE_ACTION)?.undoable).toBeUndefined();
+  it('complete and skip offer the toast Undo; the undo row action stays one click away', () => {
+    // `undoable` is fulfilled on two shapes only, `operation: 'update'` and
+    // `type: 'api'` — so it became possible on these two when they became
+    // declarative (#146), and it is what puts Undo on the success toast.
+    for (const name of DECLARATIVE) {
+      expect(declared(name).undoable, `${name} must offer Undo on its toast`).toBe(true);
+    }
+    // The toast lasts as long as the toast. The reversal that makes a
+    // no-confirmation tick defensible tomorrow, and on the record page, is
+    // still the row action, shown on every row a tick leaves behind.
     const undo = declared(TASK_UNDO_ACTION);
     expect(undo.locations).toEqual(declared(TASK_COMPLETE_ACTION).locations);
     expect(undo.confirmText).toBeUndefined();
@@ -318,50 +415,119 @@ describe('payload', () => {
 describe('complete', () => {
   it('sets status done and the record comes back with completed_at', async () => {
     const task = await newTask();
-    await dispatch(TASK_COMPLETE_ACTION, { recordId: task.id });
+    await ok(TASK_COMPLETE_ACTION, task.id);
 
     const row = await read(task.id);
     expect(row.status).toBe('done');
     expect(row.completed_at, 'the hook stamps it; the validation rule refuses the write without it').toBeTruthy();
+    expect(row.completed_late, 'no due date, so nothing to be late against').toBe(false);
     expect(row.last_update_at).toBeTruthy();
+  });
+
+  it('stamps the late verdict on a task completed after its grace ran out', async () => {
+    // `completed_late` is read off the row's own `late_after`, so this is the
+    // hook running on THIS write, not a default.
+    const task = await newTask({ due_date: '2020-01-01' });
+    await ok(TASK_COMPLETE_ACTION, task.id);
+
+    const row = await read(task.id);
+    expect(row.late_after).toBe('2020-01-01');
+    expect(row.completed_late).toBe(true);
+  });
+
+  it('is written as the caller, not as the system', async () => {
+    // The declarative write is a data-plane update under the caller's own
+    // execution context. A handler's `ctx.engine` would have written it
+    // system-elevated; the audit column says which one ran.
+    const task = await newTask();
+    await ok(TASK_COMPLETE_ACTION, task.id);
+    expect((await read(task.id)).updated_by).toBe('user_alice');
   });
 
   it('works from in_progress as well as open', async () => {
     const task = await newTask({ status: 'in_progress' });
-    await dispatch(TASK_COMPLETE_ACTION, { recordId: task.id });
+    await ok(TASK_COMPLETE_ACTION, task.id);
     expect((await read(task.id)).status).toBe('done');
   });
 
-  it('is refused on a task that is already done', async () => {
+  it('never re-stamps a task that is already done', async () => {
+    // The handler used to refuse this with a 409. The declarative write has no
+    // status precondition, and the history survives anyway: done → done is
+    // not a transition, and the hook stamps only transitions.
     const task = await newTask();
-    await dispatch(TASK_COMPLETE_ACTION, { recordId: task.id });
+    await ok(TASK_COMPLETE_ACTION, task.id);
     const before = await read(task.id);
     await tick();
 
-    const { code, status } = await refusal(dispatch(TASK_COMPLETE_ACTION, { recordId: task.id }));
-    expect(code).toBe('DULY_TASK_WRONG_STATUS');
-    expect(status).toBe(409);
-
-    // And the refusal is not merely a message: the original completion instant
-    // survives it. Re-stamping would silently move the record's history.
-    expect((await read(task.id)).completed_at).toBe(before.completed_at);
-  });
-
-  it('is refused on a cancelled task', async () => {
-    const task = await newTask({ status: 'cancelled' });
-    const { code, status } = await refusal(dispatch(TASK_COMPLETE_ACTION, { recordId: task.id }));
-    expect(code).toBe('DULY_TASK_WRONG_STATUS');
-    expect(status).toBe(409);
+    await ok(TASK_COMPLETE_ACTION, task.id);
+    const after = await read(task.id);
+    expect(after.completed_at, 'the original completion instant').toBe(before.completed_at);
+    expect(after.completed_late).toBe(before.completed_late);
   });
 });
 
-describe('undo', () => {
-  it('returns the record to in_progress with completed_at null', async () => {
+describe('the status precondition the handler had, and the route does not (#162)', () => {
+  it('completing a CANCELLED task through the API is accepted today', async () => {
+    // ⚠️ Pins today's behaviour so #162 flips it red on purpose. The handler
+    // answered 409 DULY_TASK_WRONG_STATUS here; the declarative write has no
+    // status precondition, and neither does the data plane the same caller
+    // could already PATCH (member `allowEdit`, `writeScope: 'own'`, no field
+    // block), so the 409 guarded one door of several. The button stays hidden
+    // by `visible`. The declared rule belongs on the object, where every door
+    // passes — a `state_machine` validation on `duly_task.status`, card #162.
+    const task = await newTask({ status: 'cancelled' });
+    await ok(TASK_COMPLETE_ACTION, task.id);
+    expect((await read(task.id)).status).toBe('done');
+  });
+});
+
+describe('toast undo', () => {
+  it('the route answers with the undo envelope for exactly the field complete wrote', async () => {
     const task = await newTask();
-    await dispatch(TASK_COMPLETE_ACTION, { recordId: task.id });
+    const result = await ok(TASK_COMPLETE_ACTION, task.id);
+    expect(result.undo).toMatchObject({
+      type: 'update',
+      objectName: TASK_OBJECT,
+      recordId: task.id,
+      undoData: { status: 'open' },
+      redoData: { status: 'done' },
+    });
+  });
+
+  it('applying it reopens the task, and the hook clears completed_at with it', async () => {
+    const task = await newTask();
+    const { undo } = await ok(TASK_COMPLETE_ACTION, task.id);
     expect((await read(task.id)).completed_at).toBeTruthy();
 
-    await dispatch(TASK_UNDO_ACTION, { recordId: task.id });
+    await applyUndo(undo);
+
+    const row = await read(task.id);
+    expect(row.status, 'back to where it was, not to in_progress').toBe('open');
+    expect(row.completed_at ?? null).toBeNull();
+    expect(row.completed_late ?? null).toBeNull();
+  });
+
+  it('a skip is undone with its reason, so a reopened task carries no stray reason', async () => {
+    const task = await newTask({ status: 'in_progress' });
+    const { undo } = await ok(TASK_SKIP_ACTION, task.id, { skip_reason: 'Plant down' });
+    // `patch` merges UNDER the params, and the capture covers the whole bag.
+    expect(undo.undoData).toEqual({ status: 'in_progress', skip_reason: null });
+
+    await applyUndo(undo);
+
+    const row = await read(task.id);
+    expect(row.status).toBe('in_progress');
+    expect(row.skip_reason ?? null).toBeNull();
+  });
+});
+
+describe('undo (the row action)', () => {
+  it('returns the record to in_progress with completed_at null', async () => {
+    const task = await newTask();
+    await ok(TASK_COMPLETE_ACTION, task.id);
+    expect((await read(task.id)).completed_at).toBeTruthy();
+
+    await ok(TASK_UNDO_ACTION, task.id);
 
     const row = await read(task.id);
     expect(row.status).toBe('in_progress');
@@ -377,11 +543,11 @@ describe('undo', () => {
 
   it('a completion can be taken back and retaken', async () => {
     const task = await newTask();
-    await dispatch(TASK_COMPLETE_ACTION, { recordId: task.id });
+    await ok(TASK_COMPLETE_ACTION, task.id);
     const first = (await read(task.id)).completed_at;
-    await dispatch(TASK_UNDO_ACTION, { recordId: task.id });
+    await ok(TASK_UNDO_ACTION, task.id);
     await tick();
-    await dispatch(TASK_COMPLETE_ACTION, { recordId: task.id });
+    await ok(TASK_COMPLETE_ACTION, task.id);
 
     const row = await read(task.id);
     expect(row.status).toBe('done');
@@ -392,10 +558,7 @@ describe('undo', () => {
 describe('skip', () => {
   it('records the reason and leaves completed_at unset', async () => {
     const task = await newTask();
-    await dispatch(TASK_SKIP_ACTION, {
-      recordId: task.id,
-      params: { skip_reason: 'The plant was down — there was nothing to return' },
-    });
+    await ok(TASK_SKIP_ACTION, task.id, { skip_reason: 'The plant was down — there was nothing to return' });
 
     const row = await read(task.id);
     expect(row.status).toBe('skipped');
@@ -404,24 +567,28 @@ describe('skip', () => {
     expect(row.last_update_at, 'recording a skip is progress on the task').toBeTruthy();
   });
 
-  it('without a reason is refused, and nothing is written', async () => {
+  it('without a reason is refused by the route, and nothing is written', async () => {
+    // The param is `required: true`, and the route enforces the declared
+    // params before the write — the same answer the dialog gives.
     const task = await newTask();
-    const { code, status } = await refusal(dispatch(TASK_SKIP_ACTION, { recordId: task.id }));
-    expect(code).toBe('DULY_TASK_SKIP_NEEDS_REASON');
-    expect(status).toBe(400);
+    const response = await act(TASK_SKIP_ACTION, task.id);
+    expect(response.status).toBe(400);
+    expect(response.body?.error?.code).toBe('VALIDATION_ERROR');
     expect((await read(task.id)).status, 'the refusal must not be a partial write').toBe('open');
   });
 
   it('with a blank reason is refused too', async () => {
     const task = await newTask();
-    const { code } = await refusal(dispatch(TASK_SKIP_ACTION, { recordId: task.id, params: { skip_reason: '   ' } }));
-    expect(code).toBe('DULY_TASK_SKIP_NEEDS_REASON');
+    const response = await act(TASK_SKIP_ACTION, task.id, { skip_reason: '   ' });
+    expect(response.status).toBe(400);
+    expect(response.body?.error?.code).toBe('VALIDATION_ERROR');
+    expect((await read(task.id)).status).toBe('open');
   });
 
   it("the OBJECT's rule is the authority — a direct write with no reason is refused by it", async () => {
-    // The handler's early refusal is a courtesy for the programmatic caller.
-    // This asserts the rule that actually decides, with its own message, so
-    // the two cannot drift into one guard doing all the work.
+    // The route's param check is a courtesy for the caller. This asserts the
+    // rule that actually decides, with its own message, so the two cannot
+    // drift into one guard doing all the work.
     const task = await newTask();
     let caught: any;
     try {
@@ -446,37 +613,63 @@ describe('skip', () => {
   });
 });
 
-// ── Availability: the button is a hide, the handler is the gate ────────────
+// ── Authorization: the button is a hide, the route is the gate ──────────────
 describe('authorization', () => {
-  it('refuses when the subject did not load under the caller scope', async () => {
+  it('all three actions refuse a caller without the capability, and write nothing', async () => {
+    // [ADR-0066 D4] `requiredPermissions` is checked by the route ahead of
+    // BOTH forms — before the declarative branch and before a handler — so
+    // moving complete and skip changed nothing here.
+    for (const name of ALL_ACTIONS) {
+      const task = await newTask();
+      const params = name === TASK_SKIP_ACTION ? { skip_reason: 'x' } : {};
+      const response = await act(name, task.id, params, NO_CAPABILITY);
+      expect(response.status, `${name} must refuse`).toBe(403);
+      expect(response.body?.error?.code).toBe('PERMISSION_DENIED');
+      expect(response.body?.error?.message).toContain(UPDATE_STATUS);
+      expect((await read(task.id)).status, `${name} wrote on a refusal`).toBe('open');
+    }
+  });
+
+  it('the declarative two refuse an unknown record, and a call with no record', async () => {
+    for (const name of DECLARATIVE) {
+      // Each with the params it declares: the route refuses an undeclared
+      // param before it ever looks for the record.
+      const params = name === TASK_SKIP_ACTION ? { skip_reason: 'x' } : {};
+      const unknown = await act(name, 'duly_task-nope', params);
+      expect(unknown.status, `${name} on a missing row`).toBe(404);
+      expect(unknown.body?.error?.code).toBe('RECORD_NOT_FOUND');
+
+      const none = await act(name, undefined, params);
+      expect(none.status, `${name} with no subject`).toBe(400);
+      expect(none.body?.error?.message).toContain('recordId');
+    }
+  });
+
+  // The handler's own re-check — undo writes through the elevated facade, so
+  // it reads its subject under the caller's scope first. See task.handlers.ts.
+  it('undo refuses when the subject did not load under the caller scope', async () => {
     const task = await newTask();
+    await ok(TASK_COMPLETE_ACTION, task.id);
     // The dispatcher stamps `record.id` on even when the read returned
     // nothing, so an id alone proves nothing about read access.
     const { code, status } = await refusal(
-      dispatch(TASK_COMPLETE_ACTION, { recordId: task.id, subject: 'unreadable' }),
+      dispatch(TASK_UNDO_ACTION, { recordId: task.id, subject: 'unreadable' }),
     );
     expect(code).toBe('DULY_TASK_NOT_AVAILABLE');
     expect(status).toBe(404);
-    expect((await read(task.id)).status, 'nothing may be written on a refusal').toBe('open');
+    expect((await read(task.id)).status, 'nothing may be written on a refusal').toBe('done');
   });
 
-  it('refuses a dispatch with no subject at all', async () => {
-    const { code, status } = await refusal(dispatch(TASK_COMPLETE_ACTION, {}));
+  it('undo refuses a dispatch with no subject at all', async () => {
+    const { code, status } = await refusal(dispatch(TASK_UNDO_ACTION, {}));
     expect(code).toBe('DULY_TASK_NO_SUBJECT');
     expect(status).toBe(400);
   });
 
-  it('refuses an unknown record id', async () => {
-    const { code, status } = await refusal(dispatch(TASK_COMPLETE_ACTION, { recordId: 'duly_task-nope' }));
+  it('undo refuses an unknown record id', async () => {
+    const { code, status } = await refusal(dispatch(TASK_UNDO_ACTION, { recordId: 'duly_task-nope' }));
     expect(code).toBe('DULY_TASK_NOT_AVAILABLE');
     expect(status).toBe(404);
-  });
-
-  it('all three actions are gated, not just complete', async () => {
-    for (const name of [TASK_COMPLETE_ACTION, TASK_UNDO_ACTION, TASK_SKIP_ACTION]) {
-      const { code } = await refusal(dispatch(name, { recordId: 'duly_task-nope' }));
-      expect(code, `${name} must refuse an unreadable subject`).toBe('DULY_TASK_NOT_AVAILABLE');
-    }
   });
 });
 
@@ -562,7 +755,7 @@ describe('bulk', () => {
     // goes near a view predicate.
     const open = (await newTask({ subject: 'still open' })).id;
     const alreadyDone = (await newTask({ subject: 'done last week' })).id;
-    await dispatch(TASK_COMPLETE_ACTION, { recordId: alreadyDone });
+    await ok(TASK_COMPLETE_ACTION, alreadyDone);
     const original = (await read(alreadyDone)).completed_at;
     await tick();
 

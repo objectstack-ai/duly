@@ -5,51 +5,46 @@ import type { ActionHandler, ActionHandlerContext } from '@objectstack/spec/ui';
 import type { HandlerRegistrationContext } from './register-handlers.js';
 
 /**
- * Runtime handlers for the three task-lifecycle row actions.
+ * The task-lifecycle row actions' shared vocabulary, and the ONE handler left.
  *
- * ── Why these are hand-written and the BULK forms are not ─────────────────
- * The bulk forms of complete and skip are pure metadata: the list views
- * declare them as `bulkActionDefs` with `operation: 'update'` and a static
- * `patch`, which is the platform's DECLARATIVE "set these fields on every
- * selected record" — no handler, no code, and the write runs under the
- * caller's own permissions. See `src/views/task.view.ts`.
+ * ── Two of the three actions have no handler, and that is the point ───────
+ * `duly_task_complete` and `duly_task_skip` are declarative: `operation:
+ * 'update'` + a static `patch` (objectstack#14092), performed by the platform
+ * on its own action route, as the caller. This file still owns their payloads
+ * ({@link COMPLETE_PATCH}, {@link SKIP_PATCH}) so the row actions, the bulk
+ * `patch`es in `src/views/task.view.ts` and the tests are one declaration. The
+ * header of `task.actions.ts` carries what the declarative form guarantees and
+ * what it changed.
  *
- * There is no row-level equivalent. `ActionType` is
- * `url | form | flow | script | api | modal` — no `update_record`, no action
- * `effect`. The two near-misses and why neither is the declarative form:
+ * This header used to say no row-level declarative field write existed, and
+ * argue from that. It was true through 17.x; it stopped being true when
+ * objectstack#14092 closed and the runtime half landed. ⛔ Do not reintroduce a
+ * handler for complete or skip: an action with `operation: 'update'` is routed
+ * by `operation` BEFORE any handler lookup (`@objectstack/runtime` 18.2.0
+ * `handleActionsRequest` / `invokeBusinessAction`), so a handler registered
+ * beside it is dead code that type-checks and never runs.
  *
- *  - `type: 'api'` + `method: 'PATCH'` + `bodyExtra: { status: 'done' }` is a
- *    declarative HTTP CALL, not a declarative field write. The author
- *    hand-writes the platform's own data-API path into application metadata
- *    (`/api/v1/data/<object>/<id>` — `basePath` `/api` + version `v1` +
- *    `crud.dataPrefix` `/data`, measured in @objectstack/rest 17.2.0). Nothing
- *    binds that string to `objectName`, nothing checks it at author time, and
- *    it is wrong in the spec's own worked example, which omits the `/data`
- *    segment the shipped router requires. A metadata app pinning the
- *    platform's transport route is precisely the contract-first violation the
- *    repo forbids, and for AI-authored metadata it is the worst available
- *    shape: it parses green and 404s at the click.
- *  - `type: 'flow'` + a flow carrying an `update_record` node is declarative,
- *    but it is three flows to assign one string, on the one surface this repo
- *    already knows `pnpm validate` does not fully check (objectstack#14089).
- *
- * Filed upstream as the fourth platform gap of this round; named in the PR.
+ * ── Why undo is still a handler ───────────────────────────────────────────
+ * It could be declarative too (`patch: { status: 'in_progress' }`). It is left
+ * as it was because #146 moved the two actions whose toast Undo was missing,
+ * and the reversal is the one action whose behaviour nobody asked to change.
+ * Moving it is a one-line follow-up with the same tests.
  *
  * ── The trap with no author-time gate ─────────────────────────────────────
- * An action whose handler is not registered RENDERS, IS CLICKABLE, and fails
- * at call time with `Action '<name>' on object 'duly_task' not found` (404
- * from the dispatcher). `pnpm validate` cannot see it. `test/task-actions.test.ts`
- * asserts the wiring against a real booted engine, because that assertion is
- * the only gate that exists.
+ * A HANDLER-backed action whose handler is not registered RENDERS, IS
+ * CLICKABLE, and fails at call time with `Action '<name>' on object
+ * 'duly_task' not found` (404 from the dispatcher). `pnpm validate` cannot see
+ * it. `test/task-actions.test.ts` asserts the wiring against a real booted
+ * engine, because that assertion is the only gate that exists.
  *
- * ── Why each handler re-checks what the button already gated ──────────────
+ * ── Why the handler re-checks what the button already gated ──────────────
  * `ctx.engine` is TRUSTED — system-elevated and RLS/FLS-bypassing by design
  * (`buildActionExecutionContext` stamps `isSystem: true` onto the caller's
  * context, and both dispatch surfaces log the write as such). An action's
  * `visible` predicate is a UI hide, not authorization: "the button is gone,
  * the route is not". So a handler that took `ctx.params.recordId` on trust
- * would let any caller who can reach the action route complete anybody's
- * task, on an object whose `sharingModel` is `private`.
+ * would let any caller who can reach the action route reopen anybody's task,
+ * on an object whose `sharingModel` is `private`.
  *
  * The subject is therefore read from {@link readSubject}, which refuses
  * unless `ctx.record` came back carrying a real field. That is sound because
@@ -60,9 +55,8 @@ import type { HandlerRegistrationContext } from './register-handlers.js';
  * (declared `required: true`, so every stored row has one) is what actually
  * distinguishes "loaded" from "refused or missing".
  *
- * This authorization re-check, not the one-line write, is the real cost of
- * having no declarative row-action field set — and it is the part of the
- * upstream report that matters.
+ * That re-check is a READ check, and it is the cost of a handler: the
+ * declarative actions get the caller's WRITE scope from the platform instead.
  */
 
 /** The object these actions are registered and dispatched under. */
@@ -93,11 +87,18 @@ export const UNDO_PATCH = { status: 'in_progress' } as const;
 export const SKIP_PATCH = { status: 'skipped' } as const;
 
 /**
- * The statuses a task can be completed or skipped FROM.
+ * The statuses a task can be completed or skipped FROM — the vocabulary of the
+ * two actions' `visible` predicates, pinned against them by the tests.
  *
  * `cancelled` is absent deliberately: a cancelled task is one the org stopped
  * asking for, and re-completing it would put it back into on-time rates that
  * had correctly forgotten it.
+ *
+ * ⚠️ Since #146 this is offered-from, not enforced-from. The declarative write
+ * has no server-side status precondition, and neither does the data plane the
+ * same caller can already PATCH. Enforcing a transition rule belongs on the
+ * object, where every door passes (a `state_machine` validation on
+ * `duly_task.status`, card #162), not back in a handler that guards one door.
  */
 export const ACTIONABLE_STATUSES: readonly string[] = ['open', 'in_progress'];
 
@@ -108,7 +109,6 @@ export const UNDOABLE_STATUSES: readonly string[] = ['done'];
 
 export interface TaskActionParams extends Record<string, unknown> {
   recordId?: unknown;
-  skip_reason?: unknown;
 }
 
 export interface TaskActionResult {
@@ -190,31 +190,6 @@ function requireStatusIn(
   );
 }
 
-// ── duly_task_complete ──────────────────────────────────────────────────────
-
-/**
- * Tick the task. No modal, no confirmation, no note, no percentage.
- *
- * The ceremony budget for this interaction is one click, and undo is what buys
- * it: an accidental tick costs one click to reverse. A five-second tick that
- * becomes a five-minute chore is how the list stops being maintained, and
- * every metric downstream then reports on a dataset nobody keeps.
- */
-export const completeTaskHandler: ActionHandler<TaskActionParams> = async (ctx) => {
-  const subject = readSubject(ctx, TASK_COMPLETE_ACTION);
-  requireStatusIn(subject, ACTIONABLE_STATUSES, TASK_COMPLETE_ACTION);
-
-  await ctx.engine.update(TASK_OBJECT, subject.id, { ...COMPLETE_PATCH });
-
-  const result: TaskActionResult = {
-    action: TASK_COMPLETE_ACTION,
-    task: subject.id,
-    status: COMPLETE_PATCH.status,
-    from: subject.status,
-  };
-  return result;
-};
-
 // ── duly_task_undo ──────────────────────────────────────────────────────────
 
 /**
@@ -239,56 +214,17 @@ export const undoTaskHandler: ActionHandler<TaskActionParams> = async (ctx) => {
   return result;
 };
 
-// ── duly_task_skip ──────────────────────────────────────────────────────────
-
-/**
- * Record that the task legitimately did not happen — "the plant was down,
- * there was nothing to return".
- *
- * This is the ONE place a modal is correct, because `skip_needs_reason` will
- * reject the write without a reason. Forcing that answer to be recorded as
- * `done` or left `open` corrupts the data either way.
- *
- * The reason is NOT re-validated here beyond emptiness. The object's rule is
- * the authority and it runs on the write; a second, subtly different check in
- * this handler would be a rule that can drift from the one that actually
- * decides. What this does is refuse a BLANK reason early, with the same
- * outcome the rule would produce, so a programmatic caller that bypassed the
- * param dialog gets the same answer as the button.
- */
-export const skipTaskHandler: ActionHandler<TaskActionParams> = async (ctx) => {
-  const subject = readSubject(ctx, TASK_SKIP_ACTION);
-  requireStatusIn(subject, ACTIONABLE_STATUSES, TASK_SKIP_ACTION);
-
-  const reason = text(ctx.params?.skip_reason).trim();
-  if (!reason) {
-    throw refuse('Say why the task was skipped.', 'DULY_TASK_SKIP_NEEDS_REASON', 400);
-  }
-
-  await ctx.engine.update(TASK_OBJECT, subject.id, { ...SKIP_PATCH, skip_reason: reason });
-
-  const result: TaskActionResult = {
-    action: TASK_SKIP_ACTION,
-    task: subject.id,
-    status: SKIP_PATCH.status,
-    from: subject.status,
-  };
-  return result;
-};
-
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
 /**
- * Register the three task handlers on the engine.
+ * Register the task handler on the engine — undo, the one with a handler.
  *
  * Called from `registerDulyActionHandlers` in `register-handlers.ts`, which
- * `objectstack.config.ts` invokes from `onEnable`. All three register under
- * {@link TASK_OBJECT} — the actions declare `objectName: 'duly_task'`, and
+ * `objectstack.config.ts` invokes from `onEnable`. It registers under
+ * {@link TASK_OBJECT} — the action declares `objectName: 'duly_task'`, and
  * `executeAction` is an exact-string map lookup on `<object>:<name>`, so a
  * handler filed under `global` would be unreachable from a task row.
  */
 export function registerTaskActionHandlers(ql: HandlerRegistrationContext): void {
-  ql.registerAction(TASK_OBJECT, TASK_COMPLETE_ACTION, completeTaskHandler);
   ql.registerAction(TASK_OBJECT, TASK_UNDO_ACTION, undoTaskHandler);
-  ql.registerAction(TASK_OBJECT, TASK_SKIP_ACTION, skipTaskHandler);
 }
