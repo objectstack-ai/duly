@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { SysUserDetailPage } from '@objectstack/platform-objects';
+import { defaultRecordPageObject } from '@objectstack/spec/ui';
+
+import stack from '../objectstack.config.js';
+import { MemberOpenAction, dulyActions } from '../src/actions/index.js';
 import { MemberPage } from '../src/pages/member.page.js';
 import { dulyPages } from '../src/pages/index.js';
 import { dulyApps } from '../src/apps/index.js';
@@ -88,11 +93,11 @@ describe('duly_member — wiring', () => {
 
   it('does not claim to be the default page for sys_user', () => {
     // `@objectstack/platform-objects` ships `sys_user_detail` with
-    // `isDefault: true` for this same object, and `usePageAssignment` breaks
-    // the tie on a `priority` key `PageSchema` does not declare — so an author
-    // cannot write the tiebreaker the renderer reads. Two pages both claiming
-    // the default would make the flag a lie on whichever one loses; this one
-    // does not claim it. See the page's gap §5.
+    // `isDefault: true` for this same object. From 18 on, a second default
+    // record page for one object is REFUSED at registration
+    // (`DEFAULT_RECORD_PAGE_CONFLICT`, ruling A on objectstack#23015), so
+    // `true` here would not win the tie — it would stop the boot. See the
+    // page's gap §5 and the resolution pins below.
     expect(page.isDefault).toBe(false);
   });
 
@@ -128,6 +133,89 @@ describe('duly_member — wiring', () => {
     expect(components.filter((component) => typeof component.id !== 'string')).toEqual([]);
     const ids = components.map((component) => component.id);
     expect(new Set(ids).size, 'two components share an id').toBe(ids.length);
+  });
+});
+
+// ─── Which page opening a person lands on (#113) ─────────────────────────
+
+/**
+ * The console's record-page choice, copied from `@objectstack/console` 18.2.0
+ * (`usePageAssignment`, framework chunk) and measured live on `pnpm demo`:
+ *
+ *     candidates.find((p) => defaultRecordPageObject(p) === object) ?? candidates[0]
+ *
+ * where `candidates` are the served record pages bound to `object`, in
+ * `/api/v1/meta/page` order. The `isDefault` page wins; list order only breaks
+ * the case where no page claims the default.
+ *
+ * This is a COPY of a rule that lives in the console bundle, and a copy cannot
+ * see the console change. What it can see is the two inputs that are on disk:
+ * our page's `isDefault` and plugin-auth's. Re-measure the rule in the browser
+ * after every platform upgrade (open one person from People) and update this
+ * copy with what you find. 17.2 resolved by list order alone, which is why the
+ * original card asked for a "first in the list" pin; on 18.2 that pin would
+ * pass while the member page was unreachable.
+ */
+const resolveRecordPage = (pages: readonly unknown[], object: string): string | undefined => {
+  const candidates = (pages as Rec[]).filter(
+    (candidate) => (candidate.type ?? 'record') === 'record' && candidate.object === object,
+  );
+  const chosen = candidates.find((candidate) => defaultRecordPageObject(candidate) === object) ?? candidates[0];
+  return chosen?.name as string | undefined;
+};
+
+describe('duly_member — what opening a person resolves to (#113)', () => {
+  // Served order, as measured: the app's pages ahead of plugin-auth's.
+  const served = [...(dulyPages as unknown[]), SysUserDetailPage];
+
+  it('plugin-auth still ships its own default record page for sys_user', () => {
+    // The input that decides the outcome. If this flips, re-measure: the member
+    // page may be reachable by the plain record route again.
+    expect(defaultRecordPageObject(SysUserDetailPage)).toBe('sys_user');
+  });
+
+  it('on 18.2 a person opens sys_user_detail, NOT duly_member', () => {
+    // The regression this card found, stated rather than hidden. duly_member is
+    // first in the served list and still loses: no key on PageSchema lets an
+    // app outrank another package's default (gap §5).
+    expect(resolveRecordPage(served, 'sys_user')).toBe('sys_user_detail');
+  });
+
+  it('control: without the platform default, the same rule picks duly_member', () => {
+    // So the pin above is measuring plugin-auth's default, not a rule that
+    // could never pick our page.
+    expect(resolveRecordPage(dulyPages as unknown[], 'sys_user')).toBe('duly_member');
+  });
+});
+
+describe('duly_member — the stopgap that reaches it (objectstack#28979)', () => {
+  const action = MemberOpenAction as unknown as Rec;
+
+  it('is in the actions barrel, bound to sys_user', () => {
+    // Missing from the barrel it type-checks and never renders: the member
+    // page would be unreachable again with nothing red.
+    expect(dulyActions as unknown[]).toContain(MemberOpenAction);
+    expect(action.objectName).toBe('sys_user');
+  });
+
+  it('navigates to the explicit page route for the person in context', () => {
+    // The route the console serves a named record page on, measured on 18.2:
+    // /apps/<app route segment>/<object>/record/<id>/page/<page>. The segment
+    // is the package id; a rename of the page or the package must move this.
+    const appSegment = (stack as unknown as { manifest: { id: string } }).manifest.id;
+    expect(action.type).toBe('url');
+    expect(action.target).toBe(
+      `/apps/${appSegment}/sys_user/record/\${ctx.recordId}/page/${MemberPage.name}`,
+    );
+    // In place, not a new tab: an in-app path's default when `openIn` is unset.
+    expect(action.openIn).toBeUndefined();
+  });
+
+  it('is offered on the person record, and not on the People row', () => {
+    // 18.2 runs a row `url` action with no record in context, so the row
+    // version opens a broken route (see member.actions.ts). Adding
+    // `list_item` back needs a browser re-measure first, not just this line.
+    expect(action.locations).toEqual(['record_header']);
   });
 });
 

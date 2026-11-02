@@ -75,8 +75,9 @@ import { definePage } from '@objectstack/spec/ui';
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Each of these was measured against the installed 17.2.0 packages before it
- * was written down, and each is FILED at `objectstack-ai/objectui` rather than
- * faked here. What the page does INSTEAD is named in each entry, and every
+ * was written down, and each is FILED upstream rather than faked here: at
+ * `objectstack-ai/objectui`, except §5, which was re-measured on 18.2.0 and is
+ * filed at `objectstack-ai/objectstack`. What the page does INSTEAD is named in each entry, and every
  * entry carries its issue number — a gap with no number is a workaround
  * wearing a comment (AGENTS.md rule 9).
  *
@@ -146,18 +147,30 @@ import { definePage } from '@objectstack/spec/ui';
  *     error, and "showing who assigned each" is the one line of this card that
  *     is not fully delivered. Recorded on the issue and filed upstream.
  *
- * **§5 — Two record pages for one object resolve by declaration order**
- * (objectui#7298).
+ * **§5 — Opening a person does NOT land here; plugin-auth's default wins**
+ * (objectstack#28979; on 17.2 it was objectui#7298).
  * `@objectstack/platform-objects` ships `sys_user_detail`
- * (`type: 'record'`, `object: 'sys_user'`, `isDefault: true`), and
- * `usePageAssignment` picks among candidates by `(b.priority ?? 0) -
- * (a.priority ?? 0)` — but `priority` is not a key `PageSchema` declares, so an
- * author cannot write the tiebreaker the renderer reads. With both pages at 0
- * the winner is metadata load order.
- *   → INSTEAD: nothing, because there is nothing authorable. `isDefault` is
- *     left `false` here so this page never claims to be the default while the
- *     platform's page claims the same thing, and the observed resolution on
- *     this checkout is recorded in the PR.
+ * (`type: 'record'`, `object: 'sys_user'`, `isDefault: true`). On 17.2 the
+ * console chose between the two pages by list order, and this page happened
+ * to come first. From 18 on, the console picks the `isDefault` page first
+ * (`candidates.find(p => defaultRecordPageObject(p) === object) ??
+ * candidates[0]`), so, measured on 18.2.0, Duly > People > a person opens
+ * plugin-auth's admin page and this page is unreachable by the plain record
+ * route. Nothing authorable outranks it. `PageSchema` has no priority key.
+ * `isDefault: true` here would be a second default for `sys_user`, which
+ * refuses the boot (`DEFAULT_RECORD_PAGE_CONFLICT`, ruling A on
+ * objectstack#23015). plugin-auth's opt-out exists only for its organization
+ * page. And the console's choice ignores the app, so a deployment-wide
+ * `sys_user` default would also replace Setup > Users.
+ *   → INSTEAD: `duly_member_open` (`src/actions/member.actions.ts`), a
+ *     `type: 'url'` action on `sys_user` that opens this page's explicit route
+ *     `/apps/<app>/sys_user/record/<id>/page/duly_member`, from the record's
+ *     "⋯" menu. It is not on the People row menu, because 18.2 runs a row
+ *     url action with no record in context. That is one click more than it
+ *     should be, labelled a stopgap, and deleted when #28979 lands.
+ *     `isDefault` stays `false`. `test/member-page.test.ts` mirrors the
+ *     console's rule and pins that a person resolves to `sys_user_detail`
+ *     today, so the day that changes is a red test, not a silent one.
  *
  * **§7 — The auto-appended discussion panel cannot be declined by a page, and
  * it carries a comment box** (objectui#7298, the second instance there). Found in the browser, not in the schema.
@@ -207,8 +220,8 @@ export const MemberPage = definePage({
   kind: 'full',
 
   // Left FALSE deliberately — see gap §5. The platform's own `sys_user_detail`
-  // already declares `isDefault: true` for this object, and two pages both
-  // claiming it would make the flag a lie on whichever one loses.
+  // already declares `isDefault: true` for this object, and from 18 on a
+  // second default refuses the boot (DEFAULT_RECORD_PAGE_CONFLICT).
   isDefault: false,
 
   regions: [
