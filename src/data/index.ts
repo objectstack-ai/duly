@@ -20,6 +20,7 @@ import { catalogSeed } from './catalog.seed.js';
 import { dutySeed } from './duty.seed.js';
 import { logEntrySeed } from './log-entry.seed.js';
 import { DEMO_STAFF } from './demo-staff.js';
+import { packSeeds } from './packs/index.js';
 import { adminPermissionSetSeed, businessUnitMemberSeed, businessUnitSeed, userSeed } from './org.seed.js';
 import type { DemoStaff } from '@objectstack/spec/system';
 import {
@@ -198,15 +199,28 @@ const OPT_IN = ['1', 'true', 'on', 'yes'];
 export const demoSeedRequested = (): boolean =>
   OPT_IN.includes((process.env[DEMO_SEED_ENV_VAR] ?? '').trim().toLowerCase());
 
+// ─── …and a third chooses a catalog PACK (#134) ─────────────────────────────
+//
+// `DULY_PACK` (unset by default; `food-safety` for the first pack) adds a
+// starting catalog of one industry's recurring duties: `duly_catalog_item`
+// rows and nothing else. Read at compile time like the two above, refused
+// loudly when it names no pack, and independent of the demo: a pack with no
+// demo is an empty app with a catalog in it, which is the template path; the
+// demo with no pack is the demo as it was. `pnpm demo` turns it on by default
+// (`scripts/demo.mjs`). Everything about packs lives in `./packs/`.
+export { CATALOG_PACKS, PACK_ENV_VAR, packSeeds } from './packs/index.js';
+
 /**
- * What `defineStack({ data })` installs: nothing at all, unless the demo was
- * asked for.
+ * What `defineStack({ data })` installs: nothing at all, unless the demo or a
+ * pack was asked for.
  *
  * `test/demo-seed-opt-in.test.ts` fails if this stops being empty by default —
  * which is what keeps the demo from drifting back into the default path one
- * convenient row at a time.
+ * convenient row at a time. With no pack it is the demo array itself, not a
+ * copy of it.
  */
-export const dulySeeds: Seed[] = demoSeedRequested() ? demoSeeds : [];
+const demoOrNothing: Seed[] = demoSeedRequested() ? demoSeeds : [];
+export const dulySeeds: Seed[] = packSeeds.length === 0 ? demoOrNothing : [...demoOrNothing, ...packSeeds];
 
 /**
  * What `defineStack({ demoStaff })` declares: the twelve demo people as
