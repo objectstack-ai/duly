@@ -134,8 +134,12 @@ A **catalog pack** is a ready-made catalog for one industry, shipped as seed
 rows: `DULY_PACK=food-safety pnpm dev` opens an otherwise empty Duly with 38
 recurring food-safety duties across 8 positions (食品安全周期性履职, written
 from the PRC Food Safety Law, GB 14881-2013, SAMR Order No. 60 and HACCP),
-ready to edit and apply to your people. It is a starting point, not legal
-advice. **[What a pack is, how to choose, edit or remove one, and how to write
+ready to edit and apply to your people. `DULY_PACK=iso-9001` does the same for
+an ISO 9001 quality management system: 39 recurring duties across 9 positions
+(ISO 9001 质量管理体系周期性履职: internal audit, management review, external
+providers, calibration, nonconforming output, documented information), each
+citing its ISO 9001:2015 clause by number and title. A pack is a starting
+point, not legal or certification advice. **[What a pack is, how to choose, edit or remove one, and how to write
 your own →](src/data/packs/README.md)**
 
 ## Try the demo
