@@ -81,6 +81,19 @@ const SCHEDULED_WORK_ENV_VAR = 'OS_AUTOMATION_SCHEDULED_WORK_ENABLED';
 
 if (process.env[SCHEDULED_WORK_ENV_VAR] === undefined) process.env[SCHEDULED_WORK_ENV_VAR] = 'true';
 
+// ── Why the demo loads the food-safety catalog pack ──────────────────────
+//
+// `DULY_PACK` chooses a starting catalog (src/data/packs/README.md). The demo
+// loads `food-safety` beside its own organisation's catalog, so the first
+// screen shows what a template catalog for a real industry looks like. Set
+// here, and ONLY when the caller has not set it, for the same reason as the
+// variable above: `DULY_PACK=none pnpm demo` is the demo without a pack, and
+// an explicit value is the caller's decision. Not in package.json, because a
+// shell default there does not run on Windows.
+const PACK_ENV_VAR = 'DULY_PACK';
+const DEFAULT_DEMO_PACK = 'food-safety';
+if (process.env[PACK_ENV_VAR] === undefined) process.env[PACK_ENV_VAR] = DEFAULT_DEMO_PACK;
+
 /**
  * `sys_user.name` the account you sign in as carries, per locale.
  *

@@ -128,6 +128,16 @@ schema, so renaming a field fails the build instead of quietly importing a
 blank column. **[The full walk, screen by screen, with what each step was
 measured to do →](docs/import/walkthrough.md)**
 
+### Or start from a catalog pack
+
+A **catalog pack** is a ready-made catalog for one industry, shipped as seed
+rows: `DULY_PACK=food-safety pnpm dev` opens an otherwise empty Duly with 38
+recurring food-safety duties across 8 positions (食品安全周期性履职, written
+from the PRC Food Safety Law, GB 14881-2013, SAMR Order No. 60 and HACCP),
+ready to edit and apply to your people. It is a starting point, not legal
+advice. **[What a pack is, how to choose, edit or remove one, and how to write
+your own →](src/data/packs/README.md)**
+
 ## Try the demo
 
 To see the finished picture before you load anything, start with the worked
@@ -151,8 +161,15 @@ have already seeded gives you **both** organisations in it;
 
 Nothing about the fictional organisation is real: every address is on an
 RFC 2606 reserved domain, and no real company, person, site or regulation is
-named anywhere in it, in either language. Every reference the catalog cites is
-an invented internal document, never a national or industry standard.
+named anywhere in it, in either language. Every reference the organisation's
+own catalog cites is an invented internal document, never a national or
+industry standard.
+
+Both demos also load the **food-safety catalog pack** beside that catalog, so
+the role catalog shows what a template for a real industry looks like. Those
+rows are the exception to the paragraph above: they cite real public
+frameworks, because that is what a pack is for. `DULY_PACK=none pnpm demo`
+leaves the pack out; see [catalog packs](src/data/packs/README.md).
 
 ## Customise
 
@@ -227,7 +244,7 @@ src/hooks/               object lifecycle hooks (collected here, not from object
 src/functions/           pure callables a `script` flow node resolves by name
 src/datasets/  src/dashboards/   the semantic layer and what reads it
 src/security/            positions, permission sets, sharing rules
-src/mappings/  src/data/ catalog import and the demo fixture (src/data/demo-*)
+src/mappings/  src/data/ catalog import, the demo fixture (src/data/demo-*) and catalog packs (src/data/packs/)
 src/translations/        en (source) · zh-CN
 scripts/                 pnpm demo — start with the example loaded, in one boot
 samples/                 CSVs for the platform's standard Import (see above)
