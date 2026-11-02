@@ -112,7 +112,8 @@ export const Duty = ObjectSchema.create({
     business_unit: Field.lookup('sys_business_unit', {
       label: 'Business unit',
       group: 'basics',
-      description: 'Rollup anchor. Set from the owner\'s position on create.',
+      description:
+        'Rollup anchor. Set on create from the owner\'s primary business unit. Apply catalog falls back to the owner\'s position anchor when they have no primary unit and their anchored positions name one unit; otherwise it stays empty.',
     }),
 
     // ── Where the duty came from ──────────────────────────────────────────

@@ -163,7 +163,7 @@ export const dulyChinese = defineTranslationBundle({
           },
           business_unit: {
             label: '部门',
-            help: '汇总口径的锚点。创建时取自负责人的岗位。',
+            help: '汇总口径的锚点。创建时取自负责人的主业务单元。负责人没有主业务单元时，应用岗位职责库会改用其岗位锚定的业务单元（仅当这些岗位都指向同一个业务单元时）；否则留空。',
           },
           source: {
             label: '来源',
