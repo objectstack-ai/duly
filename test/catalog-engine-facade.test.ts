@@ -103,7 +103,7 @@ beforeAll(async () => {
   data = kernel.getService('data');
   await ensureUsers(data, [
     'u_anchored', 'u_denied', 'u_fa1', 'u_fa2', 'u_fi1', 'u_fn1', 'u_fn2',
-    'u_fr1', 'u_fs1', 'u_fs2', 'u_ft1', 'u_unanchored',
+    'u_fr1', 'u_fs1', 'u_fs2', 'u_ft1', 'u_unanchored', 'u_primary',
   ]);
 
   // Through the REAL registration function, so a handler dropped from
@@ -203,33 +203,59 @@ describe('duly_catalog_apply through the runtime\'s own facade (#79)', () => {
     }
   });
 
-  it('anchors the duty to the business unit of the owner\'s position', async () => {
-    // The read that fails SILENTLY. `resolveBusinessUnit` tolerates "no
-    // `sys_user_position` row" as a legitimate day-one state, so its broken
-    // read produced no error and no report — just duties with nothing to roll
-    // up to. Both people are applied in ONE run: the anchored one proves the
-    // read returns, the unanchored one proves the tolerated state is still
-    // tolerated and did not turn into a refusal.
+  it('anchors the duty to the owner\'s unit: primary first, then a lone anchor, else reported (#179)', async () => {
+    // The reads that fail SILENTLY. The handler tolerates "this person has no
+    // unit" as a legitimate day-one state, so a broken read produces no error
+    // — just duties with nothing to roll up to. Three people in ONE run, one
+    // per rung of the ladder: the primary unit (written the way a real org
+    // writes it, through a primary membership row that plugin-sharing
+    // projects onto `sys_user`), a position anchor for someone with no
+    // primary, and nobody's unit at all, which must still be tolerated and
+    // must now be reported.
     const position = 'facade_anchor';
     await insertItem({ position_code: position });
-    const unit = await data.insert('sys_business_unit', { name: 'Plant A' }, { context: SYSTEM });
+    const home = await data.insert('sys_business_unit', { name: 'Plant Home' }, { context: SYSTEM });
+    const away = await data.insert('sys_business_unit', { name: 'Plant A' }, { context: SYSTEM });
     await data.insert(
-      'sys_user_position',
-      { user_id: 'u_anchored', position, business_unit_id: unit.id },
+      'sys_business_unit_member',
+      { user_id: 'u_primary', business_unit_id: home.id, is_primary: true },
       { context: SYSTEM },
     );
+    // An anchor elsewhere for the primary-unit person: the primary wins.
+    await data.insert(
+      'sys_user_position',
+      { user_id: 'u_primary', position: 'duly_member', business_unit_id: away.id },
+      { context: SYSTEM },
+    );
+    await data.insert(
+      'sys_user_position',
+      { user_id: 'u_anchored', position, business_unit_id: away.id },
+      { context: SYSTEM },
+    );
+    const [primaryUser] = await data.find('sys_user', { where: { id: 'u_primary' } }, { context: SYSTEM });
+    expect(primaryUser?.primary_business_unit_id, 'the platform projected the membership').toBe(home.id);
 
     const result = await run<CatalogApplyResult>(`/${CATALOG_APPLY_ACTION}`, {
       position_code: position,
-      users: ['u_anchored', 'u_unanchored'],
+      users: ['u_primary', 'u_anchored', 'u_unanchored'],
     });
-    expect(result.created).toBe(2);
+    expect(result.created).toBe(3);
+
+    const [primary] = await dutiesOf('u_primary');
+    expect(primary?.business_unit).toBe(home.id);
 
     const [anchored] = await dutiesOf('u_anchored');
-    expect(anchored?.business_unit).toBe(unit.id);
+    expect(anchored?.business_unit).toBe(away.id);
 
     const [unanchored] = await dutiesOf('u_unanchored');
     expect(unanchored?.business_unit ?? null).toBeNull();
+
+    // …and the run says so, in the body the console's toast reads.
+    expect(result.outcome).toBe('created_unanchored');
+    expect(result.unanchored).toBe(1);
+    expect(result.unanchored_owners).toEqual(['u_unanchored']);
+    const units = Object.fromEntries(result.entries.map((entry) => [entry.owner, entry.business_unit]));
+    expect(units).toEqual({ u_primary: home.id, u_anchored: away.id, u_unanchored: null });
   });
 
   it('is idempotent on (catalog_item, owner) across two dispatched runs', async () => {

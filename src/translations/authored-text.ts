@@ -556,6 +556,14 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   // sits at `.source` and keeps the action's own `successMessage` key.
   'action.successMessage.source': translate((c) => actionKey(c, 'successMessage')),
   'action.successMessage.dialect': machine('template dialect'),
+  // Success copy per handler outcome (#179). The bundle address is the
+  // action's own entry, `outcomeMessages.<outcome>`, the key the platform's
+  // translation-reference check names; the outcome is the last path segment.
+  'action.outcomeMessages{}': translate((c) => {
+    const outcome = c.path[c.path.length - 1];
+    const base = actionKey(c, 'outcomeMessages');
+    return outcome && base ? [...base, outcome] : undefined;
+  }),
   'action.params[].label': translate((c) => actionParamKey(c, 'label')),
   'action.params[].helpText': translate((c) => actionParamKey(c, 'helpText')),
   'action.params[].placeholder': translate((c) => actionParamKey(c, 'placeholder')),
@@ -779,7 +787,9 @@ function actionParamKey(ctx: KeyContext, leaf: string): readonly string[] | unde
  * segment, which is what makes an unknown map show up as an unclassified path
  * rather than being silently folded away.
  */
-const RECORD_MAPS: ReadonlySet<string> = new Set(['object.fields']);
+// `action.outcomeMessages` is keyed by the outcome names a handler returns
+// (#179), which are data, not structure.
+const RECORD_MAPS: ReadonlySet<string> = new Set(['object.fields', 'action.outcomeMessages']);
 
 /**
  * Containers that RE-ENTER the vocabulary they sit inside, so the subtree

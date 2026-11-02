@@ -120,8 +120,9 @@ export function resolveDutyTimezone(): string {
 // envelope became `{ where: { where: { … } } }`: no row has a field called
 // `where`, so the read came back EMPTY WITH NO ERROR. `duly_catalog_apply`
 // reported a successful run of zero, `duly_catalog_sync` scanned nothing and
-// called every duty unchanged, and `resolveBusinessUnit` anchored no duty at
-// all — silently, because "no position row" is a legitimate day-one state.
+// called every duty unchanged, and the business-unit read (now
+// `resolveBusinessUnits`) anchored no duty at all — silently, because "no
+// position row" is a legitimate day-one state.
 //
 // Filed upstream as objectstack-ai/objectstack#14175; the platform's answer
 // (#19223, in 17.5) was to withdraw the bare filter rather than declare it, so
@@ -157,15 +158,36 @@ export interface CatalogApplyEntry {
   outcome: 'created' | 'skipped';
   /** Id of the duty created by THIS run. Absent for a skip. */
   duty?: string;
+  /**
+   * The unit the created duty was anchored to, or `null` when its owner
+   * belongs to none (#179). Absent for a skip: a skipped pair wrote nothing.
+   */
+  business_unit?: string | null;
 }
+
+/**
+ * How the run went, as one closed fact the console picks its toast by
+ * (`outcomeMessages` on the two apply actions, `catalog.actions.ts`).
+ *
+ *  - `created`: every duty this run created has a business unit.
+ *  - `created_unanchored`: at least one has none, because its owner belongs to
+ *    no unit. The toast says how many; `unanchored_owners` says who.
+ *  - `nothing_created`: every pair already had its duty.
+ */
+export type CatalogApplyOutcome = 'created' | 'created_unanchored' | 'nothing_created';
 
 export interface CatalogApplyResult {
   action: typeof CATALOG_APPLY_ACTION;
+  outcome: CatalogApplyOutcome;
   position_code: string;
   catalog_items: number;
   users: number;
   created: number;
   skipped: number;
+  /** Duties created by this run with no business unit. */
+  unanchored: number;
+  /** The owners those duties belong to, each once: the people with no unit. */
+  unanchored_owners: string[];
   entries: CatalogApplyEntry[];
 }
 
@@ -266,46 +288,96 @@ export function pairKey(catalogItem: unknown, owner: unknown): string {
 // ── Business unit ───────────────────────────────────────────────────────────
 
 /**
- * The duty's rollup anchor: the business unit of the person's position
- * assignment.
+ * The duty's rollup anchor: the unit the owner's work reports to (#179).
  *
- * `sys_user_position.business_unit_id` is a real, nullable lookup to
- * `sys_business_unit` — "[ADR-0090 Addendum] Assignment-level BU anchor: where
- * this position assignment applies … Null = unanchored". The object lives in
- * `@objectstack/plugin-security`, not `@objectstack/platform-objects`.
+ * Resolved in the order the seat ruled on #179 (R-A), first answer wins:
  *
- * Returns `undefined` when the person has no position row or no anchored one,
- * and the duty is then created WITHOUT a business unit. That is deliberate:
- * `position_code` is free text so a customer can load their catalog before
- * positions are modelled, which means "no `sys_user_position` row" is a normal
- * day-one state and must not fail the apply.
+ *  1. **The owner's primary business unit** —
+ *     `sys_user.primary_business_unit_id`, plugin-sharing's projection of the
+ *     person's `is_primary` `sys_business_unit_member` row ("the canonical one
+ *     for reporting"; `is_primary` defaults to `true`). It is the rung every
+ *     other derived unit in Duly reads: a hand-made duty
+ *     (`duly_duty_unit_stamp`, #178), a hand-made task (#176) and the
+ *     assignment fan-out. So a person's applied duties and their own duties
+ *     land in the same unit.
+ *  2. **A position-assignment anchor** — `sys_user_position.business_unit_id`
+ *     ("where this position assignment applies … Null = unanchored",
+ *     ADR-0090 Addendum) — only when there is no primary unit, and only when
+ *     the anchored rows name ONE unit. Those rows are the platform's
+ *     capability positions (`duly_member`, `duly_manager`, …), not the
+ *     catalog's free-text `position_code`, and nothing joins the two, so two
+ *     different anchors are ambiguous and this does not pick one. Before #179
+ *     this was the only rung and it took the first anchored row of any
+ *     position; measured on 18.2, that put a person's catalog duties in a
+ *     unit their primary membership and their hand-made duties disagree with.
+ *  3. **None.** The duty is created without a unit — `position_code` is free
+ *     text and a person may be in no unit yet, so this must not fail the
+ *     apply — and the run SAYS so: the entry carries `business_unit: null`,
+ *     the result counts it in `unanchored` and names the owner in
+ *     `unanchored_owners`, and the outcome is `created_unanchored`, which is
+ *     the toast the console shows.
  *
- * (`sys_user.primary_business_unit_id` is a second, user-level anchor that
- * exists on the platform. It is NOT read here — the issue names the
- * assignment-level anchor, and adding a fallback rung is a product decision,
- * reported rather than taken.)
+ * Membership is not a rung of its own: the primary unit already is its
+ * projection, and the one case it would add — a person whose memberships are
+ * all ticked non-primary — is ambiguous by the admin's own choice.
  *
- * ⚠️ That tolerance is why this read's query shape matters more than the other
- * three. The other reads fail into a visibly empty report — zero items, zero
- * scanned — but this one fails into a state the handler is WRITTEN to accept:
- * an envelope-shaped filter returned nothing, "nothing" reads as "not yet
- * modelled", and every duty was created unanchored with no error anywhere. The
- * rollups that the business unit exists to feed were simply empty. See the
+ * Why the handler resolves it rather than the duty stamp hook: an action's
+ * engine runs as system (`buildActionExecutionContext` sets `isSystem`), and
+ * `duly_duty_unit_stamp` deliberately leaves every system write alone. Same
+ * first rung, two writers: the hook for a caller's insert, this for Apply.
+ *
+ * Two reads for the whole run, not two per person: `sys_user` and
+ * `sys_user_position` with `$in` on the selected people.
+ *
+ * ⚠️ The tolerance in rung 3 is why these reads' query shape matters more
+ * than the others. They fail into a state the handler is WRITTEN to accept:
+ * an envelope-shaped filter that returned nothing reads as "nobody has a
+ * unit", and every duty would be created unanchored with no error anywhere —
+ * which is exactly what an unreported null looked like before #179. See the
  * facade-shape note above; the end-to-end coverage is in
  * `test/catalog-engine-facade.test.ts`.
  */
-async function resolveBusinessUnit(
+export async function resolveBusinessUnits(
   engine: ActionEngineFacade,
-  userId: string,
-): Promise<string | undefined> {
-  const rows = await engine.find('sys_user_position', { where: { user_id: userId } });
-  for (const row of rows) {
-    // A person can hold several positions; take the first anchored one.
-    // Unanchored rows (`null`) are legacy/tenant-wide and carry no depth.
-    const anchor = row?.business_unit_id;
-    if (typeof anchor === 'string' && anchor) return anchor;
+  userIds: readonly string[],
+): Promise<Map<string, string | null>> {
+  const resolved = new Map<string, string | null>();
+  for (const id of userIds) resolved.set(id, null);
+  if (userIds.length === 0) return resolved;
+
+  const users = await engine.find('sys_user', { where: { id: { $in: [...userIds] } } });
+  for (const user of users) {
+    const id = idOf(user?.id);
+    const primary = idOf(user?.primary_business_unit_id);
+    if (resolved.has(id) && primary) resolved.set(id, primary);
   }
-  return undefined;
+
+  const anchors = new Map<string, Set<string>>();
+  const positions = await engine.find('sys_user_position', { where: { user_id: { $in: [...userIds] } } });
+  for (const row of positions) {
+    const userId = idOf(row?.user_id);
+    // Unanchored rows (`null`) are legacy/tenant-wide and carry no depth.
+    const anchor = idOf(row?.business_unit_id);
+    if (!userId || !anchor) continue;
+    const set = anchors.get(userId) ?? new Set<string>();
+    set.add(anchor);
+    anchors.set(userId, set);
+  }
+  for (const [userId, set] of anchors) {
+    if (resolved.get(userId) !== null) continue;
+    if (set.size === 1) resolved.set(userId, [...set][0]!);
+  }
+  return resolved;
+}
+
+/** A lookup arrives as an id or, expanded, as a record carrying one. */
+function idOf(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value !== null && typeof value === 'object') {
+    const id = (value as { id?: unknown }).id;
+    if (typeof id === 'string') return id;
+  }
+  return '';
 }
 
 // ── duly_catalog_apply ──────────────────────────────────────────────────────
@@ -337,12 +409,11 @@ export const applyCatalogHandler: ActionHandler<CatalogApplyParams> = async (ctx
     if (typeof item === 'string' && item) taken.add(pairKey(item, duty?.owner));
   }
 
-  // Resolved once per person, not once per (item, person): a 26-item catalog
-  // for 3 people is 3 lookups here, not 78.
-  const businessUnits = new Map<string, string | undefined>();
-  for (const userId of users) {
-    businessUnits.set(userId, await resolveBusinessUnit(engine, userId));
-  }
+  // Resolved once for the run, not once per (item, person): a 26-item catalog
+  // for 3 people is 2 reads here, not 78.
+  const businessUnits = await resolveBusinessUnits(engine, users);
+  const unanchoredOwners: string[] = [];
+  let unanchored = 0;
 
   const timezone = resolveDutyTimezone();
   const entries: CatalogApplyEntry[] = [];
@@ -360,7 +431,7 @@ export const applyCatalogHandler: ActionHandler<CatalogApplyParams> = async (ctx
         continue;
       }
 
-      const businessUnit = businessUnits.get(owner);
+      const businessUnit = businessUnits.get(owner) ?? null;
       const duty: Record<string, unknown> = {
         // ── from the catalog item ──
         name: item.name,
@@ -389,23 +460,31 @@ export const applyCatalogHandler: ActionHandler<CatalogApplyParams> = async (ctx
       // Same-run guard: two identical items in one catalog cannot both land on
       // the same person just because the pre-probe ran before either existed.
       taken.add(pairKey(itemId, owner));
+      if (!businessUnit) {
+        unanchored += 1;
+        if (!unanchoredOwners.includes(owner)) unanchoredOwners.push(owner);
+      }
       entries.push({
         catalog_item: itemId,
         catalog_item_name: itemName,
         owner,
         outcome: 'created',
         duty: inserted?.id,
+        business_unit: businessUnit,
       });
     }
   }
 
   const result: CatalogApplyResult = {
     action: CATALOG_APPLY_ACTION,
+    outcome: created === 0 ? 'nothing_created' : unanchored > 0 ? 'created_unanchored' : 'created',
     position_code: positionCode,
     catalog_items: activeItems.length,
     users: users.length,
     created,
     skipped,
+    unanchored,
+    unanchored_owners: unanchoredOwners,
     entries,
   };
   return result;

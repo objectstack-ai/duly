@@ -252,38 +252,126 @@ describe('duly_catalog_apply', () => {
     expect(items).not.toContain('item_other');
   });
 
-  it('anchors business_unit on sys_user_position.business_unit_id', async () => {
-    engine.seed('sys_user_position', [
-      { id: 'up_1', user_id: 'user_a', position: 'plant_compliance_officer', business_unit_id: 'bu_north' },
-    ]);
+  // ── business_unit: the R-A ladder (#179) ────────────────────────────
+  // Primary unit first; an anchor only when there is no primary AND the
+  // anchored rows name one unit; otherwise no unit, and the run says so.
 
-    await applyCatalogHandler(
-      contextFor(engine, { position_code: 'plant_compliance_officer', users: ['user_a'] }),
-    );
+  const applyTo = async (users: string[]) =>
+    (await applyCatalogHandler(
+      contextFor(engine, { position_code: 'plant_compliance_officer', users }),
+    )) as CatalogApplyResult;
+  const unitsOf = (owner: string) =>
+    [...new Set(engine.rows('duly_duty').filter((d) => d.owner === owner).map((d) => d.business_unit))];
 
-    for (const duty of engine.rows('duly_duty')) expect(duty.business_unit).toBe('bu_north');
+  it('anchors business_unit on the owner\'s primary business unit', async () => {
+    engine.seed('sys_user', [{ id: 'user_a', primary_business_unit_id: 'bu_home' }]);
+
+    const result = await applyTo(['user_a']);
+
+    expect(unitsOf('user_a')).toEqual(['bu_home']);
+    expect(result.outcome).toBe('created');
+    expect(result.unanchored).toBe(0);
+    expect(result.unanchored_owners).toEqual([]);
+    for (const entry of result.entries) expect(entry.business_unit).toBe('bu_home');
   });
 
-  it('does NOT require a sys_user_position row — day one, before positions are modelled', async () => {
-    const result = (await applyCatalogHandler(
-      contextFor(engine, { position_code: 'plant_compliance_officer', users: ['user_a'] }),
-    )) as CatalogApplyResult;
+  it('prefers the primary unit over a position anchor that names another unit', async () => {
+    // Measured on 18.2 (#179 Step 0): the anchor sits on a CAPABILITY position
+    // (`duly_member`), not the catalog's free-text position, so it is not
+    // evidence about where this catalog's duties belong.
+    engine.seed('sys_user', [{ id: 'user_a', primary_business_unit_id: 'bu_home' }]);
+    engine.seed('sys_user_position', [
+      { id: 'up_1', user_id: 'user_a', position: 'duly_member', business_unit_id: 'bu_away' },
+    ]);
 
-    expect(result.created).toBe(26);
+    await applyTo(['user_a']);
+
+    expect(unitsOf('user_a')).toEqual(['bu_home']);
+  });
+
+  it('falls back to the position anchor when there is no primary unit', async () => {
+    engine.seed('sys_user', [{ id: 'user_a', primary_business_unit_id: null }]);
+    engine.seed('sys_user_position', [
+      { id: 'up_1', user_id: 'user_a', position: 'duly_member', business_unit_id: 'bu_north' },
+      // A second row anchored to the SAME unit is not ambiguous.
+      { id: 'up_2', user_id: 'user_a', position: 'duly_manager', business_unit_id: 'bu_north' },
+      // An unanchored row carries no depth and is not a second answer.
+      { id: 'up_3', user_id: 'user_a', position: 'duly_admin', business_unit_id: null },
+    ]);
+
+    const result = await applyTo(['user_a']);
+
+    expect(unitsOf('user_a')).toEqual(['bu_north']);
+    expect(result.outcome).toBe('created');
+  });
+
+  it('does not guess between two anchors that name different units', async () => {
+    engine.seed('sys_user', [{ id: 'user_a' }]);
+    engine.seed('sys_user_position', [
+      { id: 'up_1', user_id: 'user_a', position: 'duly_member', business_unit_id: 'bu_north' },
+      { id: 'up_2', user_id: 'user_a', position: 'duly_manager', business_unit_id: 'bu_south' },
+    ]);
+
+    const result = await applyTo(['user_a']);
+
     // Absent, not null: an unanchored duty must not claim a business unit.
     for (const duty of engine.rows('duly_duty')) expect(duty.business_unit).toBeUndefined();
+    expect(result.outcome).toBe('created_unanchored');
+    expect(result.unanchored_owners).toEqual(['user_a']);
   });
 
-  it('ignores an unanchored position row rather than writing a null business unit', async () => {
-    engine.seed('sys_user_position', [
-      { id: 'up_1', user_id: 'user_a', position: 'plant_compliance_officer', business_unit_id: null },
+  it('does NOT require a unit at all — day one, before the org is modelled — and reports it', async () => {
+    const result = await applyTo(['user_a']);
+
+    expect(result.created).toBe(26);
+    for (const duty of engine.rows('duly_duty')) expect(duty.business_unit).toBeUndefined();
+    expect(result.outcome).toBe('created_unanchored');
+    expect(result.unanchored).toBe(26);
+    expect(result.unanchored_owners).toEqual(['user_a']);
+    for (const entry of result.entries) expect(entry.business_unit).toBeNull();
+  });
+
+  it('reports exactly the owners with no unit, once each, in a mixed run', async () => {
+    engine.seed('sys_user', [
+      { id: 'user_a', primary_business_unit_id: 'bu_home' },
+      { id: 'user_b' },
+      // An expanded lookup reads the same as an id.
+      { id: 'user_c', primary_business_unit_id: { id: 'bu_east', name: 'East' } },
     ]);
 
-    await applyCatalogHandler(
-      contextFor(engine, { position_code: 'plant_compliance_officer', users: ['user_a'] }),
-    );
+    const result = await applyTo(THREE_USERS);
 
-    for (const duty of engine.rows('duly_duty')) expect(duty.business_unit).toBeUndefined();
+    expect(unitsOf('user_a')).toEqual(['bu_home']);
+    expect(unitsOf('user_b')).toEqual([undefined]);
+    expect(unitsOf('user_c')).toEqual(['bu_east']);
+    expect(result.created).toBe(78);
+    expect(result.unanchored).toBe(26);
+    expect(result.unanchored_owners).toEqual(['user_b']);
+    expect(result.outcome).toBe('created_unanchored');
+  });
+
+  it('says nothing_created on a re-run, and leaves a skip without a business_unit claim', async () => {
+    await applyTo(['user_a']);
+    const again = await applyTo(['user_a']);
+
+    expect(again.outcome).toBe('nothing_created');
+    expect(again.created).toBe(0);
+    expect(again.unanchored).toBe(0);
+    for (const entry of again.entries) expect(entry).not.toHaveProperty('business_unit');
+  });
+
+  it('reads the units in two queries for the whole run, not one per person', async () => {
+    const reads: string[] = [];
+    const find = engine.find.bind(engine);
+    engine.find = async (object, query) => {
+      reads.push(object);
+      return find(object, query);
+    };
+
+    await applyTo(THREE_USERS);
+
+    expect(reads.filter((object) => object === 'sys_user')).toHaveLength(1);
+    expect(reads.filter((object) => object === 'sys_user_position')).toHaveLength(1);
   });
 
   it('refuses a blank position_code or an empty user list instead of reporting a no-op run', async () => {
