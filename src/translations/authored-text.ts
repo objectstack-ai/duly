@@ -243,6 +243,7 @@ const OPAQUE: Readonly<Record<string, string>> = {
   'flow.nodes[].config.templateData': 'email render payload — `{{placeholder}}` values '
     + 'read off the record; the SENTENCES around them live in the email-template rows',
   'flow.nodes[].config.filter': 'record lookup filter — field names and CEL reads',
+  'flow.nodes[].config.assignments': 'flow variable assignments — variable names and CEL values',
   'flow.nodes[].config.schedule': 'cron schedule',
   'flow.nodes[].config.timeRelative': 'time-relative trigger window — field, object and filter',
   'job.schedule': 'cron schedule',

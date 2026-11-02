@@ -45,6 +45,24 @@ import { EMAIL_TEMPLATE_FLOOR_LOCALE } from '@objectstack/spec/system';
  * required would then dead-letter the one message whose job is to report it.
  * The reason line carries the diagnosis in that case, and the click-through
  * lands on the assignment where the assignee list can be read directly.
+ *
+ * ── Two more bundles: an account that is gone, an account that is banned ─
+ * Since #148 the fan-out refuses an assignee whose account was removed or is
+ * banned, by writing no owner. The engine's reason for that is "Owner is
+ * required" — true, and no help to the assigner, who has to replace the name
+ * or restore the account. So those two causes get their own bundles, whose
+ * text names the cause and the remedy and carries no engine reason (#160).
+ *
+ * They are separate NAMES rather than a cause variable inside the bundle
+ * above because, on @objectstack 18.2.0, the renderer has no conditional:
+ * it fills `{{path}}` / `{{path | formatter}}` holes and nothing else, so a
+ * row cannot print one sentence for one cause and another for the rest. The
+ * flow picks the bundle instead (`src/flows/assignment.flow.ts`, #160). All
+ * three are delivered under the one topic, `duly.assignment_fanout_failed`.
+ *
+ * The remedy ends in "save the assignment again" on purpose: restoring an
+ * account or lifting a ban fires nothing, and it is the re-save that fans out
+ * and creates exactly the missing task.
  */
 
 /** Declared render inputs. One place, so the two rows cannot drift. */
@@ -104,7 +122,101 @@ export const AssignmentFanoutFailedZhCN = defineEmailTemplateDefinition({
   description: '每有一位成员未能生成任务，就向指派人发送一次；分发的其余部分已正常完成。',
 });
 
+/**
+ * Declared render inputs of the two account bundles: the generic bundle's
+ * minus `reason`, which these rows never print. `assignee` stays optional for
+ * the same reason as above — a hole declared required can dead-letter the one
+ * message whose job is to report the row.
+ */
+const ACCOUNT_REFUSAL_VARIABLES = FANOUT_FAILURE_VARIABLES.filter((v) => v.name !== 'reason');
+
+export const AssignmentFanoutAccountRemovedEn = defineEmailTemplateDefinition({
+  name: 'duly.assignment_fanout_account_removed',
+  label: "Assignment fan-out skipped an assignee whose account no longer exists",
+  locale: EMAIL_TEMPLATE_FLOOR_LOCALE,
+  subject: 'No task was created for one assignee: {{{subject}}}',
+  bodyHtml:
+    '<p>Everyone else on this assignment has their task. This one did not get created,'
+    + ' so nobody is holding it.</p>'
+    + '<p>Assignee: {{assignee}}<br />'
+    + "Reason: this person's account no longer exists, so nobody could open a task assigned to it.</p>"
+    + '<p>To fix it, replace them on the assignment or restore their account, then save the'
+    + ' assignment again. Only the missing task is created.</p>',
+  bodyText:
+    'Everyone else on this assignment has their task. This one did not get created, so'
+    + ' nobody is holding it.\nAssignee: {{{assignee}}}\n'
+    + "Reason: this person's account no longer exists, so nobody could open a task assigned to it.\n"
+    + 'To fix it, replace them on the assignment or restore their account, then save the'
+    + ' assignment again. Only the missing task is created.',
+  variables: ACCOUNT_REFUSAL_VARIABLES,
+  description:
+    'Sent to the assigner, once per assignee whose account no longer exists. '
+    + 'The rest of the fan-out completed.',
+});
+
+export const AssignmentFanoutAccountRemovedZhCN = defineEmailTemplateDefinition({
+  name: 'duly.assignment_fanout_account_removed',
+  label: '指派分发跳过了账号已不存在的成员',
+  locale: 'zh-CN',
+  subject: '有一位成员没有生成任务：{{{subject}}}',
+  bodyHtml:
+    '<p>这项指派中其他人的任务都已生成，只有这一条没有创建成功，因此目前无人承担。</p>'
+    + '<p>成员：{{assignee}}<br />原因：该成员的账号已不存在，分配给这个账号的任务没有人能打开。</p>'
+    + '<p>处理办法：在指派中换成其他成员，或恢复该账号，然后重新保存指派。只会补建缺少的那一条任务。</p>',
+  bodyText:
+    '这项指派中其他人的任务都已生成，只有这一条没有创建成功，因此目前无人承担。\n'
+    + '成员：{{{assignee}}}\n原因：该成员的账号已不存在，分配给这个账号的任务没有人能打开。\n'
+    + '处理办法：在指派中换成其他成员，或恢复该账号，然后重新保存指派。只会补建缺少的那一条任务。',
+  variables: ACCOUNT_REFUSAL_VARIABLES,
+  description: '每有一位成员因账号已不存在而未能生成任务，就向指派人发送一次；分发的其余部分已正常完成。',
+});
+
+export const AssignmentFanoutAccountBannedEn = defineEmailTemplateDefinition({
+  name: 'duly.assignment_fanout_account_banned',
+  label: 'Assignment fan-out skipped an assignee whose account is banned',
+  locale: EMAIL_TEMPLATE_FLOOR_LOCALE,
+  subject: 'No task was created for one assignee: {{{subject}}}',
+  bodyHtml:
+    '<p>Everyone else on this assignment has their task. This one did not get created,'
+    + ' so nobody is holding it.</p>'
+    + '<p>Assignee: {{assignee}}<br />'
+    + "Reason: this person's account is banned, so they cannot sign in to open a task.</p>"
+    + '<p>To fix it, replace them on the assignment or restore their account by lifting the ban,'
+    + ' then save the assignment again. Only the missing task is created.</p>',
+  bodyText:
+    'Everyone else on this assignment has their task. This one did not get created, so'
+    + ' nobody is holding it.\nAssignee: {{{assignee}}}\n'
+    + "Reason: this person's account is banned, so they cannot sign in to open a task.\n"
+    + 'To fix it, replace them on the assignment or restore their account by lifting the ban,'
+    + ' then save the assignment again. Only the missing task is created.',
+  variables: ACCOUNT_REFUSAL_VARIABLES,
+  description:
+    'Sent to the assigner, once per assignee whose account is banned. '
+    + 'The rest of the fan-out completed.',
+});
+
+export const AssignmentFanoutAccountBannedZhCN = defineEmailTemplateDefinition({
+  name: 'duly.assignment_fanout_account_banned',
+  label: '指派分发跳过了账号被封禁的成员',
+  locale: 'zh-CN',
+  subject: '有一位成员没有生成任务：{{{subject}}}',
+  bodyHtml:
+    '<p>这项指派中其他人的任务都已生成，只有这一条没有创建成功，因此目前无人承担。</p>'
+    + '<p>成员：{{assignee}}<br />原因：该成员的账号已被封禁，无法登录打开任务。</p>'
+    + '<p>处理办法：在指派中换成其他成员，或解除封禁以恢复该账号，然后重新保存指派。只会补建缺少的那一条任务。</p>',
+  bodyText:
+    '这项指派中其他人的任务都已生成，只有这一条没有创建成功，因此目前无人承担。\n'
+    + '成员：{{{assignee}}}\n原因：该成员的账号已被封禁，无法登录打开任务。\n'
+    + '处理办法：在指派中换成其他成员，或解除封禁以恢复该账号，然后重新保存指派。只会补建缺少的那一条任务。',
+  variables: ACCOUNT_REFUSAL_VARIABLES,
+  description: '每有一位成员因账号被封禁而未能生成任务，就向指派人发送一次；分发的其余部分已正常完成。',
+});
+
 export const dulyAssignmentEmailTemplates = [
   AssignmentFanoutFailedEn,
   AssignmentFanoutFailedZhCN,
+  AssignmentFanoutAccountRemovedEn,
+  AssignmentFanoutAccountRemovedZhCN,
+  AssignmentFanoutAccountBannedEn,
+  AssignmentFanoutAccountBannedZhCN,
 ];

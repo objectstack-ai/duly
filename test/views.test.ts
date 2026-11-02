@@ -180,7 +180,7 @@ describe('the lenses say what the product means', () => {
   });
 
   /**
-   * #108 / #118 — the frontline screen the deck's p16 draws.
+   * #108 / #118 — the frontline screen.
    *
    * The column SET and its ORDER are both the card's, so this is not a
    * restatement of the file: a reorder here is a product change and should
@@ -192,7 +192,7 @@ describe('the lenses say what the product means', () => {
    * it the card title, so the row's link was the `Open` pill and every card
    * was headed with a raw `open` / `in_progress`.
    */
-  it('my_week carries the deck\'s columns, in the deck\'s order', () => {
+  it('my_week carries the frontline columns, in reading order', () => {
     const fields = ((byName('my_week').view.columns as Rec[]) ?? []).map((c) => String(c.field));
     expect(fields).toEqual(['subject', 'status', 'source', 'due_date', 'progress']);
   });
@@ -243,7 +243,7 @@ describe('the lenses say what the product means', () => {
   });
 
   /**
-   * #108 / deck p17 — the card face carries where it came from, when it is
+   * #108 — the card face carries where it came from, when it is
    * owed, and the last word on it. Every card field must also be in the view's
    * own `columns`: the projection is built from those alone, so a face field
    * missing from them arrives `undefined` and renders blank with nothing in
@@ -253,7 +253,7 @@ describe('the lenses say what the product means', () => {
     const board = byName('board').view;
     const face = ((board.kanban as Rec).columns as string[]) ?? [];
     for (const field of ['source', 'due_date', 'progress']) {
-      expect(face, `the deck asks for ${field} on the card`).toContain(field);
+      expect(face, `#108 puts ${field} on the card`).toContain(field);
     }
     const projected = new Set(((board.columns as Rec[]) ?? []).map((c) => String(c.field)));
     for (const field of face) {
@@ -274,7 +274,7 @@ describe('the lenses say what the product means', () => {
    * board loses `OPEN / IN PROGRESS / DONE / SKIPPED` entirely — filed as
    * objectstack-ai/objectui#7303. The view file carries the measurement; what
    * must not happen is
-   * somebody adding the key back because the deck asks for lanes, without
+   * somebody adding the key back because #108 asked for lanes, without
    * knowing it takes the column titles with it.
    *
    * ⛔ `kanban.swimlaneField` is a different mistake and fails `pnpm validate`

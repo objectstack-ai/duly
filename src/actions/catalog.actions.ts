@@ -86,7 +86,10 @@ export const CatalogApplyAction = defineAction({
       label: 'Position',
       type: 'text',
       required: true,
-      placeholder: 'plant_compliance_officer',
+      // The demo's own spelling (`POSITIONS` in src/data/demo-org.ts and the
+      // `samples/` CSV), so the hint shows a value that matches something.
+      // `src/translations/zh-CN.ts` carries the Chinese demo's spelling.
+      placeholder: 'Plant compliance officer',
       helpText:
         'Matches duly_catalog_item.position_code exactly. Free text — the position does not have to be modelled in the platform yet.',
     },
@@ -215,7 +218,7 @@ export const CatalogSyncAction = defineAction({
       label: 'Position',
       type: 'text',
       required: false,
-      placeholder: 'plant_compliance_officer',
+      placeholder: 'Plant compliance officer',
       helpText: 'Limit the sync to one position. Leave blank to sync every catalog-sourced duty.',
     },
   ],

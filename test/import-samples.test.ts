@@ -6,10 +6,12 @@ import { describe, expect, it } from 'vitest';
 
 import { SysBusinessUnit, SysUser } from '@objectstack/platform-objects/identity';
 
+import { CATALOG_ITEMS, cadenceOf } from '../src/data/demo-catalog.js';
+import { POSITIONS } from '../src/data/demo-org.js';
 import { CatalogItem, Duty } from '../src/objects/index.js';
 
 /**
- * The `samples/` CSVs are the artefact the pre-sales walk-through hands an
+ * The `samples/` CSVs are the artefact the import walkthrough hands an
  * evaluator: "here is your existing duty list, import it". They go in through
  * the PLATFORM's standard Import button on each object list — Duly writes no
  * import code (#19) — so nothing in this repo would notice the day a field is
@@ -63,12 +65,20 @@ const samplePath = (file: string): URL => new URL(`../samples/${file}`, import.m
  * the same reason — the template ships one.
  */
 function csvHeader(file: string): string[] {
-  const firstLine = readFileSync(samplePath(file), 'utf8')
+  const firstLine = csvLines(file)[0];
+  if (firstLine === undefined) throw new Error(`samples/${file} is empty`);
+  return csvCells(firstLine);
+}
+
+/** The non-blank lines of a sample, BOM-stripped. No sample cell spans a line. */
+const csvLines = (file: string): string[] =>
+  readFileSync(samplePath(file), 'utf8')
     .replace(/^\uFEFF/, '')
     .split(/\r?\n/)
-    .find((line) => line.trim() !== '');
-  if (firstLine === undefined) throw new Error(`samples/${file} is empty`);
+    .filter((line) => line.trim() !== '');
 
+/** One CSV line as cells, honouring quotes and doubled quotes. */
+function csvCells(firstLine: string): string[] {
   const out: string[] = [];
   let cur = '';
   let quoted = false;
@@ -104,43 +114,26 @@ const declaredFields = (schema: unknown): string[] => fieldEntries(schema).map((
 const writableFields = (schema: unknown): string[] =>
   fieldEntries(schema).filter(([, def]) => def?.readonly !== true).map(([name]) => name);
 
-/** A default the ROW supplies for itself — a CEL expression over `record.*`,
- *  as opposed to a scalar or a caller token like `'current_user'`.
+/** Fields a row cannot omit AND a caller may set — every `required` field
+ *  that is not `readonly` (the platform's to write, never the CSV's).
  *
- *  The distinction decides whether an omitted column is a defect (#107). Both
- *  kinds stop the import refusing the row, so neither is caught by "required";
- *  what separates them is what lands instead:
- *
- *   - **Record-derived** (`F`record.source == "self" ? … : …``): the value is
- *     computed from other columns of the SAME row, so an omitted column yields
- *     exactly what the sample would have had to type. Nothing is substituted
- *     and nothing is lost.
- *   - **Caller-derived** (`'current_user'` on `duly_duty.owner`): an omitted
- *     column yields the IMPORTER, silently, on every row — nineteen duties
- *     owned by whoever ran the import. That is the worse half of the failure
- *     this test exists for, so it stays in the required set even though it too
- *     would not be refused.
- */
-const isRecordDerivedDefault = (value: unknown): boolean =>
-  typeof value === 'object' && value !== null && 'dialect' in (value as Record<string, unknown>);
-
-/** Fields a row cannot omit AND a caller may set AND the row cannot supply for
- *  itself. Each exclusion drops a field for its own reason:
- *
- *   - `readonly` — the platform's to write, never the CSV's.
- *   - a record-derived default — see above. `duly_duty.review_status` is the
- *     first field to be required, writable and defaulted this way (#107):
- *     `record.source == "self" ? "to_review" : "to_confirm"`, so an imported
- *     catalog row lands `to_confirm`, which is precisely what the product
- *     wants an imported list to be. A column for it would restate the default
- *     the walkthrough already documents ("A blank cell means leave this field
- *     unset … the object's `defaultValue` then decides") and would invite an
- *     author to type `approved` there, which `initialStates` refuses row by
- *     row. */
+ *  A default does not take a field off this list, and that was measured, not
+ *  assumed. Until #128 this helper also excluded a field whose default the
+ *  row supplies for itself (a CEL `defaultValue` over `record.*`), on the
+ *  reasoning of #107: `duly_duty.review_status` defaults to
+ *  `record.source == "self" ? "to_review" : "to_confirm"`, so an omitted
+ *  column lands exactly what a sample would have typed. That held on the
+ *  17.2.0 Import. On `@objectstack/*` 18.2.0 the wizard's mapping step stops
+ *  instead — "Can't continue — required field(s) not mapped: Review status
+ *  (review_status)" — with Next disabled, whatever the default would have
+ *  done. So `samples/duties.csv` carries the column, written as the default
+ *  would have written it (`to_confirm` on catalog rows, `to_review` on the
+ *  self-declared one), and this helper holds every sample to the rule the
+ *  wizard enforces rather than the one the engine would. Never write
+ *  `approved` there: `initialStates` refuses it row by row. */
 const requiredWritableFields = (schema: unknown): string[] =>
   fieldEntries(schema)
-    .filter(([, def]) =>
-      def?.required === true && def?.readonly !== true && !isRecordDerivedDefault(def?.defaultValue))
+    .filter(([, def]) => def?.required === true && def?.readonly !== true)
     .map(([name]) => name);
 
 describe('samples/ — the duty list an evaluator imports (#19)', () => {
@@ -174,6 +167,67 @@ describe('samples/ — the duty list an evaluator imports (#19)', () => {
       const declared = declaredFields(schema);
       const unknown = csvHeader(file).filter((h) => !declared.includes(h));
       expect(unknown).toEqual([]);
+    });
+  });
+});
+
+/**
+ * #120 — the catalog sample and the demo describe the same fictional
+ * manufacturer, so where they share an item they must say the same thing
+ * about it.
+ *
+ * Nothing else observes this. The header tests above hold columns, not
+ * values, and `position_code` is free text matched verbatim, so the sample
+ * kept `plant_compliance_officer` for weeks after the demo started reading
+ * `Plant compliance officer`, and kept a 150-day audit lead after the demo
+ * moved to 200: both imported cleanly, and an evaluator saw two spellings of
+ * one position and two cadences for one audit.
+ *
+ * The sample is allowed to carry items the demo does not (it is a whole
+ * catalog export; the demo seeds what its lenses need), so the comparison is
+ * over the shared names, and fails if that overlap ever collapses.
+ */
+describe('samples/catalog-items.csv agrees with the demo catalog (#120)', () => {
+  const [header, ...lines] = csvLines('catalog-items.csv');
+  const columns = csvCells(header!);
+  const rows = lines.map((line) => {
+    const cells = csvCells(line);
+    return Object.fromEntries(columns.map((c, i) => [c, cells[i] ?? '']));
+  });
+  const demoByName = new Map(CATALOG_ITEMS.map((item) => [item.name, item]));
+  const shared = rows.filter((row) => demoByName.has(row.name!));
+
+  it('shares most of its items with the demo, so the checks below mean something', () => {
+    expect(shared.length).toBeGreaterThanOrEqual(CATALOG_ITEMS.length - 2);
+  });
+
+  it('spells every position the way the demo does', () => {
+    const demoPositions = Object.values(POSITIONS) as string[];
+    const strays = [...new Set(rows.map((row) => row.position_code!))]
+      .filter((code) => !demoPositions.includes(code));
+    expect(strays).toEqual([]);
+  });
+
+  it.each(shared.map((row) => [row.name!, row] as const))('%s: same position, form and cadence', (name, row) => {
+    const demo = demoByName.get(name)!;
+    const cadence = cadenceOf(demo);
+    const num = (cell: string | undefined): number | undefined => (cell ? Number(cell) : undefined);
+    expect({
+      position_code: row.position_code,
+      form: row.form,
+      frequency: row.frequency || undefined,
+      due_anchor: row.due_anchor || undefined,
+      due_offset_days: num(row.due_offset_days),
+      lead_days: num(row.lead_days),
+      grace_days: num(row.grace_days),
+    }).toEqual({
+      position_code: demo.position,
+      form: demo.form,
+      frequency: cadence.frequency,
+      due_anchor: cadence.due_anchor,
+      due_offset_days: cadence.due_offset_days,
+      lead_days: cadence.lead_days,
+      grace_days: cadence.grace_days,
     });
   });
 });

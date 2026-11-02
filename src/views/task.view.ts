@@ -10,10 +10,10 @@ const data = { provider: 'object' as const, object: 'duly_task' };
  * `progress` and `attachments` were appended by #108 rather than woven into
  * the order, which keeps the blast radius of that card to two extra columns on
  * four lenses instead of a re-ordering nobody asked for. `my_week` — the
- * frontline screen the deck's p16 draws — states its own order below.
+ * frontline screen — states its own order below.
  *
- * ── Why the deck's "最新进展 (= progress 或 note)" is TWO things, not one ──
- * The card asks for one column showing the progress phrase or, failing that,
+ * ── Why "最新进展 (= progress or note)" is TWO things, not one ───────────
+ * #108 asked for one column showing the progress phrase or, failing that,
  * the note. There is no authorable way to say that, and every way of faking it
  * is worse than the honest pair:
  *
@@ -23,7 +23,8 @@ const data = { provider: 'object' as const, object: 'duly_task' };
  *   a formula field              is virtual, so a filter naming it silently
  *                                matches nothing (rule 5 again), and a formula
  *                                over a select renders the STORED value —
- *                                `on_time`, not "Finished on time".
+ *                                `waiting_on_others`, not "Waiting on
+ *                                someone else".
  *
  * So the grid carries `progress`, which is the tappable one and the one that
  * is short enough to be a column; `note` is a paragraph and lives on the
@@ -175,7 +176,7 @@ export const TaskViews = defineView({
 
   listViews: {
     /**
-     * The frontline screen (deck p16). Column order reads left to right the
+     * The frontline screen. Column order reads left to right the
      * way the work is: WHAT IT IS first, then what state it is in, who put it
      * there, when it is owed, and what the last word on it was.
      *
@@ -354,7 +355,7 @@ export const TaskViews = defineView({
      * counts are never ranked or compared here.
      *
      * ── The card face is `kanban.columns`, and `cardFields` is not authorable ─
-     * Measured, because the deck (p17) asks for it by the renderer's name.
+     * Measured, because #108 asked for it by the renderer's name.
      * `KanbanConfigSchema` in `@objectstack/spec/ui` is a STRICT object with
      * exactly `groupByField`, `summarizeField` and `columns` — so
      * `kanban.cardFields` is refused by `pnpm validate` rather than silently
@@ -364,8 +365,9 @@ export const TaskViews = defineView({
      * spelling IS `columns` and it lands on the card. Nothing to file.
      *
      * ── Swimlanes: AUTHORABLE, and deliberately left off. Measured. ─────────
-     * The deck's p17 asks for "泳道或分组按来源". Both halves of the answer are
-     * measurements against a live `pnpm demo`, not readings of the source:
+     * #108 asked for "泳道或分组按来源" (swimlanes, or grouping by source).
+     * Both halves of the answer are measurements against a live `pnpm demo`,
+     * not readings of the source:
      *
      *  1. **The key is the view-level `grouping`, not `kanban.swimlaneField`.**
      *     The strict schema above rejects `swimlaneField` outright (a failed
@@ -392,8 +394,8 @@ export const TaskViews = defineView({
      *     same board renders them as real `<h3>`s — `OPEN 5 · IN PROGRESS 1 ·
      *     DONE 20 · SKIPPED 0`.
      *
-     *     A kanban whose columns are unlabelled is not a board, and this screen
-     *     is a p0 pre-sales demo. So: lanes off, `source` on the card face
+     *     A kanban whose columns are unlabelled is not a board, and this is
+     *     the screen a manager reads the week from. So: lanes off, `source` on the card face
      *     instead (every card says which caliber it is), and the defect filed
      *     as objectstack-ai/objectui#7303. Re-enabling is the one line in item
      *     1 the day that lands; `test/views.test.ts` records the decision so it
@@ -417,9 +419,9 @@ export const TaskViews = defineView({
       kanban: {
         groupByField: 'status',
         // The card face, in reading order: what it is, when it is owed, whose
-        // it is, where it came from, and the last word on it (#108, deck p17).
+        // it is, where it came from, and the last word on it (#108).
         //
-        // `owner` stays even though the deck lists only source · due ·
+        // `owner` stays even though #108 listed only source · due ·
         // progress: this lens carries no owner filter, so on an account that
         // can see other people's rows a face without a name is ambiguous
         // rather than clean.
