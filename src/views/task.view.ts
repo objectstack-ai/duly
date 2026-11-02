@@ -214,13 +214,16 @@ export const TaskViews = defineView({
      * server-owned or administrative, and a user who may not write a column
      * gets the platform's refusal rather than a silent no-op.
      *
-     * ── The due column needs no `format` key ─────────────────────────────
-     * Measured on @objectstack/console 17.2.0: the date cell defaults to
-     * `format: 'relative'` and derives "due-like" from the FIELD NAME (a
-     * `/(^|_)(due|deadline|…)(_|$)/` test, which `due_date` matches), so it
-     * already renders `Tomorrow` / `In 3 days` / `Overdue 5d` inside a
-     * ±7-day window and an absolute date outside it. The card's fallback — a
-     * `late_after` column standing in for "逾期 N 天" — is therefore NOT
+     * ── The due column needs no `format` key — the FIELD carries it ──────
+     * The relative, red-when-past wording (`Tomorrow` / `In 3 days` /
+     * `Overdue 5d`) comes from `dueLike: true` on `duly_task.due_date`, and
+     * `settledWhen` turns it off for done, skipped and cancelled rows. Up to
+     * console 17.x the cell guessed "deadline" from the field NAME; spec 18
+     * dropped the guess, and for one release this grid showed overdue tasks
+     * as plain dates (#151). The declaration lives on the object, not here,
+     * so every surface that renders the field — this grid, the board card,
+     * the record header — reads it, and `test/due-like.test.ts` pins it.
+     * A `late_after` column standing in for "逾期 N 天" is therefore NOT
      * needed here, and `late_after` stays where it earns its place, on the
      * `late` lens that filters by it.
      */

@@ -56,6 +56,7 @@
  *    reference into `sys_user.name` and `owner` is `required: true`.
  */
 
+import { AdminPermissionSet, MemberPermissionSet } from '../security/permission-sets.js';
 import { DEMO_LOCALE, t } from './demo-locale.js';
 import { ZH_PEOPLE } from './demo-zh.js';
 
@@ -90,6 +91,30 @@ const DOMAIN = 'ardenline.example';
  * constant is written where the reasoning is, not as a dictionary row.
  */
 export const ADMIN: string = DEMO_LOCALE === 'zh-CN' ? '演示管理员' : 'Dev Admin';
+
+/**
+ * The Duly permission sets {@link ADMIN} holds in the demo (#152).
+ *
+ * The account `objectstack dev` mints is a PLATFORM admin — it holds
+ * `admin_full_access` — and that is not the same thing as holding Duly's own
+ * capabilities. Every task and catalog action is gated on an app-declared
+ * `duly.*` capability (`requiredPermissions`), which only a Duly set grants, so
+ * without these the evaluator opens My week, sees their own late task, and
+ * finds no Complete, no Skip and no Undo; the action door answers 403. Nothing
+ * errors: the app simply reads as a report.
+ *
+ * Both sets, because the demo account is both things the fixture makes it:
+ * a person with their own tasks (`duly_member`) and the person who runs the
+ * catalog (`duly_admin`, the only set holding `duly.catalog.apply` / `sync`).
+ *
+ * The grant is its OWN table, `sys_user_permission_set`, keyed by user and set
+ * name — so it binds to the minted account without writing a single field of
+ * its `sys_user` row, which is what keeps that row name-only (see the header).
+ * `test/demo-admin-capabilities.test.ts` resolves the account's capabilities
+ * through the platform's own resolver and fails if any declared action needs
+ * one these sets do not grant.
+ */
+export const ADMIN_PERMISSION_SETS: readonly string[] = [MemberPermissionSet.name, AdminPermissionSet.name];
 
 // ─────────────────────────────────────────────────────────────────────────
 // Business units — three levels, as ADR-0057 D2 models them

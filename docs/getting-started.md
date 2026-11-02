@@ -118,7 +118,10 @@ My week is each person's own list, so open it as the person the duty names.
    permission set, and every Duly object answers them `403
    PERMISSION_DENIED`. Assign **Duly — team member** (`duly_member`) to them;
    managers get **Duly — manager**, and Duly administrators **Duly —
-   administrator**.
+   administrator**. On a plain `pnpm dev` the admin you signed in as holds no
+   Duly set either, so grant yourself **Duly — team member** and **Duly —
+   administrator** the same way to use the app as a person (`pnpm demo` does
+   this for you).
 2. **Accept the invitation.** Read it from the dev outbox:
 
    ```bash

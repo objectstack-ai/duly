@@ -340,6 +340,10 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'object.fields{}.defaultValue': machine('default value or token'),
   'object.fields{}.defaultValue.dialect': machine('expression dialect'),
   'object.fields{}.defaultValue.source': machine('CEL source'),
+  // [@objectstack/spec 18] A deadline field's `settledWhen` (#151) — the CEL
+  // predicate that turns overdue styling off for a finished row.
+  'object.fields{}.settledWhen.dialect': machine('expression dialect'),
+  'object.fields{}.settledWhen.source': machine('CEL source'),
   /**
    * A custom validation rule's refusal sentence (#106, objectstack#14381).
    *

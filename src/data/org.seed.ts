@@ -2,7 +2,7 @@
 
 import type { Seed } from '@objectstack/spec/data';
 
-import { ADMIN, PEOPLE, UNITS } from './demo-org.js';
+import { ADMIN, ADMIN_PERMISSION_SETS, PEOPLE, UNITS } from './demo-org.js';
 
 /**
  * The org: `sys_business_unit`, `sys_user`, and the membership junction
@@ -182,4 +182,34 @@ export const businessUnitMemberSeed: Seed = {
     business_unit_id: person.unit,
     is_primary: true,
   })),
+};
+
+/**
+ * The demo account's Duly permission sets — see {@link ADMIN_PERMISSION_SETS}
+ * for why the platform admin needs them at all (#152).
+ *
+ * A separate dataset rather than a field on the `Dev Admin` row above, and
+ * that is the point: `sys_user_permission_set` is a junction keyed by the
+ * user and the set's NAME (ADR-0131 D4 — no `sys_permission_set` row is
+ * needed to grant a declared set), so the grant reaches the live account
+ * without the loader ever writing to `sys_user`. `user_id` resolves by natural
+ * key against `sys_user.name`, exactly as `owner` does on every `duly_*` row,
+ * which is why the zh-CN rename in `scripts/demo.mjs` has to have landed first
+ * — it already must, for the same reason.
+ *
+ * `organization_id` is not stated. The loader writes from a system context,
+ * and from @objectstack 18 a system write is stamped with the Default
+ * Organization (ADR-0131 D3/D9) — the organization the dev admin's session is
+ * active in. The permission resolver applies an organization-scoped grant only
+ * while its organization is the active tenant, so that stamp is what makes
+ * the grant count on sign-in.
+ *
+ * Keyed on both columns the unique index leads with, so a replay is a no-op
+ * rather than a duplicate grant.
+ */
+export const adminPermissionSetSeed: Seed = {
+  object: 'sys_user_permission_set',
+  externalId: ['user_id', 'permission_set'],
+  mode: 'upsert',
+  records: ADMIN_PERMISSION_SETS.map((set) => ({ user_id: ADMIN, permission_set: set })),
 };

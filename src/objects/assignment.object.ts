@@ -1,5 +1,6 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
+import { P } from '@objectstack/spec';
 import { ObjectSchema, Field } from '@objectstack/spec/data';
 
 /**
@@ -40,7 +41,14 @@ export const Assignment = ObjectSchema.create({
       description: 'Each name becomes one independent task.',
     }),
 
-    due_date: Field.date({ label: 'Due' }),
+    // A deadline, declared — see `duly_task.due_date`. `closed` is the one
+    // terminal status; a `draft` past its date is still late to go out, and a
+    // `dispatched` one is still waiting on people.
+    due_date: Field.date({
+      label: 'Due',
+      dueLike: true,
+      settledWhen: P`record.status == 'closed'`,
+    }),
 
     status: Field.select({
       label: 'Status',
