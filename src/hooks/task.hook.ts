@@ -17,7 +17,9 @@ import type { Hook, HookContext } from '@objectstack/spec/data';
  * joined object (objectstack#14104). Both halves become knowable at a definite
  * instant, so each is resolved at that instant and stored:
  *
- *   `late_after`     = `due_date + grace_days`   · at DISPATCH, by the planner
+ *   `late_after`     = `due_date + grace_days`   · at CREATION — by the planner
+ *                                                   for a dispatched task, here
+ *                                                   for every other one
  *   `completed_late` = `completed_at > late_after` · at COMPLETION, here
  *
  * Neither is a MAINTAINED flag — the shape `AGENTS.md` rule 5 forbids, which
@@ -213,15 +215,56 @@ import type { Hook, HookContext } from '@objectstack/spec/data';
  * `mode: 'record'` has a payload of its own, so there is no batch to leak
  * onto.
  *
+ * ── A task created on a duty gets that duty's grace — not only a dispatched one ──
+ * The planner stamps `late_after` with the duty's grace itself, and through
+ * #52 every other producer fell back to `late_after = due_date`. That was right
+ * for the rows no duty governs — the assignment fan-out creates tasks with
+ * `duty` unset, and a member's own task has none — and wrong for a task created
+ * by hand ON a duty that grants grace: today, any `one_off` duty, which #61
+ * keeps `grace_days` on deliberately and which is dispatched by hand. The
+ * overdue escalation reads the duty and waited out the grace; the Late lens
+ * read the row and listed the owner the morning after the due date (#100).
+ *
+ * So when a row arrives carrying a `duty`, a `due_date` and no stamp, this hook
+ * reads THAT duty's `grace_days` and stamps `due_date + grace` — the planner's
+ * own rule, from the one writer that already holds the pen. A row with no duty
+ * keeps zero grace exactly as before, and a row the planner already stamped is
+ * never read and never rewritten. The update leg's fill-a-blank applies the
+ * same rule, off the row's stored duty, for a task that acquires its due date
+ * after it was created.
+ *
+ * This used to be impossible here: through 17.x the lowered `body` had no
+ * engine to read `duly_duty` with, which is why #100 was filed with a flow and
+ * a producer-side stamp as the options. On 18.2 a hook body runs as
+ * `(async (ctx) => { … })` with `ctx.api`, and `objectstack build` infers the
+ * `api.read` capability from the `ctx.api.object(…).findOne` call below.
+ *
+ * Exactly one column is read — `grace_days`, nothing else of the duty — and it
+ * is read ELEVATED (`runAs: 'system'` on the hook). Without it the read runs
+ * as whoever pressed save, and a creator who cannot see the duty would get
+ * `null` back and a zero-grace deadline: the very defect, re-opened in the
+ * corner of the permission model nobody tests. The deadline a row is born with
+ * must not depend on who created it. Nothing leaks by it — the one number lands
+ * in a `readonly` column of the row being created, against a duty id the
+ * caller already named — and `runAs` governs `ctx.api` alone, not the readonly
+ * strip on this payload or anything else about the write.
+ *
+ * Only a positive whole grace counts. A blank, zero or unreadable value is zero
+ * grace, the same answer the planner gives a null `grace_days`. (A duty id
+ * that resolves to nothing never gets this far: the engine refuses a dangling
+ * lookup on the write itself — "no duly_duty record has id …".)
+ *
  * ── Why the handler is one self-contained function ───────────────────────
  * `objectstack build` lowers an inline handler into a metadata `body`, and a
  * body ships without its module scope. A handler that referenced a
  * module-level constant or helper still BUILDS — it silently falls back to the
  * legacy bundled runtime module with a warning — so the pressure to keep this
- * self-contained is a build warning, not an error. Keep the field list and the
- * comparisons inside the function.
+ * self-contained is a build warning, not an error. Keep the field list, the
+ * comparisons and the date arithmetic inside the function.
+ * `test/task-hook-body.test.ts` lowers it with the build's own extractor and
+ * runs the result in the real QuickJS runner.
  */
-const stampTaskLifecycle = (ctx: HookContext): void => {
+const stampTaskLifecycle = async (ctx: HookContext): Promise<void> => {
   // `input.<field>` IS the record field on a declarative hook — reads resolve
   // against the payload, writes land in it. The envelope spelling
   // `input.data.<field>` is deliberately NOT used: it works only off the raw
@@ -251,31 +294,57 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
     return completedDay > deadline;
   };
 
+  // `day` plus `days` civil days, in UTC — the same boundary as `dayOf`. Grace
+  // is granted in whole days, so this is calendar arithmetic, not 24h steps.
+  const plusDays = (day: string, days: number): string => {
+    if (days === 0) return day;
+    const at = new Date(`${day}T00:00:00.000Z`);
+    at.setUTCDate(at.getUTCDate() + days);
+    return at.toISOString().slice(0, 10);
+  };
+
+  // The grace the row's duty grants, read off that duty — see the header.
+  // `grace_days` and nothing else. A lookup may arrive as an id or as an
+  // expanded record; anything else, a missing duty, and a blank or
+  // non-positive grace are all zero grace.
+  const graceOf = async (duty: unknown): Promise<number> => {
+    const id = typeof duty === 'string'
+      ? duty
+      : duty !== null && typeof duty === 'object' && typeof (duty as { id?: unknown }).id === 'string'
+        ? (duty as { id: string }).id
+        : '';
+    if (id === '') return 0;
+    if (!ctx.api) {
+      // Both execution surfaces bind `ctx.api`. A context without it is not a
+      // write this hook can stamp correctly, and stamping zero grace instead
+      // would be the defect again with no trace — so refuse it, loudly.
+      throw new Error('duly_task_lifecycle_stamps: ctx.api is unavailable, so the duty\'s grace cannot be read.');
+    }
+    const row = await ctx.api.object('duly_duty').findOne({ where: { id }, fields: ['grace_days'] });
+    const grace = Number(row?.grace_days);
+    return Number.isInteger(grace) && grace > 0 ? grace : 0;
+  };
+
   if (ctx.event === 'beforeInsert') {
     // A brand-new task has just been touched, by definition.
     input.last_update_at = now;
 
-    // ── late_after — the zero-grace fallback, for the paths with no duty ──
+    // ── late_after — the due date plus the row's duty's grace ─────────────
     // The dispatcher stamps this itself, with the duty's own grace
-    // (`dispatch.plan.ts`). Every other producer has no duty to read: the
-    // assignment fan-out creates tasks with `duty` unset, and a member
-    // hand-creating their own task has none either. Zero grace is what "no
-    // duty governs this row" already means to the overdue escalation, so the
-    // two surfaces agree rather than one of them silently never firing.
-    //
-    // ⚠ The one row this is WRONG for is a task created by hand ON A DUTY
-    // that grants grace — today, any `one_off` duty (#61 keeps `grace_days`
-    // on that form deliberately). The escalation reads the duty and waits;
-    // this fallback does not and stamps the due date. Filed as #100 with the
-    // options, because the fix is a producer this handler cannot be: a
-    // lowered `body` ships without its module scope and has no engine to read
-    // `duly_duty` with. It is not a regression — before the stamps existed the
-    // `late` view was grace-free for every task alike.
+    // (`dispatch.plan.ts`), and that stamp is kept as it arrived — no read.
+    // Every other producer gets the same rule here: a task created ON a duty
+    // — by hand, through the form, a one-off above all (#100) — is late
+    // after `due_date + duty.grace_days`, exactly what the overdue escalation
+    // waits out. A row with no duty — the assignment fan-out sets none, and a
+    // member's own task has none — is zero grace, which is what "no duty
+    // governs this row" already means to the escalation.
     //
     // A task with no `due_date` keeps a blank stamp: there is no deadline to
     // derive, and a task with no due date genuinely cannot be late.
     const dueDay = dayOf(input.due_date);
-    if (dueDay !== '' && dayOf(input.late_after) === '') input.late_after = dueDay;
+    if (dueDay !== '' && dayOf(input.late_after) === '') {
+      input.late_after = plusDays(dueDay, await graceOf(input.duty));
+    }
 
     // A row inserted ALREADY done — a seeded history, an import — carries its
     // verdict from the same beat, because both halves are on the payload. The
@@ -335,9 +404,16 @@ const stampTaskLifecycle = (ctx: HookContext): void => {
   // with. Nothing is written instead: an unstamped row stays unstamped, which
   // is where it already was, rather than a stamped row being corrupted. An
   // administrative bulk re-date is left alone, as it is for `last_update_at`.
+  //
+  // The fill applies the insert leg's rule — the row's duty's grace — so a
+  // task dated after it was created is judged the way one dated at creation
+  // is. The duty is read off the payload if the write moves it, else off the
+  // stored row.
   if (ctx.dispatch?.mode !== 'per-row' && dayOf(previous.late_after) === '') {
     const dueDay = dayOf('due_date' in input ? input.due_date : previous.due_date);
-    if (dueDay !== '') input.late_after = dueDay;
+    if (dueDay !== '') {
+      input.late_after = plusDays(dueDay, await graceOf('duty' in input ? input.duty : previous.duty));
+    }
   }
 
   const lateAfter = 'late_after' in input ? input.late_after : previous.late_after;
@@ -478,7 +554,9 @@ export const TaskLifecycleHook: Hook = {
   description:
     'Server-owned columns on duly_task: completed_at and the completed_late verdict on the '
     + 'transition into and out of done, late_after filled at insert for the paths the '
-    + 'dispatcher does not stamp, and last_update_at only when status, progress, note or '
+    + 'dispatcher does not stamp (due date plus the grace of the duty the row carries, read '
+    + 'elevated — grace_days only — or zero grace when it carries none), and last_update_at '
+    + 'only when status, progress, note or '
     + 'skip_reason '
     + 'actually changed — never on an administrative write, which would reset the stagnation '
     + 'signal. Both lateness stamps are write-once: a later change to the duty\'s grace never '
@@ -491,5 +569,10 @@ export const TaskLifecycleHook: Hook = {
   // stamps were not applied is the exact silent corruption the
   // `completed_at_required_when_done` rule exists to make impossible.
   onError: 'abort',
+  // Elevated for the one `ctx.api` call this hook makes: reading `grace_days`
+  // off the duty the row names. The deadline a row is born with must not
+  // depend on whether its creator can see that duty — see the module header.
+  // Governs `ctx.api` only; the readonly strip on this payload is unchanged.
+  runAs: 'system',
   handler: stampTaskLifecycle,
 };
