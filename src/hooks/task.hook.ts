@@ -353,6 +353,37 @@ const stampTaskLifecycle = async (ctx: HookContext): Promise<void> => {
     if (input.status === 'done') {
       input.completed_late = completedLate(input.completed_at, input.late_after);
     }
+
+    // ── business_unit — the owner's unit, on a caller's insert (#176) ───────
+    // A member or manager cannot name `business_unit`, `source` or `owner`:
+    // the Duly permission sets lock all three (`TASK_PROVENANCE_LOCK`,
+    // `src/security/permission-sets.ts`), so the platform refuses a payload
+    // that names one, and `owner` is its default — the writer. The system
+    // writers carry their own unit: the dispatcher copies the duty's, the
+    // fan-out reads the assignee's, the seed writes history. A caller's task
+    // with no unit is the remaining case, and it gets the owner's
+    // `primary_business_unit_id` — the rung the fan-out already reads for a
+    // task with no duty. The field lock judges the caller's payload, never
+    // what a hook derives, so this write lands. A caller the lock does not
+    // bind (a platform administrator) and who names a unit keeps it.
+    const session = ctx.session;
+    const ownerId = typeof input.owner === 'string'
+      ? input.owner
+      : input.owner !== null && typeof input.owner === 'object' && typeof (input.owner as { id?: unknown }).id === 'string'
+        ? (input.owner as { id: string }).id
+        : '';
+    const unitGiven = typeof input.business_unit === 'string' && input.business_unit !== '';
+    if (session?.isSystem !== true && !unitGiven && ownerId !== '') {
+      if (!ctx.api) {
+        throw new Error('duly_task_lifecycle_stamps: ctx.api is unavailable, so the owner\'s business unit cannot be read.');
+      }
+      const owner = await ctx.api.object('sys_user').findOne({
+        where: { id: ownerId },
+        fields: ['primary_business_unit_id'],
+      });
+      const unit = owner?.primary_business_unit_id;
+      if (typeof unit === 'string' && unit !== '') input.business_unit = unit;
+    }
     return;
   }
 
@@ -563,15 +594,17 @@ export const TaskLifecycleHook: Hook = {
     + 'moves them. On a predicate (bulk) write the row-conditional stamps are handled by '
     + 'ADR-0058 Addendum II D3: one payload for the whole batch, so a re-stamp of an '
     + 'already-done row and a completion that would be stamped late are both refused, and '
-    + 'last_update_at is not stamped at all.',
+    + 'last_update_at is not stamped at all. On an insert by a caller (not a system write) that '
+    + 'carries no business_unit, it is the owner\'s primary business unit, read elevated.',
   // Explicit because it is load-bearing rather than a default worth inheriting:
   // if this handler throws, the write MUST be refused. Committing a task whose
   // stamps were not applied is the exact silent corruption the
   // `completed_at_required_when_done` rule exists to make impossible.
   onError: 'abort',
-  // Elevated for the one `ctx.api` call this hook makes: reading `grace_days`
-  // off the duty the row names. The deadline a row is born with must not
-  // depend on whether its creator can see that duty — see the module header.
+  // Elevated for the two `ctx.api` reads this hook makes: `grace_days` off the
+  // duty the row names, and the owner's `primary_business_unit_id`. The
+  // deadline a row is born with must not depend on whether its creator can see
+  // that duty — see the module header.
   // Governs `ctx.api` only; the readonly strip on this payload is unchanged.
   runAs: 'system',
   handler: stampTaskLifecycle,

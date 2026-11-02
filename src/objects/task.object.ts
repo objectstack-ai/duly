@@ -113,6 +113,12 @@ export const Task = ObjectSchema.create({
       description: 'Empty for a bare one-off that was never modelled as a duty.',
     }),
 
+    // `owner`, `source` and `business_unit` are not a caller's to write
+    // (#176): the Duly permission sets lock all three
+    // (`TASK_PROVENANCE_LOCK`, `src/security/permission-sets.ts`). The
+    // defaults and `task.hook.ts` fill them for a caller; the dispatcher, the
+    // fan-out and the seed write them as the system. Not `readonly` here — a
+    // readonly field skips `required`, and `owner` must stay required.
     owner: Field.user({
       label: 'Owner',
       group: 'basics',
@@ -123,7 +129,7 @@ export const Task = ObjectSchema.create({
     business_unit: Field.lookup('sys_business_unit', {
       label: 'Business unit',
       group: 'basics',
-      description: 'Denormalised from the owner at dispatch so rollups survive a later transfer.',
+      description: 'Denormalised from the owner when the task is created, so rollups survive a later transfer. Set by the server, never by hand.',
     }),
 
     assignment: Field.lookup('duly_assignment', {
