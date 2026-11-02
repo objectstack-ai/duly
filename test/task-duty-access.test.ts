@@ -132,8 +132,10 @@ beforeAll(async () => {
 
   // Sam's duty, written by an administrator: `owner_id` is not Owen's.
   otherDuty = String((await data.insert('duly_duty', dutyRow('Sam\'s duty', 'user_sam'), { context: SYSTEM })).id);
-  // A duty Owen declared himself, through his own door: his to read.
-  const own = await attempt(() => dispatcher.handleData('/duly_duty', 'POST', dutyRow('Owen\'s duty', 'user_owen'), {}, OWEN));
+  // A duty Owen declared himself, through his own door: his to read. Without
+  // `owner` and `source`, which a member may not name since #178.
+  const { owner: _owner, source: _source, ...ownRow } = dutyRow('Owen\'s duty', 'user_owen');
+  const own = await attempt(() => dispatcher.handleData('/duly_duty', 'POST', ownRow, {}, OWEN));
   expect(own.thrown, 'Owen creating his own duty').toBeUndefined();
   owenDuty = createdId(own);
   missing = 'no-such-duty-174';
@@ -337,7 +339,8 @@ describe('the guard as it ships — lowered, and run in QuickJS', () => {
       executionContext: await buildContextForUser(bodyKernel.getService('objectql'), 'user_owen', Date.now(), grant.organization_id),
     };
     samDuty = String((await bodyData.insert('duly_duty', dutyRow('Sam\'s duty', 'user_sam'), { context: SYSTEM })).id);
-    const own = await bodyDispatcher.handleData('/duly_duty', 'POST', dutyRow('Owen\'s duty', 'user_owen'), {}, bodyOwen);
+    const { owner: _owner, source: _source, ...ownRow } = dutyRow('Owen\'s duty', 'user_owen');
+    const own = await bodyDispatcher.handleData('/duly_duty', 'POST', ownRow, {}, bodyOwen);
     ownDuty = createdId({ ok: own });
   }, 180_000);
 

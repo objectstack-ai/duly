@@ -1,7 +1,7 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
 import { definePermissionSet } from '@objectstack/spec/security';
-import type { ObjectPermission } from '@objectstack/spec/security';
+import type { FieldPermission, ObjectPermission } from '@objectstack/spec/security';
 
 /**
  * The three capability bundles. Permission sets are the ONLY capability
@@ -253,6 +253,60 @@ const ADMIN_OBJECTS = {
 } satisfies Record<string, ObjectPermission>;
 
 /**
+ * Who may write where a duty CAME FROM (#178).
+ *
+ * Three `duly_duty` columns say who put a duty on someone, and on whom:
+ * `source` (the caliber every metric filters on — `catalog` and `assigned`
+ * are scored, `self` is not), `owner` (who owes it) and `business_unit` (the
+ * rollup anchor). Measured on 18.2.0 before this map existed: a member or a
+ * manager could create a duty with `source: catalog`, somebody else as
+ * `owner` and a foreign unit, through data POST and MCP `create_record`, and
+ * it was stored exactly as sent — a scored duty on a person who never saw it.
+ *
+ * ── Who writes them instead ─────────────────────────────────────────────
+ *  - `duly_catalog_apply` / `duly_catalog_sync` and the seed: system writes,
+ *    which field-level security never sees (an action body runs elevated; the
+ *    seed loader runs `isSystem`).
+ *  - The console Import of `samples/duties.csv`, and any correction by hand:
+ *    a `duly_admin`, whose set lifts the lock below.
+ *  - Everybody else gets the defaults: `source: 'self'`, `owner` = the
+ *    writer, and the unit `duly_duty_unit_stamp` (src/hooks/duty.hook.ts)
+ *    reads off the owner. A member or manager owns only what they write; the
+ *    manager's door to a report's work is `duly_assignment`, which makes tasks.
+ *
+ * ── Why field-level security and not `readonly` ─────────────────────────
+ *  - The console Import maps a `readonly` field as "match only" and never
+ *    writes it (`docs/import/walkthrough.md`). `duties.csv` carries all three,
+ *    so `readonly` would land every imported catalog duty as `self`, with no
+ *    unit and nothing erroring.
+ *  - `readonly` validates a field shape-only, so `owner`'s `required` would
+ *    stop being checked for the system writers that rely on it (#176).
+ *  - FLS REFUSES a caller who names the field — `403 Field write denied` on
+ *    REST and MCP — instead of silently rewriting it. And the console honours
+ *    it: measured on 18.2.0, the create form renders Source and Business unit
+ *    read-only and leaves them out of the POST, so a member's form create
+ *    still lands (`self`, their own unit).
+ *
+ * ── How the three sets combine ──────────────────────────────────────────
+ * Field permissions merge most-permissively across a caller's sets, and only
+ * a set that DECLARES a field votes on it. Every Duly admin also holds
+ * `duly_member`, so `duly_admin` must declare the same three fields as
+ * editable — leaving them out would not lift the member's lock. A position
+ * that binds `duly_admin` alone gets the same answer.
+ */
+const DUTY_PROVENANCE_FIELDS = ['source', 'owner', 'business_unit'] as const;
+
+const dutyProvenance = (editable: boolean): Record<string, FieldPermission> =>
+  Object.fromEntries(
+    DUTY_PROVENANCE_FIELDS.map((field) => [`duly_duty.${field}`, { readable: true, editable }]),
+  );
+
+/** Member and manager: the defaults decide. */
+const DUTY_PROVENANCE_LOCKED = dutyProvenance(false);
+/** Duly admin: Import and corrections. */
+const DUTY_PROVENANCE_EDITABLE = dutyProvenance(true);
+
+/**
  * `duly_member` — the baseline every Duly user holds.
  *
  * Not `isDefault: true`, and that is forced rather than chosen: the ADR-0090
@@ -267,6 +321,7 @@ export const MemberPermissionSet = definePermissionSet({
   description:
     'Owns duties, works tasks, keeps a personal work log. Everything is scoped to the holder’s own records.',
   objects: MEMBER_OBJECTS,
+  fields: DUTY_PROVENANCE_LOCKED,
   systemPermissions: [DULY_TASK_UPDATE_STATUS],
   tabPermissions: { duly_app: 'visible' },
 });
@@ -280,6 +335,7 @@ export const ManagerPermissionSet = definePermissionSet({
   description:
     'Everything a team member has, plus unit-and-below read on tasks and duties and the ability to raise assignments. Writes no one else’s status.',
   objects: MANAGER_OBJECTS,
+  fields: DUTY_PROVENANCE_LOCKED,
   systemPermissions: [DULY_TASK_UPDATE_STATUS],
   tabPermissions: { duly_app: 'visible' },
 });
@@ -297,6 +353,7 @@ export const AdminPermissionSet = definePermissionSet({
   description:
     'Everything a manager has, plus full control of the catalog and an org-wide read of duties. No View All / Modify All, and no widened read on the personal work log.',
   objects: ADMIN_OBJECTS,
+  fields: DUTY_PROVENANCE_EDITABLE,
   systemPermissions: [DULY_TASK_UPDATE_STATUS, DULY_CATALOG_APPLY, DULY_CATALOG_SYNC],
   tabPermissions: { duly_app: 'visible' },
 });

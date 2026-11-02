@@ -88,6 +88,14 @@ export const Duty = ObjectSchema.create({
       ],
     }),
 
+    // ── Who may write `owner`, `business_unit` and `source` (#178) ─────────
+    // Not this object's flags: the field locks on the Duly permission sets
+    // (`src/security/permission-sets.ts`). A member or manager who names any
+    // of the three is refused; the console form shows them read-only and
+    // leaves them out. Apply catalog, the seed and a `duly_admin` (Import,
+    // corrections) write them. Deliberately NOT `readonly`: the Import maps a
+    // readonly field as match-only, and `readonly` would stop `required`
+    // being checked here.
     owner: Field.user({
       label: 'Owner',
       group: 'basics',
@@ -96,6 +104,9 @@ export const Duty = ObjectSchema.create({
       description: 'Exactly one accountable person. Work owed by "the team" is owed by nobody.',
     }),
 
+    // On a hand-made duty, `duly_duty_unit_stamp` (src/hooks/duty.hook.ts)
+    // writes the owner's primary business unit at create. Apply catalog
+    // resolves it from the person's position anchor; the seed names it.
     business_unit: Field.lookup('sys_business_unit', {
       label: 'Business unit',
       group: 'basics',
@@ -122,7 +133,8 @@ export const Duty = ObjectSchema.create({
         // default is only ever reached by a hand-created duty, which is by
         // definition self-declared. Fail-safe direction: a producer that
         // forgets to stamp caliber produces an unscored duty, not a scored
-        // one (#50).
+        // one (#50). Since #178 a member or manager cannot name `source` at
+        // all, so for them this default is the only value there is.
         { label: 'Self-declared', value: 'self', color: '#576B73', default: true },
       ],
     }),
