@@ -394,10 +394,12 @@ describe('last_update_at — the stagnation signal', () => {
     const before = task.last_update_at as string;
 
     await tick();
+    // An administrative write is a system one: `business_unit` is readonly
+    // (#176), so a caller's value is stripped and only the system lands it.
     const rebadged = await data.update('duly_task', {
       id: task.id,
       business_unit: 'bu_north',
-    });
+    }, { context: { isSystem: true } });
 
     expect(rebadged.business_unit).toBe('bu_north');
     expect(
@@ -590,6 +592,8 @@ describe('completed_at on a predicate write — one payload, N rows', () => {
     await data.update('duly_task', { business_unit: 'bu_north' }, {
       multi: true,
       where: { id: { $in: [alreadyDone] } },
+      // A backfill is a system write: `business_unit` is readonly (#176).
+      context: { isSystem: true },
     });
 
     const row = await read(alreadyDone);

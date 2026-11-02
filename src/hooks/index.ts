@@ -14,8 +14,8 @@
 // while empty and infers correctly the moment something is pushed into it.
 
 import { DutyTimezoneGuard } from './duty.hook.js';
-import { TaskDutyReadGuard, TaskLifecycleHook } from './task.hook.js';
+import { TaskDutyReadGuard, TaskLifecycleHook, TaskOwnerGuard } from './task.hook.js';
 
-export { DutyTimezoneGuard, TaskDutyReadGuard, TaskLifecycleHook };
+export { DutyTimezoneGuard, TaskDutyReadGuard, TaskLifecycleHook, TaskOwnerGuard };
 
-export const dulyHooks = [DutyTimezoneGuard, TaskLifecycleHook, TaskDutyReadGuard];
+export const dulyHooks = [DutyTimezoneGuard, TaskLifecycleHook, TaskDutyReadGuard, TaskOwnerGuard];
