@@ -238,6 +238,13 @@ export const dulyChinese = defineTranslationBundle({
             help: '由系统写入。派发作业将其设为它最近一次创建过任务的周期。',
           },
         },
+        // 记录页的四个分区（#147）。键名就是 `fieldGroups[].key`。
+        _sections: {
+          basics: { label: '基本' },
+          schedule: { label: '周期' },
+          review: { label: '状态与审核' },
+          history: { label: '历史' },
+        },
         _views: {
           mine: { label: '我的职责' },
           to_confirm: { label: '待我确认' },
@@ -485,6 +492,11 @@ export const dulyChinese = defineTranslationBundle({
           },
           active: { label: '启用' },
         },
+        // 记录页的两个分区（#147），与职责的「基本 / 周期」对应。
+        _sections: {
+          basics: { label: '基本' },
+          schedule: { label: '周期' },
+        },
         _views: {
           default: { label: '岗位职责库' },
         },
@@ -552,6 +564,11 @@ export const dulyChinese = defineTranslationBundle({
           },
           task_count: { label: '任务数' },
         },
+        // 记录页的两个分区（#147）。
+        _sections: {
+          basics: { label: '基本' },
+          progress: { label: '进展' },
+        },
         _views: {
           sent_by_me: { label: '我发出的' },
           default: { label: '指派' },
@@ -591,6 +608,11 @@ export const dulyChinese = defineTranslationBundle({
             label: '关联任务',
             help: '选填。把一条记录挂到某个组织认定的职责上，同时不让这条记录进入它的任何计分。',
           },
+        },
+        // 记录页的两个分区（#147）。
+        _sections: {
+          basics: { label: '基本' },
+          sharing: { label: '谁能看到' },
         },
         _views: {
           default: { label: '工作日志' },

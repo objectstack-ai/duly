@@ -37,9 +37,35 @@ export const Duty = ObjectSchema.create({
   // sets in `src/security/`, never through an org-wide default.
   sharingModel: 'private',
 
+  /**
+   * The record page, in four sections (#147), the same mechanism as
+   * `duly_task`'s (#108): a field's `group` names a `key` here, in-group order
+   * is the order of `fields` below, and the console resolves each heading as
+   * `objects.duly_duty._sections.<key>.label`.
+   *
+   * Declaring the groups is also what puts four fields on the page in the
+   * lint's eyes. `description`, `catalog_item`, `timezone` and
+   * `last_dispatched_period` were drawn only by the synthesized layout's
+   * ungrouped bucket, which `field-no-consumers` does not count. Each is meant
+   * to be read by a person: the acceptance bar, where the duty came from, the
+   * zone its periods are computed in, and how far the dispatcher has got.
+   * `timezone` and `last_dispatched_period` are also read by the dispatch
+   * job, but in its handler code, which the lint cannot see.
+   *
+   * `history` is exactly the server-owned stamps, as on the task, and is
+   * pinned the same way in `test/invariants.test.ts`.
+   */
+  fieldGroups: [
+    { key: 'basics', label: 'Basics', icon: 'clipboard-list' },
+    { key: 'schedule', label: 'Schedule', icon: 'calendar-clock' },
+    { key: 'review', label: 'Status and review', icon: 'badge-check' },
+    { key: 'history', label: 'History', icon: 'history', collapse: 'collapsed' },
+  ],
+
   fields: {
     name: Field.text({
       label: 'Duty',
+      group: 'basics',
       required: true,
       searchable: true,
       maxLength: 200,
@@ -47,11 +73,13 @@ export const Duty = ObjectSchema.create({
 
     description: Field.markdown({
       label: 'What "done" means',
+      group: 'basics',
       description: 'The acceptance bar, in the owner\'s own words. Optional — an unfilled one is not a blocker.',
     }),
 
     form: Field.select({
       label: 'Form',
+      group: 'schedule',
       required: true,
       options: [
         { label: 'Recurring', value: 'recurring', color: '#2E7C8E', default: true },
@@ -62,6 +90,7 @@ export const Duty = ObjectSchema.create({
 
     owner: Field.user({
       label: 'Owner',
+      group: 'basics',
       required: true,
       defaultValue: 'current_user',
       description: 'Exactly one accountable person. Work owed by "the team" is owed by nobody.',
@@ -69,6 +98,7 @@ export const Duty = ObjectSchema.create({
 
     business_unit: Field.lookup('sys_business_unit', {
       label: 'Business unit',
+      group: 'basics',
       description: 'Rollup anchor. Set from the owner\'s position on create.',
     }),
 
@@ -81,6 +111,7 @@ export const Duty = ObjectSchema.create({
     // a derived flag is one more thing that can drift out of step with it.
     source: Field.select({
       label: 'Source',
+      group: 'basics',
       required: true,
       options: [
         { label: 'Role catalog', value: 'catalog', color: '#16515F' },
@@ -98,6 +129,7 @@ export const Duty = ObjectSchema.create({
 
     catalog_item: Field.lookup('duly_catalog_item', {
       label: 'Catalog item',
+      group: 'basics',
       description: 'Set when this duty was instantiated from a role catalog, so catalog edits can be replayed.',
     }),
 
@@ -132,6 +164,7 @@ export const Duty = ObjectSchema.create({
     //    form-gated. Only `standing`, which never has a task, loses it.
     frequency: Field.select({
       label: 'Frequency',
+      group: 'schedule',
       options: [
         { label: 'Daily', value: 'daily' },
         { label: 'Weekly', value: 'weekly' },
@@ -147,6 +180,7 @@ export const Duty = ObjectSchema.create({
 
     due_anchor: Field.select({
       label: 'Due date anchored to',
+      group: 'schedule',
       options: [
         { label: 'Start of period', value: 'period_start' },
         { label: 'End of period', value: 'period_end' },
@@ -246,6 +280,7 @@ export const Duty = ObjectSchema.create({
     // and the lookback is the half that is not free (see the flow).
     due_offset_days: Field.number({
       label: 'Offset (days, 0 = anchor day)',
+      group: 'schedule',
       defaultValue: F`record.form != "recurring" ? null : 0`,
       scale: 0,
       min: -366,
@@ -255,6 +290,7 @@ export const Duty = ObjectSchema.create({
 
     lead_days: Field.number({
       label: 'Lead time (days)',
+      group: 'schedule',
       defaultValue: F`record.form != "recurring" ? null : 7`,
       scale: 0,
       min: 0,
@@ -264,6 +300,7 @@ export const Duty = ObjectSchema.create({
 
     grace_days: Field.number({
       label: 'Grace (days)',
+      group: 'schedule',
       defaultValue: F`record.form == "standing" ? null : 0`,
       scale: 0,
       min: 0,
@@ -276,6 +313,7 @@ export const Duty = ObjectSchema.create({
     // server's.
     timezone: Field.text({
       label: 'Timezone',
+      group: 'schedule',
       defaultValue: 'UTC',
       maxLength: 64,
       description: 'IANA name (e.g. Europe/Berlin). Period boundaries and due dates are computed here.',
@@ -284,6 +322,7 @@ export const Duty = ObjectSchema.create({
     // ── Lifecycle ─────────────────────────────────────────────────────────
     status: Field.select({
       label: 'Status',
+      group: 'review',
       required: true,
       options: [
         { label: 'Active', value: 'active', color: '#35674D', default: true },
@@ -308,6 +347,7 @@ export const Duty = ObjectSchema.create({
     // pair of custom buttons that would not appear.
     review_status: Field.select({
       label: 'Review status',
+      group: 'review',
       required: true,
       // ── Each option's lifecycle `kind`, which the stepper draws ──────────
       // `@objectstack/spec` 18 requires `kind` on every option of the field
@@ -382,17 +422,19 @@ export const Duty = ObjectSchema.create({
 
     review_note: Field.textarea({
       label: 'Return reason',
+      group: 'review',
       description: 'Why the duty was sent back, in words the owner can act on. Required to return one (`returned_needs_note`), and deliberately not cleared afterwards — the last return is worth reading while the correction is being made.',
     }),
 
-    effective_from: Field.date({ label: 'Effective from' }),
-    effective_to: Field.date({ label: 'Effective to' }),
+    effective_from: Field.date({ label: 'Effective from', group: 'schedule' }),
+    effective_to: Field.date({ label: 'Effective to', group: 'schedule' }),
 
     // Written by the dispatcher, by nobody else. This is what makes dispatch
     // idempotent when the unique index alone is not enough to reason about
     // (e.g. a backfill run): the dispatcher reads it to know where it got to.
     last_dispatched_period: Field.text({
       label: 'Last dispatched period',
+      group: 'history',
       readonly: true,
       maxLength: 16,
       description: 'Server-owned. Set by the dispatch job to the last period key it created a task for.',
