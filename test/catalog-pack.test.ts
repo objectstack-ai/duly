@@ -9,6 +9,7 @@ import { SecurityPlugin } from '@objectstack/plugin-security';
 import { SharingServicePlugin } from '@objectstack/plugin-sharing';
 
 import { CATALOG_PACKS, PACK_ENV_VAR, packCatalogRows, requestedPacks, type CatalogPack } from '../src/data/packs/index.js';
+import { EHS_PLANT } from '../src/data/packs/ehs-plant/pack.js';
 import { FOOD_SAFETY } from '../src/data/packs/food-safety/pack.js';
 
 /**
@@ -102,6 +103,40 @@ describe('the food-safety pack — what the card asks of it', () => {
       for (const column of ['frequency', 'due_anchor', 'due_offset_days', 'lead_days', 'grace_days']) {
         expect(row, `${row.name}.${column}`).not.toHaveProperty(column);
       }
+    }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('the ehs-plant pack — obligation types, never an article (#137)', () => {
+  it('has the 30–40 duties its card asks for', () => {
+    expect(EHS_PLANT.duties.length).toBeGreaterThanOrEqual(30);
+    expect(EHS_PLANT.duties.length).toBeLessThanOrEqual(40);
+  });
+
+  it.each(['manager', 'safety', 'fire', 'equipment', 'waste', 'health', 'shift'])(
+    'has the position %s the card names',
+    (position) => {
+      expect(Object.keys(EHS_PLANT.positions)).toContain(position);
+    },
+  );
+
+  it('cites a reference on every row', () => {
+    for (const duty of EHS_PLANT.duties) expect(duty.reference, duty.name.en).toBeDefined();
+  });
+
+  // The card: reference the obligation type, never a named regulation's
+  // article text. So no article, clause or section number in either language.
+  it.each([
+    ['an article in Chinese', /第[一二三四五六七八九十百零\d]+条/],
+    ['an article in English', /\bArt(icle)?\.?\s*\d/i],
+    ['a section sign', /§/],
+    ['a clause number', /\b\d+\.\d+/],
+    ['a quotation', /[“”"]/],
+  ])('cites no %s', (_what, pattern) => {
+    for (const duty of EHS_PLANT.duties) {
+      expect(duty.reference!.zh, duty.name.en).not.toMatch(pattern);
+      expect(duty.reference!.en, duty.name.en).not.toMatch(pattern);
     }
   });
 });

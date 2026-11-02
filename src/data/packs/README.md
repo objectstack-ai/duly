@@ -8,7 +8,7 @@ A pack is **data only**. It adds rows to the role catalog (`duly_catalog_item`),
 the same rows you would otherwise import from a spreadsheet. It adds no
 screens, fields or automation, and it creates no people, duties or tasks.
 
-> **A pack is a starting point, not legal advice.** The food-safety pack is
+> **A pack is a starting point, not legal advice.** Every pack here is
 > written from public sources. It is not a compliance opinion and not any
 > company's actual list. Check it against the rules that apply to your plant,
 > then change it until it describes your plant.
@@ -18,6 +18,17 @@ screens, fields or automation, and it creates no people, duties or tasks.
 | Id | What it covers | Positions | Duties |
 |:---|:---|:---|:---|
 | `food-safety` | Recurring food-safety duties of a food manufacturer (食品生产企业食品安全周期性履职): the PRC Food Safety Law, GB 14881-2013, SAMR Order No. 60 (日管控 / 周排查 / 月调度) and HACCP | 8 | 38 |
+| `ehs-plant` | Recurring environment, health and safety duties of a mid-size manufacturing plant (工厂 EHS 周期性履职): work safety, fire protection, special equipment, hazardous waste, occupational health, the discharge permit, ISO 45001 / ISO 14001 | 8 | 39 |
+
+The `ehs-plant` pack names the **type of obligation** each duty discharges
+("《消防法》：防火巡查", "PRC Fire Protection Law: fire patrols") and at
+most the public framework it belongs to. It cites no article or clause
+number and quotes no text. Its cadences are common practice, not a statutory
+minimum: a fire-safety key unit or a plant with severe occupational hazards
+may owe more, and the local rule wins. It sits beside an EHS suite rather
+than replacing one: the suite keeps incidents, findings and corrective
+actions; the pack keeps who does which check, how often, and what record
+shows it was done.
 
 ## Turn a pack on
 
@@ -30,7 +41,9 @@ effect on the next start.
 | An empty app (the default) | `pnpm dev` |
 | An empty app with the food-safety catalog in it | `DULY_PACK=food-safety pnpm dev` |
 | The same, in Chinese | `DULY_PACK=food-safety DULY_DEMO_LOCALE=zh-CN pnpm dev` |
+| An empty app with the plant EHS catalog in it | `DULY_PACK=ehs-plant pnpm dev` |
 | The demo (it loads `food-safety` by itself) | `pnpm demo` / `pnpm demo:zh` |
+| The demo with the EHS pack instead | `DULY_PACK=ehs-plant pnpm demo:zh` |
 | The demo without the pack | `DULY_PACK=none pnpm demo` |
 
 On Windows, set the variable first (`set DULY_PACK=food-safety`, or
@@ -41,7 +54,7 @@ On Windows, set the variable first (`set DULY_PACK=food-safety`, or
   demo uses. Starting a second time in the other language adds the other
   language's rows next to the first ones, so start clean
   (`rm -rf .objectstack/data`) when you switch.
-- **Several packs.** Separate their ids with commas: `DULY_PACK=food-safety,another-pack`.
+- **Several packs.** Separate their ids with commas: `DULY_PACK=food-safety,ehs-plant`.
 - **A typo stops the start.** An id that names no pack is refused with the list
   of ids there are. It never loads nothing quietly.
 
@@ -106,7 +119,7 @@ tells you, rather than a duty quietly going wrong.
 
 ### Add one duty
 
-1. Open `src/data/packs/food-safety/pack.ts`.
+1. Open the pack's file, such as `src/data/packs/food-safety/pack.ts`.
 2. Copy an entry from the same position and change it.
 3. Restart with the pack on. The new row is in the role catalog, and the rows
    you already had are left alone.
