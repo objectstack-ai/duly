@@ -307,7 +307,7 @@ describe('the English demo is byte-for-byte what it was', () => {
    * `vitest -u` without anybody reading the diff, and the whole point of this
    * block is that a change to the English demo has to be a deliberate,
    * reviewable edit. These are the strings an evaluator reads on the first
-   * screen and the ones every deck screenshot carries.
+   * screen and the ones every demo screenshot carries.
    */
   const names = (object: string, field: string): string[] =>
     en.rows[object]!.map((row) => String(row[field])).sort();

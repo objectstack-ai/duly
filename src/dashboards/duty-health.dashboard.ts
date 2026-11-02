@@ -62,13 +62,14 @@ import { Dashboard } from '@objectstack/spec/ui';
  * - **The governed filter is already on every measure.** This file neither
  *   adds it nor removes it.
  *
- * ── The p20 set: four cards, and why six tiles is still four cards ───────
+ * ── The four numbers, and why six tiles is still four numbers ───────────
  *
- * The sales deck's p20 is the leadership first screen: four KPI cards and two
- * charts. Read against this file the four are 停滞项 (stagnation), 逾期项
- * (overdue), 按期完成率 (on-time rate) and 清单完备度 (list completeness) —
- * and the first of them is the THREE tiles at the top of this file, not one.
- * That is deliberate and predates the deck: the >14d and >30d thresholds nest,
+ * This is the leadership first screen, and it answers four questions: what
+ * has stopped moving (停滞项, stagnation), what is past its deadline (逾期项,
+ * overdue), how much finished work finished in time (按期完成率, on-time
+ * rate), and how much of the register has been signed off (清单完备度, list
+ * completeness). The first of them is the THREE tiles at the top of this
+ * file, not one. That is deliberate: the >14d and >30d thresholds nest,
  * so two tiles is the one arrangement that cannot be misread as a partition
  * (above), and `oldest_last_update_at` is the date that answers "the worst
  * one" without ranking anybody. Collapsing them to fit a slide count would
@@ -76,10 +77,10 @@ import { Dashboard } from '@objectstack/spec/ui';
  * widget count. `test/dashboard.test.ts` pins the >30d tile's "subset" wording
  * for the same reason.
  *
- * Neither of the two charts already here was retired to make room. "Not
- * moving, by unit" and "Coming up" answer questions the deck's two do not —
- * the earliest actionable signal per unit, and the forward look — and the deck
- * is a sales narrative, not an inventory of what a manager may see. Four
+ * The four charts beside them each answer a question none of the tiles does:
+ * the earliest actionable signal per unit ("Not moving, by unit"), the
+ * forward look ("Coming up"), where the overdue work sits ("Overdue, by
+ * business unit"), and what the register is made of ("Work mix"). Four
  * charts, two rows.
  *
  * ── 逾期項: a plain date filter now, and still not a due-date window ──────
@@ -111,8 +112,9 @@ import { Dashboard } from '@objectstack/spec/ui';
  * outright, and the two are easy to confuse because both are "completeness".
  * `duly_duty_register` carries that distinction in full.
  *
- * The deck also asks for a sub-caption under the number — "N to confirm / M to
- * approve". **The platform cannot render one on a dataset-bound tile today**,
+ * The tile wants a sub-caption under the number — "N to confirm / M to
+ * approve" — so a reader sees what the rate is waiting on. **The platform
+ * cannot render one on a dataset-bound tile today**,
  * measured on objectui rather than assumed:
  *
  *  - `plugin-dashboard/src/DatasetWidget.tsx`, the `isMetric` branch, reads
@@ -140,10 +142,11 @@ import { Dashboard } from '@objectstack/spec/ui';
  * The pie counts `duly_duty.form` over the register: recurring / one-off /
  * standing. It is the only place on this screen a STANDING duty appears at
  * all, because a standing duty never generates a task and every other widget
- * here counts tasks. The description says so, and carries the deck's own
- * caption — the on-time rate counts recurring work only.
+ * here counts tasks. The description says so, and adds that the on-time rate
+ * counts recurring work only, so the slices are not read as the rate's
+ * population.
  *
- * There is no "this month" filter behind the deck's card name, and that is a
+ * There is no "this month" filter behind the card's name, and that is a
  * decision rather than an omission: a duty is a standing definition and has no
  * month. What "this month's work" can honestly mean over duties is the
  * register as it stands now, which is what the measure's `status != retired`
@@ -333,8 +336,8 @@ export const DutyHealthDashboard = Dashboard.create({
     },
 
     /**
-     * 3c. Overdue — the deck's 逾期项, and the second half of what #52 made
-     * expressible.
+     * 3c. Overdue — 逾期项, the second of the four numbers, and the second
+     * half of what #52 made expressible.
      *
      * `tasks_overdue` counts OPEN governed work past its own `late_after`, the
      * deadline stamped at dispatch from the duty's grace. Its neighbour to the
@@ -360,7 +363,7 @@ export const DutyHealthDashboard = Dashboard.create({
     },
 
     /**
-     * 3d. List completeness — the deck's 清单完备度.
+     * 3d. List completeness — 清单完备度, the fourth of the four numbers.
      *
      * Approved duties as a share of the governed register, over
      * `review_status`. NEVER a count of list items per person or per unit:
@@ -473,7 +476,7 @@ export const DutyHealthDashboard = Dashboard.create({
     },
 
     /**
-     * 6. Overdue by unit — the deck's 各部门逾期项分布.
+     * 6. Overdue by unit — 各部门逾期项分布, where the overdue work sits.
      *
      * The same measure as the tile above, split by the org chart, and ordered
      * by the unit DIMENSION exactly like the not-moving chart it sits under:
@@ -509,13 +512,13 @@ export const DutyHealthDashboard = Dashboard.create({
     },
 
     /**
-     * 7. Work mix — the deck's 本月工作构成.
+     * 7. Work mix — 本月工作构成, what the register is made of.
      *
      * The one widget on this screen that counts DUTIES rather than tasks, and
      * therefore the only place a STANDING duty is visible at all: standing work
      * never generates a task, so every other number here is structurally blind
-     * to it. The description says which population it is over and carries the
-     * deck's own caption — the on-time rate counts recurring work only — because
+     * to it. The description says which population it is over and adds that
+     * the on-time rate counts recurring work only — because
      * a composition chart beside a completion rate invites exactly the reading
      * that the rate covers all three slices.
      *
