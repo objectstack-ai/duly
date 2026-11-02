@@ -230,6 +230,8 @@ const OPAQUE: Readonly<Record<string, string>> = {
   'view.gantt': 'gantt binding block — field paths and the view mode',
   'view.timeline': 'timeline binding block — field paths',
   'view.bulkActionDefs[].patch': 'the static update payload — stored field values',
+  // The row action's twin of the bulk def's `patch` (#146).
+  'action.patch': 'the static update payload — stored field values',
   'app.branding': 'brand colours',
   'dashboard.header': 'header display flags',
   'dashboard.widgets[].layout': 'grid geometry',
@@ -560,6 +562,7 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'action.objectName': machine('bound object'),
   'action.icon': machine('icon name'),
   'action.type': machine('handler kind'),
+  'action.operation': machine('data-plane operation'),
   'action.target': machine('handler registration key'),
   'action.variant': machine('button variant'),
   'action.locations[]': machine('placement slots'),

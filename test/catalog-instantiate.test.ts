@@ -577,7 +577,10 @@ describe('handler wiring', () => {
     const wired = new Set(registered().map((c) => `${c.object}:${c.action}`));
 
     for (const action of dulyActions) {
-      if (action.type !== 'script') continue;
+      // A declarative field write (`operation: 'update'`, #146) defaults to
+      // `type: 'script'` and has NO handler by design: the route performs it.
+      // `test/task-actions.test.ts` pins that those have none.
+      if (action.type !== 'script' || action.operation === 'update') continue;
       const keys = [`${action.objectName ?? GLOBAL_ACTION_OBJECT}:${action.name}`, `${GLOBAL_ACTION_OBJECT}:${action.name}`];
       expect(
         keys.some((k) => wired.has(k)),
@@ -609,7 +612,9 @@ describe('handler wiring', () => {
 
   it('each script action names a target, so it cannot 404 for want of a binding', () => {
     for (const action of dulyActions) {
-      if (action.type !== 'script') continue;
+      // Not a declarative field write: `target` is refused beside
+      // `operation: 'update'` (see the loop above).
+      if (action.type !== 'script' || action.operation === 'update') continue;
       expect(action.target).toBe(action.name);
     }
   });
