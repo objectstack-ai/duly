@@ -159,8 +159,9 @@ export interface CatalogApplyEntry {
   /** Id of the duty created by THIS run. Absent for a skip. */
   duty?: string;
   /**
-   * The unit the created duty was anchored to, or `null` when its owner
-   * belongs to none (#179). Absent for a skip: a skipped pair wrote nothing.
+   * The unit the created duty was anchored to, or `null` when none could be
+   * determined for its owner (#179). Absent for a skip: a skipped pair wrote
+   * nothing.
    */
   business_unit?: string | null;
 }
@@ -170,8 +171,9 @@ export interface CatalogApplyEntry {
  * (`outcomeMessages` on the two apply actions, `catalog.actions.ts`).
  *
  *  - `created`: every duty this run created has a business unit.
- *  - `created_unanchored`: at least one has none, because its owner belongs to
- *    no unit. The toast says how many; `unanchored_owners` says who.
+ *  - `created_unanchored`: at least one has none, because no unit could be
+ *    determined for its owner (no primary unit, and no single anchor). The
+ *    toast says how many; `unanchored_owners` says who.
  *  - `nothing_created`: every pair already had its duty.
  */
 export type CatalogApplyOutcome = 'created' | 'created_unanchored' | 'nothing_created';

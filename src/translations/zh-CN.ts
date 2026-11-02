@@ -520,7 +520,7 @@ export const dulyChinese = defineTranslationBundle({
             outcomeMessages: {
               created: '已创建 ${result.created} 条职责。${result.skipped} 条已存在，已跳过。',
               created_unanchored:
-                '已创建 ${result.created} 条职责。其中 ${result.unanchored} 条没有业务单元，因为负责人不属于任何业务单元。${result.skipped} 条已存在，已跳过。',
+                '已创建 ${result.created} 条职责。其中 ${result.unanchored} 条没有业务单元，因为无法确定负责人所属的业务单元。${result.skipped} 条已存在，已跳过。',
               nothing_created: '没有新职责：全部 ${result.skipped} 条都已存在。',
             },
             params: {
@@ -835,7 +835,7 @@ export const dulyChinese = defineTranslationBundle({
         outcomeMessages: {
           created: '已创建 ${result.created} 条职责。${result.skipped} 条已存在，已跳过。',
           created_unanchored:
-            '已创建 ${result.created} 条职责。其中 ${result.unanchored} 条没有业务单元，因为负责人不属于任何业务单元。${result.skipped} 条已存在，已跳过。',
+            '已创建 ${result.created} 条职责。其中 ${result.unanchored} 条没有业务单元，因为无法确定负责人所属的业务单元。${result.skipped} 条已存在，已跳过。',
           nothing_created: '没有新职责：全部 ${result.skipped} 条都已存在。',
         },
         params: {

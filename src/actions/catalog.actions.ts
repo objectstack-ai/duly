@@ -89,7 +89,7 @@ export const CatalogApplyAction = defineAction({
   outcomeMessages: {
     created: 'Created ${result.created} duties. ${result.skipped} already existed and were skipped.',
     created_unanchored:
-      'Created ${result.created} duties. ${result.unanchored} have no business unit, because their owner belongs to none. ${result.skipped} already existed and were skipped.',
+      'Created ${result.created} duties. ${result.unanchored} have no business unit, because none could be determined for their owner. ${result.skipped} already existed and were skipped.',
     nothing_created: 'Nothing new: all ${result.skipped} duties already existed.',
   },
   params: [
