@@ -466,18 +466,45 @@ describe('complete', () => {
   });
 });
 
-describe('the status precondition the handler had, and the route does not (#162)', () => {
-  it('completing a CANCELLED task through the API is accepted today', async () => {
-    // ⚠️ Pins today's behaviour so #162 flips it red on purpose. The handler
-    // answered 409 DULY_TASK_WRONG_STATUS here; the declarative write has no
-    // status precondition, and neither does the data plane the same caller
-    // could already PATCH (member `allowEdit`, `writeScope: 'own'`, no field
-    // block), so the 409 guarded one door of several. The button stays hidden
-    // by `visible`. The declared rule belongs on the object, where every door
-    // passes — a `state_machine` validation on `duly_task.status`, card #162.
+describe('the status precondition, now a rule on the object (#162)', () => {
+  // The handler used to answer 409 DULY_TASK_WRONG_STATUS here. #146 made the
+  // action declarative and pinned the gap (a 200); #162 declared the legal
+  // moves as a `state_machine` rule on `duly_task.status`, so the route now
+  // refuses through the object's own validator — the same refusal the data
+  // plane and MCP give (`test/task-status-transitions.test.ts`). The button
+  // stays hidden by `visible` as well; that is the UI, this is the rule.
+  const refusedMove = (response: NonNullable<HttpDispatcherResult['response']>, from: string, to: string) => {
+    expect(response.status, JSON.stringify(response.body)).toBe(400);
+    expect(response.body?.error?.code).toBe('VALIDATION_FAILED');
+    const field = response.body?.error?.details?.fields?.[0];
+    expect(field?.field).toBe('status');
+    expect(field?.code).toBe('invalid_transition');
+    expect(field?.constraint).toEqual({ from, to });
+  };
+
+  it('completing a CANCELLED task through the route is refused, and nothing is written', async () => {
     const task = await newTask({ status: 'cancelled' });
+    refusedMove(await act(TASK_COMPLETE_ACTION, task.id), 'cancelled', 'done');
+    const row = await read(task.id);
+    expect(row.status).toBe('cancelled');
+    expect(row.completed_at ?? null).toBeNull();
+  });
+
+  it('completing a SKIPPED task through the route is refused', async () => {
+    const task = await newTask({ status: 'skipped', skip_reason: 'Plant down' });
+    refusedMove(await act(TASK_COMPLETE_ACTION, task.id), 'skipped', 'done');
+    expect((await read(task.id)).status).toBe('skipped');
+  });
+
+  it('skipping a DONE task through the route is refused, and the completion survives', async () => {
+    const task = await newTask();
     await ok(TASK_COMPLETE_ACTION, task.id);
-    expect((await read(task.id)).status).toBe('done');
+    const before = await read(task.id);
+    refusedMove(await act(TASK_SKIP_ACTION, task.id, { skip_reason: 'Changed my mind' }), 'done', 'skipped');
+    const after = await read(task.id);
+    expect(after.status).toBe('done');
+    expect(after.completed_at).toBe(before.completed_at);
+    expect(after.skip_reason ?? null).toBeNull();
   });
 });
 

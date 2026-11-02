@@ -430,6 +430,9 @@ export const dulyChinese = defineTranslationBundle({
           skip_needs_reason: {
             message: '请写明这个任务被跳过的原因。',
           },
+          status_transitions: {
+            message: '已完成、已跳过或已取消的任务结果不能再改。已完成或已跳过的任务只能重新打开，已取消的任务不能再变动。',
+          },
         },
       },
 

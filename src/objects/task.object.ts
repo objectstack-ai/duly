@@ -435,5 +435,63 @@ export const Task = ObjectSchema.create({
       message: 'Say why the task was skipped.',
       condition: P`record.status == "skipped" && isBlank(record.skip_reason)`,
     },
+    {
+      // ── An outcome stays an outcome (#162) ──────────────────────────────
+      // `done`, `skipped` and `cancelled` are what happened to a task, and the
+      // on-time rate, the Late lens and every completeness reading are counts
+      // over them. Re-completing a cancelled task, or turning a skipped one
+      // into done, rewrites those numbers after the fact. So the legal moves
+      // are declared here, on the object, where every door passes: the REST
+      // action route, the data-plane PATCH and the MCP data tool all write
+      // through the same rule validator (`test/task-status-transitions.test.ts`
+      // drives each door).
+      //
+      // The two live states move freely, to each other and to any outcome.
+      // The outcomes move back to LIVE only, and only where a reversal the
+      // product ships needs it. Each reversal below is measured, on
+      // @objectstack 18.2.0, from the envelope the platform builds:
+      //
+      //  - `done → open | in_progress`: the toast Undo on complete. The
+      //    console writes back the prior `status` it snapshotted, which is
+      //    whichever live state the task was completed from. The `Undo` row
+      //    action (`duly_task_undo`) is `done → in_progress`.
+      //  - `skipped → open | in_progress`: the toast Undo on skip, same
+      //    shape, with `skip_reason` cleared alongside.
+      //  - `cancelled → nothing`. No shipped action cancels a task, so no
+      //    envelope reverses one; a cancel is a decision the organisation
+      //    took, and an empty row is what makes it terminal.
+      //
+      // Two platform details are load-bearing (the same two the duty's
+      // `review_status_transitions` carries): a state with NO row accepts any
+      // move out of it, so every state is written down, `cancelled: []`
+      // included; and a write that keeps the status (`done → done`, every
+      // whole-record save) is not a transition and is never refused here. The
+      // hook's bulk re-completion guard is a separate refusal.
+      //
+      // No `initialStates`. The card is about moving out of an outcome, and a
+      // task created by hand in `skipped` or `cancelled` is a different
+      // question; `done` is already refused at insert by
+      // `completed_at_required_when_done` above.
+      //
+      // Who is exempt, and why that is not a back door: the platform skips
+      // `state_machine` rules only for `seedReplay` (the seed loader) and
+      // `skipStateMachine` (the REST import's `treatAsHistorical`). An
+      // `isSystem` write is NOT exempt, and nothing in this app needs it to
+      // be: the dispatcher and the assignment fan-out only insert `open`
+      // tasks, and the demo history's second pass writes `last_update_at`
+      // without `status`.
+      name: 'status_transitions',
+      type: 'state_machine',
+      field: 'status',
+      severity: 'error',
+      message: 'A task that is done, skipped or cancelled keeps that outcome. A done or skipped task can only be reopened, and a cancelled task does not move.',
+      transitions: {
+        open: ['in_progress', 'done', 'skipped', 'cancelled'],
+        in_progress: ['open', 'done', 'skipped', 'cancelled'],
+        done: ['open', 'in_progress'],
+        skipped: ['open', 'in_progress'],
+        cancelled: [],
+      },
+    },
   ],
 });
