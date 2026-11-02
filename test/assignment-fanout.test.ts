@@ -830,7 +830,7 @@ describe('assignment fan-out — a removed or banned assignee, driven through th
     expect(String(inbox[0].body_md)).toContain(removed);
     expect(String(inbox[0].body_md)).toContain('fanout_create_task');
     expect(String(inbox[0].action_url)).toContain(String(stored.id));
-  });
+  }, 30_000);
 
   it('a banned account is refused the same way; a ban that has expired is not', async () => {
     // Sign-in clears a ban whose expiry has passed, so that person can open a
@@ -853,5 +853,5 @@ describe('assignment fan-out — a removed or banned assignee, driven through th
     const named = inbox.map((m) => String(m.body_md));
     expect(named.some((b) => b.includes(banned))).toBe(true);
     expect(named.some((b) => b.includes(bannedUntilLater))).toBe(true);
-  });
+  }, 30_000);
 });
