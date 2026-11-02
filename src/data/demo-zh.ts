@@ -35,8 +35,8 @@
  * is a claim about a real customer.
  *
  * ── Machine values are NOT here, deliberately ─────────────────────────────
- * Unit codes (`ARD`, `NGP-QA`), `period_key`s, select values (`in_hand`,
- * `awaiting_feedback`), timezones and frequencies are data the platform
+ * Unit codes (`ARD`, `NGP-QA`), `period_key`s, select values (`started`,
+ * `waiting_on_others`), timezones and frequencies are data the platform
  * matches on, not prose a reader sees. They are identical in both locales;
  * the zh-CN translations bundle is what renders the select values in Chinese,
  * and that is a different mechanism from this file.

@@ -1,11 +1,11 @@
 # Importing an existing duty list — the recorded walk
 
-What a pre-sales demo of "import the list you already have" actually looks
-like, screen by screen, and what the platform's Import was **measured** to do
-with each column.
+What "import the list you already have" actually looks like, screen by
+screen, and what the platform's Import was **measured** to do with each
+column.
 
 Duly writes no import code. The **Import** button on every object list is the
-platform's (`@objectstack/connector-rest` 17.2.0); everything below is that
+platform's (`@objectstack/connector-rest` 18.2.0); everything below is that
 button, driven in a browser against a clean database.
 
 - **Recorded on:** `pnpm dev` (not `pnpm demo` — see [Why a clean
@@ -13,6 +13,10 @@ button, driven in a browser against a clean database.
   the seeded `admin@objectos.ai`.
 - **Files:** the four CSVs in [`samples/`](../../samples).
 - **Result:** 6 + 12 + 21 + 19 rows, `0 skipped`.
+- **Re-recorded on 18.2.0** (#128): the four files, every screenshot, the
+  read-back below and the unresolved-lookup case. The lookup-order table's
+  email row and the empty-database case are from the original 17.2.0
+  recording and were not re-run.
 
 ---
 
@@ -36,8 +40,18 @@ locales, which is why the samples use them.
 
 ![Import step 2 — mapping](02-mapping.png)
 
-`Auto-matched 11 column(s)` for `catalog-items.csv` and 14 for `duties.csv` —
+`Auto-matched 11 columns` for `catalog-items.csv` and 15 for `duties.csv` —
 every column, all at *High confidence*, nothing to adjust by hand.
+
+**Every required field needs a column, defaults or not.** The mapping step
+checks the object's `required` fields against the file and, if one has no
+column, stops with Next disabled: `Can't continue — required field(s) not
+mapped: Review status (review_status)`. That is why `duties.csv` carries
+`review_status` even though the object would default it from `source`
+(`to_confirm` for a catalog row, `to_review` for a self-declared one): on
+17.2.0 the column could be left out, on 18.2.0 it cannot. The sample writes
+exactly what the default would have; never write `approved` there, which the
+object refuses row by row.
 
 Two statuses are worth knowing, because both mean "this column will not be
 written" and neither is an error:
@@ -94,8 +108,15 @@ Setup → People & Organization → **Users** → Import.
 
 ![12 users created](10-result-people.png)
 
-Name and email only. These are **directory rows, not logins** — nobody can sign
-in as them. Real people get invited through Setup → Users → Invite User.
+Name and email only, and each row becomes a **real account**. The import
+sends every person an invitation email — `Dev Admin invited you to
+ObjectStack` — with a link to set their password, valid for 60 minutes; until
+they use it there is no password and nobody can sign in as them. Measured on
+18.2.0: 12 `sys_user` rows, 12 invitation emails logged as `sent`, 12
+password-reset tokens, and no password credentials yet. On a dev box the mail
+goes to the platform's mail log, not a real inbox; on a deployment with mail
+configured it reaches the person, so import people when you mean to invite
+them. A person whose link has expired asks the administrator for a new one.
 
 `manager_id` is deliberately **not** a column: it is read-only and the mapping
 step drops it to `— Skip —`. Set the reporting chain in Setup, not in the CSV.
@@ -104,6 +125,13 @@ step drops it to `— Skip —`. Set the reporting chain in Setup, not in the CS
 
 Duly → Setup → **Role catalog** → Import. 21 rows, no lookups at all — this
 file imports into an otherwise empty database.
+
+`position_code` is free text, and **Apply role catalog** matches it exactly,
+so it is spelled the way people will type it into that dialog: `Plant
+compliance officer`, `Shift supervisor`, `Quality technician` — the same
+spelling `pnpm demo` seeds. Where an item appears in both, the sample and the
+demo agree on its position and cadence; `test/import-samples.test.ts` holds
+them to it.
 
 ### 4 · Duties — `samples/duties.csv` → `duly_duty`
 

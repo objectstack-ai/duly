@@ -18,7 +18,7 @@ Node 22.22.0, pnpm 10.28.0, 2026-10-26.
 | 1 | `pnpm dev` boots empty, with the dev admin able to sign in | ✅ |
 | 2 | No demo rows unless `pnpm demo` | ✅ |
 | 3 | `.objectstack/` and `dist/` are ignored | ✅ |
-| 4 | No demo company or customer named outside `src/data/demo-*` and `samples/` | ❌ — 2 files keep the demo company by design, 11 files keep customer-deck references; see below |
+| 4 | No demo company or customer named outside `src/data/demo-*` and `samples/` | ✅ — 2 files keep the demo company by design; the customer-deck references are gone (#128, re-measured below) |
 | 5 | `package.json` name, description and version fit a scaffold | ✅ |
 | 6 | Licence headers present | ✅ |
 | 7 | The ten-minute path in [getting-started](getting-started.md) runs end to end | ❌ — two platform gaps, see below |
@@ -112,28 +112,14 @@ git grep -c -iE '\bdeck\b|方案|pre-sales' -- src test docs/import
 `README.md` no longer names it (it described the demo by its company name in
 three places; it now says "a fictional manufacturer").
 
-**References to the original customer's sales deck** — not met. Code comments
-and test titles cite the deck's page numbers (`deck p20`, `方案 p7`) as the
-reason for a design choice:
-
-| File | Lines |
-|:---|---:|
-| `src/dashboards/duty-health.dashboard.ts` | 12 |
-| `src/views/task.view.ts` | 8 |
-| `test/views.test.ts` | 5 |
-| `src/translations/zh-CN.ts` | 3 |
-| `src/objects/task.object.ts` | 2 |
-| `test/dashboard.test.ts` | 2 |
-| `src/datasets/duty-health.dataset.ts` | 1 |
-| `test/invariants.test.ts` | 1 |
-| `test/seed-locale.test.ts` | 1 |
-| `test/import-samples.test.ts` | 1 |
-| `docs/import/walkthrough.md` | 1 (`pre-sales demo`) |
-
-None of them reaches a screen, but each one tells the template's next owner to
-go and read a document they do not have. The fix is to restate each reason in
-the product's own terms; it sits outside the files this checklist's card was
-allowed to touch, so it is listed rather than done.
+**References to the original customer's sales deck** — met, re-measured on
+the #128 branch (`@objectstack/*` 18.2.0): the second command above answers
+nothing. Until then 37 lines in 11 files cited the deck's page numbers
+(`deck p20`, `方案 p7`) or a "pre-sales" demo as the reason for a design
+choice, which told the template's next owner to go and read a document they
+do not have. Each is now restated in the product's own terms — the
+leadership first screen and its four questions, the frontline screen, the
+#108 card that asked for the board's face — with no change in behaviour.
 
 ## 5 · Package metadata
 

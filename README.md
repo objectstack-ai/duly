@@ -163,7 +163,7 @@ not as a fork.
 | To change | Where |
 |:---|:---|
 | **The catalog** — what each position owes, how often, with how much lead and grace | Data, not code: the Role catalog and All duties lists, or a fresh import. Per-duty `lead_days` and `grace_days` are ordinary columns. |
-| **The one-tap progress phrases** | `progress` on `src/objects/task.object.ts`; their Chinese in `src/translations/zh-CN.ts` |
+| **The one-tap progress phrases** | `progress` on `src/objects/task.object.ts`; their Chinese in `src/translations/zh-CN.ts` — see [Change the progress phrases](#change-the-progress-phrases) |
 | **The "not moving" thresholds** (> 14 and > 30 days untouched) | `src/datasets/stagnation.dataset.ts` and the dashboard that reads it, `src/dashboards/duty-health.dashboard.ts` |
 | **The languages** | `src/translations/` — English is the source; every authored label needs an `en` entry |
 | **Who sees what** | `src/security/permission-sets.ts` (`duly_member`, `duly_manager`, `duly_admin`) |
@@ -175,6 +175,33 @@ linked here when it lands.
 Every metadata directory is pre-wired into `objectstack.config.ts`, empty ones
 included: add your entry to the named array in your own `src/<type>/index.ts`
 and leave the config alone.
+
+### Change the progress phrases
+
+The four phrases a task's owner picks with one tap — *Started*, *Waiting on
+someone else*, *Blocked*, *Nearly done* (已开始 · 等待他人 · 受阻 · 即将完成) —
+are the options of one field, `duly_task.progress`, and they live in two
+places:
+
+- **English:** the `label` of each option on `progress` in
+  `src/objects/task.object.ts`. The English bundle is generated from it, so
+  there is no second English copy to keep in step.
+- **Chinese:** `objects.duly_task.fields.progress.options` in
+  `src/translations/zh-CN.ts`, keyed by the option's value.
+
+A task stores the option's **value** (`waiting_on_others`), never its label.
+So rewording a phrase, in either language, changes how every existing task
+reads and rewrites no row. Adding a phrase is a new option plus its Chinese
+entry. Renaming or removing a *value* is the one change that is not free:
+tasks already carrying it keep the old value, which no longer matches any
+option, so move those rows to the new value in the same change.
+
+Two rules come with the field. A phrase describes work that is still open:
+whether it is done is `status`, and whether it was on time is
+`completed_late`, so no phrase should say either. And nothing counts, rates or
+ranks the phrases. Picking one does count as activity for "Not moving"
+(`src/hooks/task.hook.ts`), whatever the words are. Run `pnpm validate` and
+`pnpm test` after the edit.
 
 ## Verify before you ship
 

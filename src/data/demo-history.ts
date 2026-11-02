@@ -254,16 +254,20 @@ const IN_PROGRESS_IN_FLIGHT: readonly string[] = [
  *  - **Stalled rows.** "Untouched since dispatch" and "the owner reported
  *    progress" are contradictory claims about the same row. A phrase here
  *    would undercut the one lens the product says is its most valuable.
- *  - **Done rows.** A completed task's report IS its status. Stamping
- *    `on_time` on 151 finished rows would also put a self-reported phrase
- *    beside `completed_late: true` wherever the drift ran over — a screen
- *    disagreeing with itself, and an invitation to read the phrase as the
- *    on-time verdict, which `task.object.ts` says in as many words it is not.
+ *  - **Done rows.** A completed task's report IS its status, and every
+ *    phrase describes work still open (`task.object.ts`). A "nearly done"
+ *    left on a finished row would be a screen disagreeing with itself.
+ *
+ * Between the in-flight spread and the chased rows below, all four phrases
+ * appear, so the column shows the whole vocabulary a deployment ships with.
  */
-const IN_FLIGHT_PROGRESS = ['in_hand', 'distributed', 'awaiting_feedback'] as const;
+const IN_FLIGHT_PROGRESS = ['started', 'waiting_on_others', 'nearly_done'] as const;
 
-/** What a late task that IS being chased says about itself. */
-const CHASED_PROGRESS = 'awaiting_feedback' as const;
+/**
+ * What a late task that IS being chased says about itself: it is overdue
+ * because something is in the way, and its owner has said so.
+ */
+const CHASED_PROGRESS = 'blocked' as const;
 
 /** Notes, so a record detail view is not a wall of empty fields. */
 const NOTES_EN: Readonly<Record<string, string>> = {
@@ -297,7 +301,7 @@ export interface SeededTask extends Omit<TaskDraft, 'status'> {
   skip_reason?: string;
   note?: string;
   /** A preset phrase the owner picked (#108) — absent on stalled and done rows. */
-  progress?: (typeof IN_FLIGHT_PROGRESS)[number] | typeof CHASED_PROGRESS | 'on_time';
+  progress?: (typeof IN_FLIGHT_PROGRESS)[number] | typeof CHASED_PROGRESS;
   /** Written by a SECOND seed pass — an insert can never carry it. See `task.seed.ts`. */
   last_update_at: string;
 }

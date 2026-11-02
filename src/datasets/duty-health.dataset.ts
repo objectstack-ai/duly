@@ -155,7 +155,7 @@ export const DutyHealth = defineDataset({
     },
     {
       /**
-       * STILL OPEN and already past its own deadline — the p20 deck's
+       * STILL OPEN and already past its own deadline — the dashboard's
        * 「逾期项」 tile, and the only lateness measure here that is not about
        * completed work.
        *

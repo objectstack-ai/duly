@@ -591,9 +591,9 @@ describe('lateness is on the screen, and only in the one shape that respects gra
   });
 });
 
-describe('the four numbers the sales deck p20 promises are all on the screen', () => {
+describe('the four numbers the leadership first screen promises are all on it', () => {
   /**
-   * The deck's leadership first screen is four KPI cards: stagnation, overdue,
+   * The leadership first screen answers four questions: stagnation, overdue,
    * on-time rate and list completeness. Two of them arrived late (#52 for the
    * rate, this card for the other two), and the failure mode for a demo screen
    * is not an error — it is a tile quietly missing, which reads as a screen
