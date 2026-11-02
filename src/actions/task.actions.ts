@@ -3,6 +3,8 @@
 import { P, defineAction } from '@objectstack/spec';
 
 import {
+  COMPLETE_PATCH,
+  SKIP_PATCH,
   TASK_COMPLETE_ACTION,
   TASK_OBJECT,
   TASK_SKIP_ACTION,
@@ -33,22 +35,59 @@ import {
  * because a gate is watching.
  *
  * ⚠️ `visible` is a UI hide, not authorization — the button is gone, the
- * route is not. Each handler re-checks the same condition server-side; see
- * `task.handlers.ts`.
+ * route is not. What stands behind it differs by form; see below.
  *
- * ── Why `type: 'script'` and not a declarative field write ────────────────
- * Because no declarative row-action field write exists. The BULK forms of
- * complete and skip ARE declarative — `bulkActionDefs` with
- * `operation: 'update'` and a static `patch`, in `src/views/task.view.ts` —
- * and this asymmetry is the platform gap filed upstream this round. The full
- * argument, including why `type: 'api'` with a hand-written data-API path is
- * not the declarative form, is in the `task.handlers.ts` header.
+ * ── Complete and skip are declarative; undo is not ────────────────────────
+ * Complete and skip are `operation: 'update'` + a static `patch`: the
+ * platform's declarative single-record field write (objectstack#14092; graded
+ * `live` in `@objectstack/spec` 18.2.0 `liveness/action.json`, key `operation`).
+ * The same words as the BULK forms in `src/views/task.view.ts`, and no
+ * handler. `@objectstack/runtime` 18.2.0 `executeDeclarativeUpdateAction`
+ * performs it on the platform action route, and three things follow from
+ * that, each measured in `test/task-actions.test.ts`:
+ *
+ *  1. **Toast Undo.** `undoable: true` is fulfillable on this shape and on
+ *     `type: 'api'` only. The console's `ActionRunner.executeUpdateOperation`
+ *     posts the write, then builds the undo envelope from the row it ran on —
+ *     the prior value of every field in `{ ...patch, ...params }` — and the
+ *     success toast offers Undo. Undo is a data-plane update of those fields,
+ *     as the caller; the hook clears `completed_at` on the way out of done.
+ *  2. **The hook still holds the pen.** The write is a data-plane update
+ *     executed AS THE CALLER, never system-elevated, so `task.hook.ts` and
+ *     the validation rules fire exactly as for a user edit: `completed_at` /
+ *     `completed_late` are stamped, `skip_needs_reason` decides a skip.
+ *  3. **The capability gate is the same gate.** `requiredPermissions` is
+ *     checked by `actionPermissionError` on the REST `/actions` door and the
+ *     MCP door BEFORE the declarative branch, exactly as for a handler.
+ *
+ * What changed underneath, deliberately: the row gate. A handler's
+ * `ctx.engine` is system-elevated, so the old handlers had to re-read the row
+ * under the caller's scope and then write past it. A READ scope wider than
+ * the write scope (a manager's `unit_and_below`) would therefore have let a
+ * manager complete a report's task. The declarative write is checked against
+ * the caller's WRITE scope (`own`), which is the "managers do not enter
+ * status" invariant held by the platform instead of by a re-check. (Read off
+ * the code, not measured: hierarchy scopes need the enterprise runtime, and
+ * this open-edition checkout resolves both to owner-only — AGENTS.md rule 7.)
+ *
+ * What is gone, and why that is not a hole: the handlers' 409 on a wrong
+ * status (completing a cancelled task, skipping a done one). That was never
+ * authorization — the same caller can send the same `{ status }` through the
+ * data plane, which has no such check — so it guarded one door of several.
+ * The declared transition rule belongs on the object, where every door
+ * passes: card #162.
+ * The completion instant is still never re-stamped: a done → done write is
+ * not a transition, and the hook stamps only transitions.
+ *
+ * `duly_task_undo` stays a `script` action with a handler. The toast Undo is
+ * transient; the row action is the reversal that is still there tomorrow, and
+ * on the record page. `task.handlers.ts` carries why it re-checks the row.
  */
 
 /**
  * `duly_task_complete` — the tick.
  *
- * Sends `{ status: 'done' }` and nothing else. `completed_at` is stamped by
+ * Writes `{ status: 'done' }` and nothing else. `completed_at` is stamped by
  * the lifecycle hook on the transition; sending it from here would fight the
  * readonly strip, whose outcome then depends on value equality.
  */
@@ -58,38 +97,40 @@ export const TaskCompleteAction = defineAction({
   label: 'Complete',
   description: 'Mark this task done. One click, no questions — and one click to undo.',
   icon: 'check',
-  type: 'script',
-  target: TASK_COMPLETE_ACTION,
+  // The declarative field write. `type` stays at its default `script` (the
+  // platform action route the write is performed on); `target` is refused
+  // beside it, because there is no handler for one to name.
+  operation: 'update',
+  patch: { ...COMPLETE_PATCH },
   locations: ['list_item', 'record_header'],
   variant: 'primary',
   // Lowest order in the group, so the tick is the primary button in the
   // record header rather than whatever registered first.
   order: 10,
   visible: P`record.status == "open" || record.status == "in_progress"`,
-  // [ADR-0066 D4] `visible` above is a UI hide and the handler's re-read is a
-  // ROW check ("is this row yours to see"). Neither answers the other
+  // [ADR-0066 D4] `visible` above is a UI hide and the caller-scoped write is
+  // a ROW check ("is this row yours to write"). Neither answers the other
   // question — "is completing a task a thing you may do at all" — which is
   // what this declares: 403 on the platform action route and the MCP bridge.
-  // A read-only auditor with unit-wide visibility passes the row check and
-  // must fail this one. Granted by the `duly_member` set, and so by every set
-  // that inherits it.
+  // A read-only auditor with unit-wide visibility must fail this one.
+  // Granted by the `duly_member` set, and so by every set that inherits it.
   requiredPermissions: ['duly.task.update_status'],
-  // No `undoable`. The success toast's Undo is captured on exactly two action
-  // shapes, `operation: 'update'` and `type: 'api'`, and on a `script` action
-  // the flag never produced one — `@objectstack/spec` 17.5 started refusing
-  // it for that reason. So the one-click reversal this action promises ("an
-  // accidental tick costs one click") is `duly_task_undo` below, and always
-  // was: a row action, not a transient toast.
+  // The success toast's Undo. Fulfilled on this shape: the console snapshots
+  // the prior `status` off the row before the write and offers it back.
+  undoable: true,
   refreshAfter: true,
   successMessage: 'Done.',
 });
 
 /**
- * `duly_task_undo` — the reversal, on a just-completed row.
+ * `duly_task_undo` — the reversal, on a completed row.
  *
  * This is the action that makes ticking cheap. It is not a nicety: without it
  * the correct design would be a confirm dialog on every completion, which is
- * the ceremony this product cannot afford.
+ * the ceremony this product cannot afford. The toast Undo on complete is the
+ * fast path and lasts as long as the toast; this row action is the one that
+ * is still there after a reload, on the record page, and for a task ticked
+ * yesterday.
  */
 export const TaskUndoAction = defineAction({
   name: TASK_UNDO_ACTION,
@@ -116,7 +157,9 @@ export const TaskUndoAction = defineAction({
  *
  * The reason is collected by the param dialog, which is correct HERE and only
  * here: `skip_needs_reason` refuses the write without it, so the alternative
- * to the dialog is a button that always fails.
+ * to the dialog is a button that always fails. `required: true` on the param
+ * is enforced server-side too (`enforceActionParams`, ahead of the write), and
+ * the object rule is the authority behind both.
  *
  * The question rides on `description`, not `confirmText`: an action that
  * declares `confirmText` beside non-empty `params` shows two dialogs for one
@@ -129,8 +172,11 @@ export const TaskSkipAction = defineAction({
   description:
     'Skipping is a legitimate outcome — the plant was down, there was nothing to return. Recording why is what keeps skip from becoming a synonym for done.',
   icon: 'skip-forward',
-  type: 'script',
-  target: TASK_SKIP_ACTION,
+  // Declarative, like complete. The static half is the status; the reason is
+  // the param below, and `patch` merges UNDER the collected params, so the
+  // write is `{ status: 'skipped', skip_reason }`.
+  operation: 'update',
+  patch: { ...SKIP_PATCH },
   locations: ['list_item', 'record_more'],
   variant: 'secondary',
   order: 30,
@@ -151,7 +197,10 @@ export const TaskSkipAction = defineAction({
       helpText: 'Stored on the task. Short is fine; blank is not.',
     },
   ],
-  // No `undoable`, for the reason given on complete above.
+  // The toast Undo restores the prior value of BOTH fields written — the
+  // status and the (blank) reason — so an accidental skip leaves no stray
+  // reason behind on a task that is open again.
+  undoable: true,
   refreshAfter: true,
   successMessage: 'Skipped.',
 });
