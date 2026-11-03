@@ -78,15 +78,13 @@ import { TRANSLATABLE_METADATA_TYPES } from '@objectstack/spec/system';
  *                    `objects.<o>.fields.<f>.help`. So `help` is the bundle
  *                    slot for an authored field `description`, which is why
  *                    the key builder below spells it that way.
- *   translateAction  label / confirmText / successMessage only. `description`
- *                    and `params.*` are declared by `TranslationItemSchema`,
- *                    and `@objectstack/rest`'s `validateTranslationReferences`
- *                    lints their KEYS — but `translateAction` applies neither.
- *                    They are authored anyway, for the same reason the gantt's
- *                    `viewMode` stays authored in `src/views/task.view.ts`:
- *                    the key is the spec's own, it is served to API and MCP
- *                    callers, and it starts rendering the moment the resolver
- *                    is fixed. Filed upstream; see the PR body.
+ *   translateAction  label / confirmText / successMessage, and from 18.3
+ *                    also `description`, `outcomeMessages.<o>` and each
+ *                    param's `label` / `helpText` / `placeholder`, read at the
+ *                    same `objects.<o>._actions.<a>` / `globalActions.<a>`
+ *                    addresses this repo already authored (on 17.2 it applied
+ *                    only the first three; the others were authored ahead of
+ *                    the resolver, and 18.3's `translateAction` now reads them).
  *   translateApp     app label / description, and each navigation node's
  *                    label addressed by its stable `id`, at any tree depth.
  *   translateDashboard  dashboard label / description, widget title /
@@ -550,7 +548,13 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   // under `globalActions`. `validateTranslationReferences` refuses the wrong
   // one of the two explicitly, so the branch below is the platform's rule.
   'action.label': translate((c) => actionKey(c, 'label')),
-  'action.description': translate((c) => actionKey(c, 'description')),
+  // `description`, each param's `helpText` and each `outcomeMessages` entry
+  // are template slots from 18.3 (`action-dialog-outcome-copy-template-holes`),
+  // like `successMessage` from 18.2: the sentence sits at `.source`, and the
+  // bundle key stays the action's own `description` / `outcomeMessages.<o>` /
+  // `params.<p>.helpText`, which is where 18.3's `translateAction` reads it.
+  'action.description.source': translate((c) => actionKey(c, 'description')),
+  'action.description.dialect': machine('template dialect'),
   'action.confirmText': translate((c) => actionKey(c, 'confirmText')),
   // A template slot from 18.2, like a bulk action's `confirmText`: the sentence
   // sits at `.source` and keeps the action's own `successMessage` key.
@@ -558,14 +562,17 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'action.successMessage.dialect': machine('template dialect'),
   // Success copy per handler outcome (#179). The bundle address is the
   // action's own entry, `outcomeMessages.<outcome>`, the key the platform's
-  // translation-reference check names; the outcome is the last path segment.
-  'action.outcomeMessages{}': translate((c) => {
-    const outcome = c.path[c.path.length - 1];
+  // translation-reference check names; the outcome is the segment above the
+  // envelope's `.source`.
+  'action.outcomeMessages{}.source': translate((c) => {
+    const [mapKey, outcome] = c.path;
     const base = actionKey(c, 'outcomeMessages');
-    return outcome && base ? [...base, outcome] : undefined;
+    return mapKey === 'outcomeMessages' && outcome && base ? [...base, outcome] : undefined;
   }),
+  'action.outcomeMessages{}.dialect': machine('template dialect'),
   'action.params[].label': translate((c) => actionParamKey(c, 'label')),
-  'action.params[].helpText': translate((c) => actionParamKey(c, 'helpText')),
+  'action.params[].helpText.source': translate((c) => actionParamKeyAt(c, 'helpText')),
+  'action.params[].helpText.dialect': machine('template dialect'),
   'action.params[].placeholder': translate((c) => actionParamKey(c, 'placeholder')),
   'action.name': machine('action name'),
   'action.objectName': machine('bound object'),
@@ -775,6 +782,16 @@ function actionKey(ctx: KeyContext, leaf: string): readonly string[] | undefined
 
 function actionParamKey(ctx: KeyContext, leaf: string): readonly string[] | undefined {
   const param = str(ctx.parent.name);
+  const base = actionKey(ctx, 'params');
+  return param && base ? [...base, param, leaf] : undefined;
+}
+
+/** A param's template slot (`helpText.source`) sits inside the envelope, so the param is found by its index. */
+function actionParamKeyAt(ctx: KeyContext, leaf: string): readonly string[] | undefined {
+  const [paramsKey, paramIndex] = ctx.path;
+  const params = ctx.ids.params;
+  if (paramsKey !== 'params' || !Array.isArray(params) || paramIndex === undefined) return undefined;
+  const param = str((params[Number(paramIndex)] as Rec | undefined)?.name);
   const base = actionKey(ctx, 'params');
   return param && base ? [...base, param, leaf] : undefined;
 }
