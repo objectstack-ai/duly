@@ -177,17 +177,23 @@ describe('Apply catalog on the demo organisation (#179)', () => {
 describe('the toast the console shows for each outcome', () => {
   const OUTCOMES: CatalogApplyOutcome[] = ['created', 'created_unanchored', 'nothing_created'];
   const RESULT_KEYS = new Set<keyof CatalogApplyResult>(['created', 'skipped', 'unanchored']);
+  /** A `{{ result.<key> }}` hole, the only spelling a template slot reads. */
+  const HOLE = /\{\{\s*result\.(\w+)\s*\}\}/g;
 
   for (const name of [CATALOG_APPLY_ACTION, CATALOG_APPLY_TO_PEOPLE_ACTION]) {
     it(`${name} declares one message per outcome, each reading only real result keys`, () => {
-      const action = dulyActions.find((candidate) => candidate.name === name) as { outcomeMessages?: Record<string, string> };
+      // A template slot from 18.3: each entry parses to `{ dialect, source }`.
+      const action = dulyActions.find((candidate) => candidate.name === name) as {
+        outcomeMessages?: Record<string, { dialect: string; source: string }>;
+      };
       expect(Object.keys(action.outcomeMessages ?? {}).sort()).toEqual([...OUTCOMES].sort());
       for (const message of Object.values(action.outcomeMessages ?? {})) {
-        for (const [, key] of message.matchAll(/\$\{result\.(\w+)\}/g)) {
-          expect(RESULT_KEYS.has(key as keyof CatalogApplyResult), `${name}: \${result.${key}}`).toBe(true);
+        expect(message.dialect).toBe('template');
+        for (const [, key] of message.source.matchAll(HOLE)) {
+          expect(RESULT_KEYS.has(key as keyof CatalogApplyResult), `${name}: {{ result.${key} }}`).toBe(true);
         }
       }
-      expect(action.outcomeMessages?.created_unanchored).toContain('${result.unanchored}');
+      expect(action.outcomeMessages?.created_unanchored?.source).toContain('{{ result.unanchored }}');
     });
   }
 
@@ -198,10 +204,13 @@ describe('the toast the console shows for each outcome', () => {
       bundle.objects?.duly_catalog_item?._actions?.[CATALOG_APPLY_TO_PEOPLE_ACTION]?.outcomeMessages,
     ];
     const en = (dulyActions.find((candidate) => candidate.name === CATALOG_APPLY_ACTION) as any).outcomeMessages;
-    const placeholders = (text: string) => [...text.matchAll(/\$\{result\.\w+\}/g)].map((m) => m[0]).sort();
+    const placeholders = (text: string) => [...text.matchAll(HOLE)].map((m) => m[1]).sort();
     for (const messages of zh) {
       expect(Object.keys(messages ?? {}).sort()).toEqual([...OUTCOMES].sort());
-      for (const outcome of OUTCOMES) expect(placeholders(messages[outcome])).toEqual(placeholders(en[outcome]));
+      for (const outcome of OUTCOMES) {
+        expect(placeholders(messages[outcome]).length).toBeGreaterThan(0);
+        expect(placeholders(messages[outcome])).toEqual(placeholders(en[outcome].source));
+      }
     }
   });
 });

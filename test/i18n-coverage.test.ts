@@ -308,12 +308,16 @@ describe('the bundles reach the stack', () => {
     // translator. Re-derived: all four paths are `translate` now, keyed
     // `positions.<name>` and `permissions.<name>`, and zh-CN carries them.
     // This app declares no report, so `report` moves nothing.
+    //
+    // `book` arrived in 18.3.0. Re-derived, nothing moves: this app declares
+    // no book, and no `untranslatable` verdict in the walk rests on books
+    // being absent. So the pin widens with no verdict to revisit.
     expect(
       [...PLATFORM_TRANSLATABLE_TYPES].sort(),
       'the platform\'s translatable metadata types changed — re-derive the '
       + '`untranslatable` verdicts in src/translations/authored-text.ts against the new set',
     ).toEqual([
-      'action', 'app', 'dashboard', 'dataset', 'object', 'page', 'permission', 'picklist', 'position', 'report', 'view',
+      'action', 'app', 'book', 'dashboard', 'dataset', 'object', 'page', 'permission', 'picklist', 'position', 'report', 'view',
     ]);
   });
 });

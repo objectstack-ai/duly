@@ -87,10 +87,10 @@ export const CatalogApplyAction = defineAction({
   // of every per-unit reading, so the toast says how many and why, and the
   // result's `unanchored_owners` says who. Inherited by the twin below.
   outcomeMessages: {
-    created: 'Created ${result.created} duties. ${result.skipped} already existed and were skipped.',
+    created: 'Created {{ result.created }} duties. {{ result.skipped }} already existed and were skipped.',
     created_unanchored:
-      'Created ${result.created} duties. ${result.unanchored} have no business unit, because none could be determined for their owner. ${result.skipped} already existed and were skipped.',
-    nothing_created: 'Nothing new: all ${result.skipped} duties already existed.',
+      'Created {{ result.created }} duties. {{ result.unanchored }} have no business unit, because none could be determined for their owner. {{ result.skipped }} already existed and were skipped.',
+    nothing_created: 'Nothing new: all {{ result.skipped }} duties already existed.',
   },
   params: [
     {

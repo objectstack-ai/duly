@@ -136,55 +136,78 @@ describe('duly_member — wiring', () => {
   });
 });
 
-// ─── Which page opening a person lands on (#113) ─────────────────────────
+// ─── Which page opening a person lands on (#113, objectstack#28979) ───────
 
 /**
- * The console's record-page choice, copied from `@objectstack/console` 18.2.0
- * (`usePageAssignment`, framework chunk) and measured live on `pnpm demo`:
+ * The console's record-page choice from `@objectstack/console` 18.3.0
+ * (`usePageAssignment`, which now reads the app the record is opened in), as
+ * the platform states it on `PageSchema.apps` and measured live on
+ * `pnpm demo`, en and zh:
  *
- *     candidates.find((p) => defaultRecordPageObject(p) === object) ?? candidates[0]
+ *     candidates.find((p) => defaultRecordPageObject(p, app) === object)   // the app's page
+ *       ?? candidates.find((p) => defaultRecordPageObject(p) === object)   // the deployment default
+ *       ?? candidates[0]
  *
- * where `candidates` are the served record pages bound to `object`, in
- * `/api/v1/meta/page` order. The `isDefault` page wins; list order only breaks
- * the case where no page claims the default.
+ * where `candidates` are the served record pages bound to `object`, and `app`
+ * is the NAME of the app the route resolves to (`duly_app` for
+ * `/apps/ai.objectstack.duly/...`; Setup is another app, and names no page
+ * here). On 18.2 the first line did not exist and a person opened
+ * `sys_user_detail` everywhere.
  *
  * This is a COPY of a rule that lives in the console bundle, and a copy cannot
- * see the console change. What it can see is the two inputs that are on disk:
- * our page's `isDefault` and plugin-auth's. Re-measure the rule in the browser
- * after every platform upgrade (open one person from People) and update this
- * copy with what you find. 17.2 resolved by list order alone, which is why the
- * original card asked for a "first in the list" pin; on 18.2 that pin would
- * pass while the member page was unreachable.
+ * see the console change. What it can see is the inputs on disk: our page's
+ * `apps` and `isDefault`, and plugin-auth's. Re-measure the rule in the
+ * browser after every platform upgrade (open one person from People) and
+ * update this copy with what you find.
  */
-const resolveRecordPage = (pages: readonly unknown[], object: string): string | undefined => {
+const resolveRecordPage = (pages: readonly unknown[], object: string, app?: string): string | undefined => {
   const candidates = (pages as Rec[]).filter(
     (candidate) => (candidate.type ?? 'record') === 'record' && candidate.object === object,
   );
-  const chosen = candidates.find((candidate) => defaultRecordPageObject(candidate) === object) ?? candidates[0];
+  const chosen =
+    (app === undefined ? undefined : candidates.find((candidate) => defaultRecordPageObject(candidate, app) === object))
+    ?? candidates.find((candidate) => defaultRecordPageObject(candidate) === object)
+    ?? candidates[0];
   return chosen?.name as string | undefined;
 };
 
-describe('duly_member — what opening a person resolves to (#113)', () => {
+describe('duly_member — what opening a person resolves to (#113, objectstack#28979)', () => {
   // Served order, as measured: the app's pages ahead of plugin-auth's.
   const served = [...(dulyPages as unknown[]), SysUserDetailPage];
+  const appName = ((dulyApps as Rec[])[0] as { name: string }).name;
 
   it('plugin-auth still ships its own default record page for sys_user', () => {
-    // The input that decides the outcome. If this flips, re-measure: the member
-    // page may be reachable by the plain record route again.
+    // The input that decides the outcome outside Duly. If this flips,
+    // re-measure Setup → Users.
     expect(defaultRecordPageObject(SysUserDetailPage)).toBe('sys_user');
   });
 
-  it('on 18.2 a person opens sys_user_detail, NOT duly_member', () => {
-    // The regression this card found, stated rather than hidden. duly_member is
-    // first in the served list and still loses: no key on PageSchema lets an
-    // app outrank another package's default (gap §5).
-    expect(resolveRecordPage(served, 'sys_user')).toBe('sys_user_detail');
+  it('names exactly the Duly app, by its app name', () => {
+    // An app NAME, never the route's package-id segment: the console resolves
+    // the segment to its app and compares the name. A typo here is not
+    // refused anywhere; it silently opens sys_user_detail again.
+    expect(appName).toBe('duly_app');
+    expect(page.apps).toEqual([appName]);
+    expect(defaultRecordPageObject(MemberPage, appName)).toBe('sys_user');
   });
 
-  it('control: without the platform default, the same rule picks duly_member', () => {
-    // So the pin above is measuring plugin-auth's default, not a rule that
-    // could never pick our page.
-    expect(resolveRecordPage(dulyPages as unknown[], 'sys_user')).toBe('duly_member');
+  it('inside Duly a person opens duly_member', () => {
+    expect(resolveRecordPage(served, 'sys_user', appName)).toBe('duly_member');
+  });
+
+  it('outside Duly (Setup → Users) a person still opens sys_user_detail', () => {
+    // The default slot is untouched: Setup keeps its admin page (set password,
+    // ban, impersonate). `apps` is what made that possible; a second
+    // `isDefault` would have taken Setup too, and refuses the boot.
+    expect(resolveRecordPage(served, 'sys_user')).toBe('sys_user_detail');
+    expect(resolveRecordPage(served, 'sys_user', 'setup')).toBe('sys_user_detail');
+  });
+
+  it('control: without `apps`, Duly would open sys_user_detail too', () => {
+    // So the pin above is measuring `apps`, not a rule that always picks our
+    // page.
+    const { apps: _apps, ...unscoped } = page;
+    expect(resolveRecordPage([unscoped, SysUserDetailPage], 'sys_user', appName)).toBe('sys_user_detail');
   });
 });
 

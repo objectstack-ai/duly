@@ -147,8 +147,9 @@ import { definePage } from '@objectstack/spec/ui';
  *     error, and "showing who assigned each" is the one line of this card that
  *     is not fully delivered. Recorded on the issue and filed upstream.
  *
- * **§5 — Opening a person does NOT land here; plugin-auth's default wins**
- * (objectstack#28979; on 17.2 it was objectui#7298).
+ * **§5 — Opening a person lands here only because of `apps`**
+ * (objectstack#28979, shipped in 18.3 as `PageSchema.apps`; on 17.2 it was
+ * objectui#7298).
  * `@objectstack/platform-objects` ships `sys_user_detail`
  * (`type: 'record'`, `object: 'sys_user'`, `isDefault: true`). On 17.2 the
  * console chose between the two pages by list order, and this page happened
@@ -168,9 +169,22 @@ import { definePage } from '@objectstack/spec/ui';
  *     "⋯" menu. It is not on the People row menu, because 18.2 runs a row
  *     url action with no record in context. That is one click more than it
  *     should be, labelled a stopgap, and deleted when #28979 lands.
- *     `isDefault` stays `false`. `test/member-page.test.ts` mirrors the
- *     console's rule and pins that a person resolves to `sys_user_detail`
- *     today, so the day that changes is a red test, not a silent one.
+ *     `isDefault` stays `false`.
+ *   → FROM 18.3: `apps: ['duly_app']`. A record page that names an app opens
+ *     for its object inside that app, before the object's default; everywhere
+ *     else, Setup → Users included, `sys_user_detail` still opens. Measured on
+ *     18.3.0 against a live `pnpm demo`, en and zh: Duly > People > a person
+ *     opens this page in the record drawer, and Setup → Users opens
+ *     `sys_user_detail`. It is also the ONLY entry on 18.3: the console no
+ *     longer renders `duly_member_open` in the person's header menu. Removing
+ *     that stopgap is its own card.
+ *     ⚠️ Known 18.3 limit: the drawer's "Open full page", and the explicit
+ *     `/page/duly_member` route, answer 400. The record-page request refuses
+ *     a related list over a `user` field (`duly_task.owner`), because the
+ *     REST route accepts only lookup and master_detail
+ *     (objectstack#29946). The drawer renders every region.
+ *     `test/member-page.test.ts` mirrors the console's rule and pins both
+ *     answers, in the app and outside it.
  *
  * **§7 — The auto-appended discussion panel cannot be declined by a page, and
  * it carries a comment box** (objectui#7298, the second instance there). Found in the browser, not in the schema.
@@ -223,6 +237,11 @@ export const MemberPage = definePage({
   // already declares `isDefault: true` for this object, and from 18 on a
   // second default refuses the boot (DEFAULT_RECORD_PAGE_CONFLICT).
   isDefault: false,
+  // The app slot, not the deployment default (gap §5, objectstack#28979):
+  // inside Duly a person opens this page; Setup → Users keeps
+  // `sys_user_detail`. An app NAME (`AppSchema.name`), never the route's
+  // package-id segment.
+  apps: ['duly_app'],
 
   regions: [
     // ── 1. Header — who this is ───────────────────────────────────────────

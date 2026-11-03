@@ -422,8 +422,7 @@ const DELIVERY_TERMINAL = new Set(['success', 'failed', 'dead']);
 /**
  * The recipient's language is read per recipient, after fan-out, off
  * `sys_user.locale` (falling back to the deployment default), and handed to
- * the resolver — which matches it exactly, then tries the literal `en-US`
- * floor, and stops. `sys_user.locale` is free-text BCP-47 the user can edit;
+ * the resolver. `sys_user.locale` is free-text BCP-47 the user can edit;
  * it is NOT constrained to `i18n.supportedLocales`.
  *
  * Measured on @objectstack 18.2.0 with the English rows tagged `en`, through
@@ -433,9 +432,16 @@ const DELIVERY_TERMINAL = new Set(['success', 'failed', 'dead']);
  * delivery row's status as well as on the inbox body: a dead letter is not a
  * thrown error anywhere a flow run can see, and the run reports success.
  *
- * `zh` and `zh-TW` land on ENGLISH, not on the zh-CN row. That is what the
- * platform gives today — there is no subtag folding — and it is pinned so the
- * day the resolver learns to fold, this goes red and says so.
+ * On 18.2.0 the resolver matched exactly, then tried the literal `en-US`
+ * floor, and stopped, so `zh` and `zh-TW` landed on ENGLISH. That was pinned
+ * so the day the resolver learned to fold, this would go red and say so.
+ *
+ * It did, on 18.3.0 (objectstack#28880): the built-in loader now folds the
+ * recipient's tag against the template's own locales by the platform's
+ * BCP-47 rules — exact, case-insensitive, base language (`en-GB` → `en`),
+ * then variant expansion (`zh` / `zh-TW` → `zh-CN`) — before the stack's
+ * declared fallback and the `en-US` floor. So `zh` and `zh-TW` now read the
+ * Chinese row; a language the app never authored still gets English.
  */
 describe('a recipient whose locale no row lists gets the en-US floor, not a dead letter', () => {
   const ENGLISH = `This is now on your list. Due ${utcDay(7)}.`;
@@ -444,8 +450,8 @@ describe('a recipient whose locale no row lists gets the en-US floor, not a dead
   /** user id → `sys_user.locale`, and the body that user must receive. */
   const RECIPIENTS: { id: string; locale: string; body: string }[] = [
     { id: 'user_fr', locale: 'fr-FR', body: ENGLISH }, // a language the app never authored
-    { id: 'user_zh_tw', locale: 'zh-TW', body: ENGLISH }, // no folding to zh-CN
-    { id: 'user_zh', locale: 'zh', body: ENGLISH }, // ditto, bare language subtag
+    { id: 'user_zh_tw', locale: 'zh-TW', body: CHINESE }, // folds to zh-CN (18.3, objectstack#28880)
+    { id: 'user_zh', locale: 'zh', body: CHINESE }, // ditto, bare language subtag
     { id: 'user_en_us', locale: 'en-US', body: ENGLISH }, // the floor, matched exactly
     { id: 'user_en_gb', locale: 'en-GB', body: ENGLISH },
     { id: 'user_en', locale: 'en', body: ENGLISH }, // the app's own tag: exact miss, then floor
