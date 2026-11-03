@@ -495,6 +495,7 @@ const VERDICTS: Readonly<Record<string, Verdict>> = {
   'page.kind': machine('page override mode'),
   'page.template': machine('layout template name'),
   'page.object': machine('bound object'),
+  'page.apps[]': machine('app names whose routes open this record page (objectstack#28979)'),
   'page.label': translate((c) => (id(c) ? ['pages', id(c)!, 'label'] : undefined)),
   'page.description': translate((c) => (id(c) ? ['pages', id(c)!, 'description'] : undefined)),
   'page.regions[].name': machine('layout region name'),
