@@ -239,8 +239,10 @@ rejects it. Use `position` (distribution), `permission_set` (capability),
 the platform capability `manage_metadata`, which `src/security/permission-sets.ts`
 grants to nobody — not `duly_member`, not `duly_manager`, not `duly_admin`. The
 overlay a column-header click persists (`PUT /api/v1/meta/view/<name>`, stored in
-`sys_metadata` as `scope: platform`, `owner: null`, org-scoped, replacing the
-declared view for the whole organisation) is reachable only by a **platform
+`sys_metadata` as `scope: platform`, `owner: null`, environment-wide — the row
+has no organization column, and 18.2 answers `Saved customization overlay
+(env-wide, …)` — replacing the declared view for every organisation in the
+deployment) is reachable only by a **platform
 admin** — `isPlatformAdmin: true`, which on a dev box is the `pnpm demo` account
 and in a deployment is whoever holds `admin_full_access`.
 
@@ -337,8 +339,10 @@ Three datasets, in this order, in `defineStack({ data })`:
 //    no sys_user row does not resolve, and because owner is required the whole
 //    task row is refused — "Owner is required" — with the loader also logging
 //    the unresolved reference. Measured: without this, nothing seeds.
+//    sys_user has no `username` column: from @objectstack 18 the loader refuses
+//    a row carrying one — "Unknown field 'username' on object 'sys_user'".
 { object: 'sys_user', externalId: 'name', mode: 'insert',
-  records: [{ name: 'seed_user_alice', username: 'seed_user_alice', /* … */ }] },
+  records: [{ name: 'seed_user_alice', email: 'alice@example.invalid', /* … */ }] },
 
 // 2. The history itself. completed_at rides along on the insert.
 { object: 'duly_task', externalId: 'subject', mode: 'insert',
@@ -358,21 +362,28 @@ succeeds **and** an ordinary caller's identical write is still refused. Keep bot
 halves. A test that only proved "the seed may" would quietly turn `readonly: true`
 into decoration.
 
-### One caveat about which layer refuses
+### Which layer refuses
 
-The insert-path readonly strip is a **boundary** guard: it lives in
-`MetadataProtocolService.createData`, which is what `@objectstack/rest` — and so
-REST, OpenAPI and MCP — writes through. `engine.insert` applies **no** readonly
-strip at all (the update path is different: that strip is inside ObjectQL and is
-`isSystem`-gated). So a direct `data.insert` from in-process code can set a
-readonly column at insert with no context and no warning.
+Both verbs strip a non-system caller's `readonly` value **inside ObjectQL**, and
+`isSystem` is the exemption on both. On insert the strip runs in `engine.insert`
+after the `beforeInsert` hooks, so a key a hook assigned is kept. The stripped
+write still succeeds: the column takes its default, the engine logs a warning and
+reports the drop (`reason: 'readonly'`); it does not throw.
 
-Filed upstream as **objectstack-ai/objectstack#14147**, and pinned as a tripwire in
-`test/seed-history.test.ts` so it goes red when the platform closes it. Practical
-consequence for authoring here: do not read an engine-level test as proof that a
-column is protected — assert against `protocol.createData` when the refusal is the
-thing you care about. Flows are unaffected today because `assignment.flow.ts`
-declares `runAs: 'system'`, which is elevated regardless.
+Measured on `@objectstack/objectql` 18.2.0 — `data.insert('duly_task', …)` with
+`status: 'open'` and a `completed_at`:
+
+| Context | `completed_at` stored | Drop reported |
+|:--------|:----------------------|:--------------|
+| none | `null` | `completed_at`, `readonly` |
+| `{ isSystem: false }` | `null` | `completed_at`, `readonly` |
+| `{ isSystem: true }` | the value sent | none |
+
+So an engine-level test now proves the same refusal `protocol.createData` does.
+Through 17.3 it did not: the insert strip lived only at the API boundary, and
+`engine.insert` kept the value (objectstack#14147). 17.4 moved it into the
+engine; the tripwire `test/seed-history.test.ts` carried went red on the 18
+upgrade and was deleted, as it asked.
 
 ### `isSystem` is a key to history, not a key to other people's columns
 
