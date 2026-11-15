@@ -161,6 +161,10 @@ export const dulyChinese = defineTranslationBundle({
             label: '负责人',
             help: '有且只有一个担责的人。“由团队负责”的工作等于没人负责。',
           },
+          owner_id: {
+            label: '记录所有者',
+            help: '创建这一行的人：平台的记录所有者，按所有者划分的读取以它为准。不是承担这项工作的人——那是“负责人”。',
+          },
           business_unit: {
             label: '部门',
             help: '汇总口径的锚点。创建时取自负责人的主业务单元。负责人没有主业务单元时，应用岗位职责库会改用其岗位锚定的业务单元（仅当这些岗位都指向同一个业务单元时）；否则留空。',
@@ -308,6 +312,10 @@ export const dulyChinese = defineTranslationBundle({
             help: '对于从未建模成职责的一次性工作，此处为空。',
           },
           owner: { label: '负责人' },
+          owner_id: {
+            label: '记录所有者',
+            help: '创建这一行的人：平台的记录所有者，按所有者划分的读取以它为准。不是承担这项工作的人——那是“负责人”。',
+          },
           business_unit: {
             label: '部门',
             help: '派发时从负责人处冗余写入，使汇总在此后的人员调动中依然成立。',
@@ -603,6 +611,10 @@ export const dulyChinese = defineTranslationBundle({
           subject: { label: '你做了什么' },
           detail: { label: '详情' },
           owner: { label: '负责人' },
+          owner_id: {
+            label: '记录所有者',
+            help: '创建这一行的人：平台的记录所有者，按所有者划分的读取以它为准。不是承担这项工作的人——那是“负责人”。',
+          },
           logged_on: { label: '日期' },
           category: {
             label: '类别',

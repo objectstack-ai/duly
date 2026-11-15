@@ -1,7 +1,7 @@
 // Copyright (c) 2026 ObjectStack. Licensed under the Apache-2.0 license.
 
 import { P } from '@objectstack/spec';
-import { ObjectSchema, Field } from '@objectstack/spec/data';
+import { ObjectSchema, Field, OWNER_FIELD_DEF } from '@objectstack/spec/data';
 
 /**
  * `duly_task` — ONE occurrence of a duty, owed by ONE person, for ONE period.
@@ -125,6 +125,24 @@ export const Task = ObjectSchema.create({
       required: true,
       defaultValue: 'current_user',
     }),
+
+    // The platform's own owner column, declared here to hide it and name it
+    // apart. The platform injects `owner_id` on every user-owned object,
+    // labelled "Owner" (负责人 to a zh-CN reader), so a record page showed two
+    // "Owner"s naming two different people: Duly's `owner` above, and
+    // `owner_id`, which is whoever created the row — the dispatcher, the seed
+    // or an administrator (#143). From @objectstack 18.5 that is the
+    // author-time error `field-label-duplicate`. `owner` is the one a reader
+    // means. Only the label, the help and the visibility change: the type, the
+    // reference and every job the column does (the insert stamp, `own` read
+    // scope) stay the platform's.
+    owner_id: {
+      ...OWNER_FIELD_DEF,
+      label: 'Record owner',
+      description: 'Who created this row: the platform\'s record owner, which drives owner-scoped reads. Not the person who owes it — that is Owner.',
+      group: 'basics',
+      hidden: true,
+    } as ReturnType<typeof Field.lookup>,
 
     business_unit: Field.lookup('sys_business_unit', {
       label: 'Business unit',
