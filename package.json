@@ -24,24 +24,24 @@
     "verify": "pnpm validate && pnpm typecheck && pnpm test"
   },
   "dependencies": {
-    "@objectstack/spec": "^18.5.0",
-    "@objectstack/runtime": "^18.5.0",
-    "@objectstack/plugin-hono-server": "^18.5.0",
-    "@objectstack/connector-rest": "^18.5.0",
-    "@objectstack/connector-openapi": "^18.5.0",
-    "@objectstack/connector-mcp": "^18.5.0"
+    "@objectstack/spec": "^18.6.0",
+    "@objectstack/runtime": "^18.6.0",
+    "@objectstack/plugin-hono-server": "^18.6.0",
+    "@objectstack/connector-rest": "^18.6.0",
+    "@objectstack/connector-openapi": "^18.6.0",
+    "@objectstack/connector-mcp": "^18.6.0"
   },
   "devDependencies": {
-    "@objectstack/cli": "^18.5.0",
-    "@objectstack/platform-objects": "^18.5.0",
-    "@objectstack/plugin-auth": "^18.5.0",
-    "@objectstack/plugin-email": "^18.5.0",
-    "@objectstack/plugin-security": "^18.5.0",
-    "@objectstack/plugin-sharing": "^18.5.0",
-    "@objectstack/service-automation": "^18.5.0",
-    "@objectstack/service-job": "^18.5.0",
-    "@objectstack/service-messaging": "^18.5.0",
-    "@objectstack/trigger-schedule": "^18.5.0",
+    "@objectstack/cli": "^18.6.0",
+    "@objectstack/platform-objects": "^18.6.0",
+    "@objectstack/plugin-auth": "^18.6.0",
+    "@objectstack/plugin-email": "^18.6.0",
+    "@objectstack/plugin-security": "^18.6.0",
+    "@objectstack/plugin-sharing": "^18.6.0",
+    "@objectstack/service-automation": "^18.6.0",
+    "@objectstack/service-job": "^18.6.0",
+    "@objectstack/service-messaging": "^18.6.0",
+    "@objectstack/trigger-schedule": "^18.6.0",
     "typescript": "^6.0.0",
     "vitest": "^4.1.10"
   }

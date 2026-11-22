@@ -1061,7 +1061,11 @@ export const COLLECTION_HANDLING: Readonly<Record<string, string>> = {
   functions: 'handler registrations',
   plugins: 'plugin instances',
   requires: 'capability tokens',
-  mappings: 'field mappings — machine names',
+  // Not walked because there is nothing to walk: `dulyMappings` is empty. From
+  // @objectstack 18.6 a mapping's `label` IS display text (the import wizard
+  // lists mappings by label, keyed `mappings.<name>.label`), so the first
+  // mapping must be walked; `test/i18n-coverage.test.ts` fails until it is.
+  mappings: 'none declared — a mapping label is translatable from 18.6; walk it when the first mapping lands',
   i18n: 'the locale configuration these bundles serve',
   translations: 'the bundles themselves',
 };

@@ -312,13 +312,25 @@ describe('the bundles reach the stack', () => {
     // `book` arrived in 18.3.0. Re-derived, nothing moves: this app declares
     // no book, and no `untranslatable` verdict in the walk rests on books
     // being absent. So the pin widens with no verdict to revisit.
+    //
+    // `mapping` arrived in 18.6.0: a named import mapping's `label`, keyed
+    // `mappings.<name>.label`. Re-derived: this app declares no mapping, so no
+    // string moves, but `COLLECTION_HANDLING.mappings` called mappings
+    // "machine names", which is no longer true of their label. The skip now
+    // rests on the collection being empty, and the assertion after the pin
+    // holds it to that: the first mapping fails here until the walk reads it.
     expect(
       [...PLATFORM_TRANSLATABLE_TYPES].sort(),
       'the platform\'s translatable metadata types changed — re-derive the '
       + '`untranslatable` verdicts in src/translations/authored-text.ts against the new set',
     ).toEqual([
-      'action', 'app', 'book', 'dashboard', 'dataset', 'object', 'page', 'permission', 'picklist', 'position', 'report', 'view',
+      'action', 'app', 'book', 'dashboard', 'dataset', 'mapping', 'object', 'page', 'permission', 'picklist', 'position', 'report', 'view',
     ]);
+    expect(
+      (stackConfig as { mappings?: unknown[] }).mappings ?? [],
+      'a mapping\'s label is translatable from @objectstack 18.6 and `mappings` is not walked — '
+      + 'walk its label (`mappings.<name>.label`) before declaring one',
+    ).toEqual([]);
   });
 });
 
