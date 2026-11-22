@@ -793,12 +793,24 @@ describe('assignment fan-out — a removed or banned assignee, driven through th
   const mkUser = async (name: string, extra: AnyRec = {}): Promise<string> =>
     String(first(await data.insert('sys_user', { name, email: `${name}@example.test`, ...extra }, sys)).id);
 
-  /** Save the assignment while every assignee exists, then run the fan-out on the row as stored. */
-  const fanOut = async (assigner: string, assignees: string[], removeBeforeRun: string[] = []) => {
+  /**
+   * Save the assignment while every assignee exists and may be assigned, then
+   * remove or ban the ones named, then run the fan-out on the row as stored.
+   * Since @objectstack 18.5 the assignment write itself refuses an assignee
+   * whose ban is in force (`reference_user_banned`), so a ban, like a removal,
+   * can only reach the fan-out by landing after the save.
+   */
+  const fanOut = async (
+    assigner: string,
+    assignees: string[],
+    removeBeforeRun: string[] = [],
+    banBeforeRun: Record<string, AnyRec> = {},
+  ) => {
     const assignment = first(await data.insert('duly_assignment', {
       subject: SUBJECT, assigner, assignees, due_date: '2026-10-01', status: 'dispatched', needs_collection: false,
     }));
     for (const id of removeBeforeRun) await data.delete('sys_user', { where: { id }, ...sys });
+    for (const [id, ban] of Object.entries(banBeforeRun)) await data.update('sys_user', ban, { where: { id }, ...sys });
     const stored = (await data.find('duly_assignment', { where: { id: assignment.id } }))[0] as AnyRec;
     const result = await automation.execute('duly_assignment_fanout', {
       record: stored, object: 'duly_assignment', event: 'afterUpdate',
@@ -858,16 +870,16 @@ describe('assignment fan-out — a removed or banned assignee, driven through th
     // Sign-in clears a ban whose expiry has passed, so that person can open a
     // task and gets one. A standing ban — no expiry, or one still ahead — is
     // an account nobody can sign in as.
-    const banned = await mkUser('fanout148_banned', { banned: true });
-    const bannedUntilLater = await mkUser('fanout148_banned_later', {
-      banned: true, ban_expires: new Date(Date.now() + 7 * 86_400_000).toISOString(),
-    });
-    const banLapsed = await mkUser('fanout148_ban_lapsed', {
-      banned: true, ban_expires: new Date(Date.now() - 86_400_000).toISOString(),
-    });
+    const banned = await mkUser('fanout148_banned');
+    const bannedUntilLater = await mkUser('fanout148_banned_later');
+    const banLapsed = await mkUser('fanout148_ban_lapsed');
     const boss = await mkUser('fanout148_boss_2');
 
-    const { result, tasks, inbox } = await fanOut(boss, [banned, bannedUntilLater, banLapsed]);
+    const { result, tasks, inbox } = await fanOut(boss, [banned, bannedUntilLater, banLapsed], [], {
+      [banned]: { banned: true },
+      [bannedUntilLater]: { banned: true, ban_expires: new Date(Date.now() + 7 * 86_400_000).toISOString() },
+      [banLapsed]: { banned: true, ban_expires: new Date(Date.now() - 86_400_000).toISOString() },
+    });
 
     expect(tasks.map((t) => String(t.owner))).toEqual([banLapsed]);
     expect(result.success, String(result.error ?? '')).toBe(true);
@@ -994,19 +1006,23 @@ describe('assignment fan-out — the notice the assigner reads, per cause and pe
     String(first(await data.insert('sys_user', { name: `${name}_${++seq}`, email: `${name}_${seq}@example.test`, ...extra }, sys)).id);
 
   /**
-   * Save the assignment while every stored assignee exists, remove the ones
-   * named, then run the fan-out. `runAssignees`, when given, rides on the
-   * trigger context instead of the stored row — the only way to reach a bad
-   * handle the assignment write itself now refuses (see the #123 block).
+   * Save the assignment while every stored assignee exists and may be
+   * assigned, remove or ban the ones named, then run the fan-out.
+   * `runAssignees`, when given, rides on the trigger context instead of the
+   * stored row — the only way to reach a bad handle the assignment write
+   * itself now refuses (see the #123 block). A ban in force is refused at the
+   * assignment write too since @objectstack 18.5, so it lands after the save.
    */
   const fanOut = async (opts: {
-    assigner: string; stored: string[]; remove?: string[]; runAssignees?: unknown[]; expectNotices: number;
+    assigner: string; stored: string[]; remove?: string[]; ban?: Record<string, AnyRec>;
+    runAssignees?: unknown[]; expectNotices: number;
   }) => {
     const assignment = first(await data.insert('duly_assignment', {
       subject: SUBJECT, assigner: opts.assigner, assignees: opts.stored, due_date: '2026-10-01',
       status: 'dispatched', needs_collection: false,
     }));
     for (const id of opts.remove ?? []) await data.delete('sys_user', { where: { id }, ...sys });
+    for (const [id, ban] of Object.entries(opts.ban ?? {})) await data.update('sys_user', ban, { where: { id }, ...sys });
     const stored = (await data.find('duly_assignment', { where: { id: assignment.id } }))[0] as AnyRec;
     const result = await automation.execute('duly_assignment_fanout', {
       record: opts.runAssignees ? { ...stored, assignees: opts.runAssignees } : stored,
@@ -1051,10 +1067,12 @@ describe('assignment fan-out — the notice the assigner reads, per cause and pe
   }, 30_000);
 
   it.each(LOCALES)('a banned account: the %s notice says the account is banned and how to fix it', async (locale) => {
-    const banned = await mkUser('n160_banned', { banned: true });
+    const banned = await mkUser('n160_banned');
     const boss = await mkUser('n160_boss', { locale });
 
-    const { result, tasks, inbox } = await fanOut({ assigner: boss, stored: [banned], expectNotices: 1 });
+    const { result, tasks, inbox } = await fanOut({
+      assigner: boss, stored: [banned], ban: { [banned]: { banned: true } }, expectNotices: 1,
+    });
 
     expect(result.success, String(result.error ?? '')).toBe(true);
     expect(tasks).toEqual([]);

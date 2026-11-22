@@ -132,10 +132,21 @@ let data: any;
 let protocol: any;
 let kernel: any;
 
+/**
+ * `seed_user_alice`'s id, read back after the seed. The seed loader resolves
+ * `owner: 'seed_user_alice'` as a natural key against `sys_user.name`; a data
+ * write does not — it takes the value as the user's id. From @objectstack 18.4
+ * a non-system write is refused `reference_not_found` for a `user` field that
+ * names no row the caller can read (objectstack eb96480), so the boundary
+ * payloads below must name Alice by her id, or that refusal would answer in
+ * place of the completion rule under test.
+ */
+let ALICE = '';
+
 /** A non-seed task payload, used for the boundary assertions. */
 const adhoc = (over: Record<string, unknown> = {}) => ({
   subject: 'ad-hoc probe task',
-  owner: 'seed_user_alice',
+  owner: ALICE,
   source: 'catalog',
   ...over,
 });
@@ -179,6 +190,9 @@ beforeAll(async () => {
   // The inline seed is kicked off against a budget rather than awaited by
   // bootstrap, so give it a moment to settle before reading its rows.
   await new Promise((resolve) => setTimeout(resolve, 1500));
+  const alice = await data.findOne('sys_user', { where: { name: 'seed_user_alice' } }, { context: SYSTEM_CONTEXT });
+  ALICE = String(alice?.id ?? '');
+  if (!ALICE) throw new Error('the seed must have written seed_user_alice before the boundary cases run');
 }, 120_000);
 
 afterAll(async () => {
@@ -303,7 +317,7 @@ describe('an ordinary caller still may not', () => {
       await protocol.createData({
         object: 'duly_task',
         data: adhoc({ subject: 'explicit non-system done', status: 'done', completed_at: COMPLETED_ON }),
-        context: { userId: 'seed_user_alice', isSystem: false },
+        context: { userId: ALICE, isSystem: false },
       });
     } catch (e) {
       error = e;
